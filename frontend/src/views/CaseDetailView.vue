@@ -10,6 +10,7 @@ const route = useRoute(); const router = useRouter(); const auth = useAuth()
 const id = String(route.params.id)
 const d = ref<any>(null)
 const promises = ref<any[]>([]); const tickets = ref<any[]>([]); const legalDocs = ref<any[]>([]); const repays = ref<any[]>([])
+const payLinks = ref<any[]>([])   // 本会话创建的缴费链接(契约无 per-case 列表端点,发后捕获→可重发/作废 BR-M4-14)
 const latest = ref<any>(null); const review = ref<any>(null)
 const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
 
@@ -90,7 +91,19 @@ async function submitAct() {
   else if (k === 'evidence') res = await api.POST('/cases/{id}/evidence', { params: { path: { id } }, body: { scene: f.scene, note: f.note } as any })
   else res = await api.POST('/cases/{id}/pay-links', { params: { path: { id } }, body: { channel: f.channel, sourceSuggestionId: f.sourceSuggestionId } as any })
   if (res.error) { ElMessage.error('提交失败：' + ((res.error as any)?.message ?? '')); return }
+  if (k === 'paylink' && res.data) payLinks.value.unshift(res.data)   // 捕获新链接→可重发/作废
   ElMessage.success(dlg.value.title + '成功'); dlg.value.open = false; loadAll()
+}
+// 缴费链接 重发/作废（BR-M4-14；link id 来自创建响应，契约无 per-case 列表端点）
+async function resendLink(l: any) {
+  const { error } = await api.POST('/pay-links/{id}/resend', { params: { path: { id: String(l.id) } } } as any)
+  if (error) { ElMessage.error('重发失败：' + ((error as any)?.message ?? '')); return }
+  ElMessage.success('已重发')
+}
+async function voidLink(l: any) {
+  const { error } = await api.POST('/pay-links/{id}/void', { params: { path: { id: String(l.id) } } } as any)
+  if (error) { ElMessage.error('作废失败：' + ((error as any)?.message ?? '')); return }
+  ElMessage.success('已作废'); l.status = 'VOIDED'
 }
 // 工单处理
 const hdlg = ref(false); const hForm = ref<any>({})
@@ -179,6 +192,17 @@ onMounted(loadAll)
           <el-table-column label="状态"><template #default="{row}"><el-tag size="small" :type="row.invalid?'info':'success'">{{ row.invalid?'失效':'有效' }}</el-tag></template></el-table-column>
           <el-table-column label="操作" width="90"><template #default="{row}"><el-button v-if="!row.invalid && auth.has('case.follow')" size="small" text @click="invalidContact(row)">标失效</el-button></template></el-table-column>
         </el-table>
+        <template v-if="payLinks.length">
+          <el-divider content-position="left">缴费链接（本会话创建 · BR-M4-14 重发/作废）</el-divider>
+          <el-table :data="payLinks" size="small" border>
+            <el-table-column prop="token" label="token" /><el-table-column label="金额"><template #default="{row}">{{ yuan(row.amountCents) }}</template></el-table-column>
+            <el-table-column prop="status" label="状态" width="90" />
+            <el-table-column label="操作" width="160"><template #default="{row}">
+              <el-button v-if="row.status!=='VOIDED' && auth.has('case.paylink')" size="small" @click="resendLink(row)">重发</el-button>
+              <el-button v-if="row.status!=='VOIDED' && auth.has('case.paylink')" size="small" text type="danger" @click="voidLink(row)">作废</el-button>
+            </template></el-table-column>
+          </el-table>
+        </template>
       </el-tab-pane>
 
       <el-tab-pane label="通话 / AI 复盘">

@@ -106,7 +106,16 @@ if (s3) {
   }
   check('CO 写跟进 → 201', (await post(`/cases/${s3.id}/follow-ups`, co, { content: 'E2E 跟进', method: 'CALL' })).status === 201)
   check('CO 登记承诺 → 201', (await post(`/cases/${s3.id}/promises`, co, { date: '2026-08-01', amountCents: 100000 })).status === 201)
-  check('CO 发缴费链接 → 2xx', [200, 201].includes((await post(`/cases/${s3.id}/pay-links`, co, { channel: 'SMS' })).status))
+  const plk = await post(`/cases/${s3.id}/pay-links`, co, { channel: 'SMS' })
+  check('CO 发缴费链接 → 2xx', [200, 201].includes(plk.status))
+  // P1 缴费链接重发/作废(BR-M4-14)：用微信渠道链接(SMS 有冷却 BR-M4-14a)
+  const wlk = await post(`/cases/${s3.id}/pay-links`, co, { channel: 'WECHAT_COPY' })
+  const linkId = wlk.body?.id
+  if (linkId) {
+    check('CO 重发缴费链接(resend·微信无冷却) → 2xx', [200, 201, 204].includes((await post(`/pay-links/${linkId}/resend`, co, {})).status))
+    check('CO 作废缴费链接(void) → 2xx', [200, 201, 204].includes((await post(`/pay-links/${linkId}/void`, co, {})).status))
+  }
+  check('SMS 链接刚发即重发 → 409 冷却(BR-M4-14a)', plk.body?.id ? (await post(`/pay-links/${plk.body.id}/resend`, co, {})).status === 409 : true)
   const pr = await getJson(`/cases/${s3.id}/promises?page=1&size=20`, co)
   check('GET 承诺列表增长(≥2)', (pr.body?.items?.length ?? 0) >= 2, '共 ' + pr.body?.meta?.total)
   // P2 子链
@@ -195,6 +204,9 @@ if (s0b2) check('GET /cases?batchId= 列本批案件(供 caseIds 勾选)', (awai
 // P1: AI 写界面 — PUT ai-config / POST script-lib
 check('SA 编辑 AI配置(PUT /ai-config) → 2xx', [200, 201, 204].includes((await fetch(`${B}/ai-config`, { method: 'PUT', headers: { Authorization: `Bearer ${sa}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ llm: { provider: 'deepseek', model: 'deepseek-chat', temperature: 0.3 }, asr: { provider: 'bailian' } }) })).status))
 check('SA 新建话术(POST /script-lib) → 2xx', [200, 201].includes((await post('/script-lib', sa, { scene: '首催开场', intent: '提醒', text: '您好，关于物业费…' })).status))
+// P1: playbook 采纳(US-M5-07) — PL 对翠湖一期(项目1)采纳作战手册
+check('GET /projects/1/playbook → 200', (await getJson('/projects/1/playbook', pl)).status === 200)
+check('PL 采纳作战手册(POST /projects/1/playbook) → 2xx', [200, 201].includes((await post('/projects/1/playbook', pl, { version: 'v1.1', content: '通话前策略：先核实身份…' })).status))
 
 // M5 质检
 const risks = await getJson('/risks?page=1&size=30', sa)
