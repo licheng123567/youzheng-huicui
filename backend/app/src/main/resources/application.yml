@@ -5,6 +5,8 @@ server:
     context-path: /v1          # 对齐契约 servers 的 /v1 basePath
 
 spring:
+  jackson:
+    default-property-inclusion: non_null   # 省略 null 字段：契约多数字段非 nullable，可选字段缺省即合规（统一出口）
   datasource:
     url: jdbc:postgresql://localhost:5455/huicui   # 本机已有 homebrew postgres 占 5432，容器映射到 5455
     username: postgres

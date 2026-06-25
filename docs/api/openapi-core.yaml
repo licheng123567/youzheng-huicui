@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 有证慧催 · API 契约（全模块·已冻结）
-  version: 1.0.0
+  version: 1.0.1
   contact: { name: 契约 Owner（架构师）, email: api-owner@youzheng.example }
   description: |
     从高保真原型 + PRD(BR/US) + 报告14口径抽取的全模块契约（单一事实源 SSOT）。**v1.0 已冻结（2026-06-24）**：经 codex×2 + 人工×2 共四轮独立审计、openapi-generator Spring 桩 mvn compile、Flyway 真库迁移三重验证，0 阻断/0 高。破坏性变更须升 major + 双 approve。
@@ -1770,6 +1770,7 @@ components:
     ProjectForProvider:
       type: object
       description: '服务商视角项目档案=催收依据，**字段级不含 commInRate / 财务汇总**(资金双线 BR-M1-06/M9-11；契约测试断言 commInRate 不存在)'
+      additionalProperties: false   # v1.0.1: 与 Project 互斥(否则平台 Project 也匹配本分支致 oneOf 歧义)
       required: [viewRole]
       properties:
         viewRole: { type: string, description: '角色判别(discriminator)=PROVIDER' }
