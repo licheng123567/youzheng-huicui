@@ -122,7 +122,7 @@ public class DevSeeder implements CommandLineRunner {
                 "SELECT id FROM \"case\" WHERE batch_id = ? AND acct_no = 'M3-S3-01'",
                 rs -> rs.next() ? rs.getLong(1) : null, b2);
         if (caseS3Id != null) {
-            seedM4Collection(caseS3Id, projId, b2, coHolder);
+            seedM4Collection(caseS3Id, projId, b2, coHolder, providerOrg);
         }
     }
 
@@ -141,8 +141,9 @@ public class DevSeeder implements CommandLineRunner {
      * @param projId   案件所属项目 id（翠湖一期）
      * @param batchId  案件所属批次 id（B-CH-M3-S2）
      * @param coHolder 持有催收员 account id（jx_co1）
+     * @param providerOrg 承接服务商 org id（捷信催收），用于 M5 质检风险归属
      */
-    private void seedM4Collection(Long caseS3Id, Long projId, Long batchId, Long coHolder) {
+    private void seedM4Collection(Long caseS3Id, Long projId, Long batchId, Long coHolder, Long providerOrg) {
         // 0) 翠湖物业 PC 协调员（关联本项目，使 listTickets 的 range 裁剪能命中物业侧）
         ensureCoordinator(projId, "cuihu_pc", "翠湖协调员", "13900000006");
 
@@ -253,6 +254,79 @@ public class DevSeeder implements CommandLineRunner {
                     "INSERT INTO activity(case_id, type, actor_id, content, ref_type, ref_id, method) "
                             + "VALUES (?, 'CALL', ?, '通话录音上传', 'call_recording', ?, 'CALL')",
                     caseS3Id, coHolder, recId);
+        }
+
+        // 7) M5 质检风险 + 处置任务（违规人=jx_co1 催收员、责任组织=捷信服务商）
+        seedM5Qc(caseS3Id, projId, recId, coHolder, providerOrg);
+    }
+
+    // ── M5 质检/风控种子（私海案件 M3-S3-01 的录音挂风险，供组织侧读/处置/复核 + 平台监管视图）──
+    //
+    // 表 risk_record / dispose_task 已在 V1__core_schema.sql 建表（actual 列：
+    //   risk_record(case_id, call_id, collector_id, provider_id=服务商org, property_id=物业org, type, level,
+    //               segment_ts, reviewed, reviewed_by, reviewed_at)
+    //   dispose_task(risk_id, provider=责任org, task_type, status, tm)）。
+    // 违规人 jx_co1 是捷信服务商催收员 → provider_id=捷信、property_id=案件项目所属物业（翠湖物业）。
+    // 全部幂等：risk_record 先 SELECT count(case_id)；dispose_task 先 SELECT id(risk_id)。
+
+    /**
+     * @param caseS3Id    私海案件 id（M3-S3-01）
+     * @param projId      案件所属项目 id（翠湖一期）——用于派生物业 org（三方隔离 property_id）
+     * @param recId       关联录音 id（call_id，BR-M5-11 回放取证）
+     * @param coHolder    违规催收员 account id（jx_co1，契约 collector 展示名取此人）
+     * @param providerOrg 责任服务商 org id（捷信催收）
+     */
+    private void seedM5Qc(Long caseS3Id, Long projId, Long recId, Long coHolder, Long providerOrg) {
+        if (recId == null || providerOrg == null) return;
+        // 物业 org（三方隔离 property_id）：案件项目所属物业组织（翠湖物业）。
+        Long propertyOrg = jdbc.query("SELECT org_id FROM project WHERE id = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, projId);
+        if (propertyOrg == null) return;
+
+        // A) risk_record 3 条（覆盖 HIGH/MID/LOW、不同 type/segment_ts、reviewed=NULL 待复核）
+        //    幂等：本案已有任一风险则整体跳过。
+        Integer riskExists = jdbc.queryForObject(
+                "SELECT count(*) FROM risk_record WHERE case_id = ?", Integer.class, caseS3Id);
+        if (riskExists != null && riskExists == 0) {
+            jdbc.update(
+                    "INSERT INTO risk_record(case_id, call_id, collector_id, provider_id, property_id, "
+                            + "type, level, segment_ts, reviewed) "
+                            + "VALUES (?, ?, ?, ?, ?, '辱骂威胁', 'HIGH', '01:12', NULL)",
+                    caseS3Id, recId, coHolder, providerOrg, propertyOrg);
+            jdbc.update(
+                    "INSERT INTO risk_record(case_id, call_id, collector_id, provider_id, property_id, "
+                            + "type, level, segment_ts, reviewed) "
+                            + "VALUES (?, ?, ?, ?, ?, '违规承诺', 'MID', '02:05', NULL)",
+                    caseS3Id, recId, coHolder, providerOrg, propertyOrg);
+            jdbc.update(
+                    "INSERT INTO risk_record(case_id, call_id, collector_id, provider_id, property_id, "
+                            + "type, level, segment_ts, reviewed) "
+                            + "VALUES (?, ?, ?, ?, ?, '用语不规范', 'LOW', '00:30', NULL)",
+                    caseS3Id, recId, coHolder, providerOrg, propertyOrg);
+        }
+
+        // B) dispose_task 1 条（挂 HIGH 风险，供平台监管视图 listDisposeTasks 返 200；两侧不可见）。
+        //    幂等：dispose_task.risk_id 无唯一约束，按 risk_id 先查后插兜底。
+        Long highRiskId = jdbc.query(
+                "SELECT id FROM risk_record WHERE case_id = ? AND level = 'HIGH' ORDER BY id LIMIT 1",
+                rs -> rs.next() ? rs.getLong(1) : null, caseS3Id);
+        if (highRiskId != null) {
+            // 演示「平台已复核 → 生成处置任务」闭环：HIGH 置 CONFIRMED + reviewed_by=平台 SA。
+            Long saAcct = jdbc.query(
+                    "SELECT id FROM account WHERE role_template = 'SA' ORDER BY id LIMIT 1",
+                    rs -> rs.next() ? rs.getLong(1) : null);
+            jdbc.update("UPDATE risk_record SET reviewed = 'CONFIRMED', reviewed_by = ?, reviewed_at = now() "
+                            + "WHERE id = ? AND reviewed IS NULL",
+                    saAcct, highRiskId);
+
+            Long taskId = jdbc.query("SELECT id FROM dispose_task WHERE risk_id = ?",
+                    rs -> rs.next() ? rs.getLong(1) : null, highRiskId);
+            if (taskId == null) {
+                jdbc.update(
+                        "INSERT INTO dispose_task(risk_id, provider, task_type, status) "
+                                + "VALUES (?, ?, '整改培训', 'PENDING')",
+                        highRiskId, providerOrg);
+            }
         }
     }
 
