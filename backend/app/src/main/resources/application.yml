@@ -20,3 +20,10 @@ spring:
 logging:
   level:
     org.flywaydb: info
+
+# 横切层
+huicui:
+  jwt:
+    secret: "dev-only-secret-change-in-prod-至少32字节用于HS256签名0123456789"
+    ttl-seconds: 86400
+  dev-password: "Admin@123"     # 仅 dev：DevSeeder 给种子账号设此口令的 BCrypt 哈希
