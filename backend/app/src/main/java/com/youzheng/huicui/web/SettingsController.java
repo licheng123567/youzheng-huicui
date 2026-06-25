@@ -123,6 +123,7 @@ public class SettingsController {
         if (!DOMAIN_WHITELIST.contains(domain)) {
             throw new ApiException(BizError.VALIDATION_422, "domain 非法: " + domain);
         }
+        validateDomainBody(domain, body);   // 域 value 结构校验(审计 M-4)：须提供对应域配置 + 关键数值非负
 
         // before 快照：当前最新版本（无→null）。用于审计留痕。
         SettingsDto before = jdbc.query(
@@ -179,6 +180,30 @@ public class SettingsController {
             return json.writeValueAsString(v);
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    /** 域 value 最小结构校验(审计 M-4)：① 须提供该域对应配置体(防把配置塞到错域)；② ROTATION 关键数值非负。
+     *  非法→422(PUT /settings 已文档化 422)。深层 schema 校验留待各域消费方/后续 JSON Schema。 */
+    private void validateDomainBody(String domain, SettingsInputDto b) {
+        Object v = switch (domain) {
+            case "TIMERS" -> b.timers();
+            case "ROTATION" -> b.rotation();
+            case "MARK_CODES" -> b.markCodes();
+            case "CLOSE_REASONS" -> b.closeReasons();
+            case "SMS" -> b.sms();
+            default -> null;
+        };
+        if (v == null) {
+            throw new ApiException(BizError.VALIDATION_422, "domain=" + domain + " 须提供对应配置体（不可塞到其他域）");
+        }
+        if ("ROTATION".equals(domain) && v instanceof Map<?, ?> m) {
+            for (String k : new String[]{"holdCap", "maxRotations"}) {
+                Object n = m.get(k);
+                if (n instanceof Number num && num.longValue() < 0) {
+                    throw new ApiException(BizError.VALIDATION_422, "ROTATION." + k + " 不可为负");
+                }
+            }
         }
     }
 

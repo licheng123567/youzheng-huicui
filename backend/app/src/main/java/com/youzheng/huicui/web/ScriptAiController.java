@@ -156,7 +156,7 @@ public class ScriptAiController {
     @Transactional
     public Map<String, Object> promoteScriptVariant(@PathVariable String id) {
         CurrentSubject s = requirePlatform();
-        long scriptId = parseId(id, "话术");
+        long scriptId = parsePathIdOr404(id);   // 路径资源 id 非数字→404(资源不存在语义,审计 M-5),非 422
 
         // 行级锁取出晋升前快照（含原始列，用于 before_snap 与回滚保留）。
         Map<String, Object> before = jdbc.query(
@@ -460,6 +460,15 @@ public class ScriptAiController {
             return Long.parseLong(raw.trim());
         } catch (NumberFormatException e) {
             throw new ApiException(BizError.VALIDATION_422, what + " id 非法: " + raw);
+        }
+    }
+
+    /** 路径资源 id：非数字按"资源不存在"→404（审计 M-5，与 MasterWrite/Member 范式一致；区别于体内 id 的 422）。 */
+    private static long parsePathIdOr404(String raw) {
+        try {
+            return Long.parseLong(String.valueOf(raw).trim());
+        } catch (NumberFormatException e) {
+            throw new ApiException(BizError.NOT_FOUND_404, "话术不存在: " + raw);
         }
     }
 

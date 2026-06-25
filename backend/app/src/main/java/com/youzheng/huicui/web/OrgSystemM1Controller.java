@@ -66,14 +66,20 @@ public class OrgSystemM1Controller {
     private final OrgSystemAuditService audit;
     private final ObjectMapper json;
     private final BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder();
-    private final String devPassword;
+    private final java.security.SecureRandom rnd = new java.security.SecureRandom();
 
-    public OrgSystemM1Controller(JdbcTemplate jdbc, OrgSystemAuditService audit, ObjectMapper json,
-                                 @org.springframework.beans.factory.annotation.Value("${huicui.dev-password}") String devPassword) {
+    public OrgSystemM1Controller(JdbcTemplate jdbc, OrgSystemAuditService audit, ObjectMapper json) {
         this.jdbc = jdbc;
         this.audit = audit;
         this.json = json;
-        this.devPassword = devPassword;
+    }
+
+    /** 随机初始口令(审计 M-3)：建组织 owner / 改绑重置均用，替代可预测的 devPassword。生产应带外下发+首登改密。 */
+    private String generatePassword() {
+        String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0, len = 8 + rnd.nextInt(5); i < len; i++) sb.append(alphabet.charAt(rnd.nextInt(alphabet.length())));
+        return sb.toString();
     }
 
     // ── [1] GET /orgs ─────────────────────────────────────────────────────────
@@ -153,7 +159,7 @@ public class OrgSystemM1Controller {
                 "INSERT INTO org(type, name, status) VALUES (?, ?, 'ACTIVE') RETURNING id",
                 Long.class, type, body.name());
         String ownerRole = "PROPERTY".equals(type) ? "PL" : "VL";
-        String hash = bcrypt.encode(devPassword);
+        String hash = bcrypt.encode(generatePassword());   // 随机口令(审计 M-3)
         Long ownerAccountId = jdbc.queryForObject(
                 "INSERT INTO account(org_id, username, name, phone, role_template, status, is_owner, password_hash)"
                         + " VALUES (?, ?, ?, ?, ?, 'ACTIVE', TRUE, ?) RETURNING id",
@@ -213,7 +219,7 @@ public class OrgSystemM1Controller {
                 body.newPhone(), ownerAccountId);
         if (resetPassword) {
             jdbc.update("UPDATE account SET password_hash = ?, updated_at = now() WHERE id = ?",
-                    bcrypt.encode(devPassword), ownerAccountId);
+                    bcrypt.encode(generatePassword()), ownerAccountId);   // 随机口令(审计 M-3)
         }
 
         // 审计（交接留痕 BR-M1-08；reset-password 敏感动作必落）：org.owner.rebind。
