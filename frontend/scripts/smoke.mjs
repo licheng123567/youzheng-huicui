@@ -251,5 +251,29 @@ const newOrg = await post('/orgs', sa, { type: 'PROVIDER', name: '测试服务�
 check('SA 新建组织+绑负责人 → 201', [200, 201].includes(newOrg.status), 'HTTP ' + newOrg.status)
 if (newOrg.body?.id) check('SA 改绑组织负责人 → 2xx', [200, 201, 204].includes((await fetch(`${B}/orgs/${newOrg.body.id}/owner`, { method: 'PATCH', headers: { Authorization: `Bearer ${sa}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ newPhone: '13900004444', resetPassword: true }) })).status))
 
-console.log(fail === 0 ? '\n🎉 全 117 端点·全模块端到端全过 — 契约优先全链路贯通' : `\n⚠ ${fail} 项失败`)
+// 一号多账号(BR-M1-11): password 多账号→loginTicket+accounts→select-account→token
+async function rawLogin(body) {
+  const r = await fetch(`${B}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  return r.ok ? await r.json() : null
+}
+const single = await rawLogin({ mode: 'password', username: 'admin', password: 'Admin@123' })
+check('单账号(admin) → 直接 token(无回退)', !!single?.token && !single?.loginTicket)
+const multi = await rawLogin({ mode: 'password', username: 'duo_pc', password: 'Admin@123' })
+check('多账号(duo_pc) → loginTicket+accounts(2)', !multi?.token && !!multi?.loginTicket && (multi?.accounts?.length ?? 0) === 2)
+if (multi?.loginTicket) {
+  const sel = await fetch(`${B}/auth/select-account`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginTicket: multi.loginTicket, accountId: multi.accounts[1].accountId }) })
+  const selBody = sel.ok ? await sel.json() : null
+  check('select-account(票据+账号) → token', !!selBody?.token)
+  if (selBody?.token) {
+    const me2 = await getJson('/me', selBody.token)
+    check('多账号选定后 /me = 所选账号', me2.status === 200, me2.body?.name + '/' + me2.body?.role)
+  }
+}
+// sms 登录: sms-code 后 code=000000
+await fetch(`${B}/auth/sms-code`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '13900009000' }) })
+const smsR = await rawLogin({ mode: 'sms', phone: '13900009000', code: '000000' })
+check('短信登录(phone+000000) → 多账号 ticket', !!smsR?.loginTicket && (smsR?.accounts?.length ?? 0) === 2)
+check('坏票据 select-account → 401', (await fetch(`${B}/auth/select-account`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginTicket: 'bad', accountId: '1' }) })).status === 401)
+
+console.log(fail === 0 ? '\n🎉 全 117 端点·全模块·多账号登录 端到端全过 — 契约优先全链路贯通' : `\n⚠ ${fail} 项失败`)
 process.exit(fail === 0 ? 0 : 1)

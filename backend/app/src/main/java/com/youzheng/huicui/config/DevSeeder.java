@@ -69,6 +69,9 @@ public class DevSeeder implements CommandLineRunner {
         // M10 监管动作：VL(jx_vl) 对本组织成员 CO(jx_co1) 种 1 条 TRAINING（own-org 裁剪目标）
         seedM10Supervision(provider, "jx_vl", "jx_co1");
 
+        // 一号多账号(BR-M1-11)：同一手机 13900009000 关联 翠湖PC + 捷信CO 两个账号，演示多账号登录选择
+        seedMultiAccount(cuihu, provider, hash);
+
         // 4) ROTATION 配置（CFG-HOLDCAP）：holdCap=50
         ensureRotationSettings(50);
 
@@ -818,6 +821,19 @@ public class DevSeeder implements CommandLineRunner {
     }
 
     /** 催收员账号（role_template=CO，非负责人）。返回 account.id。 */
+    /** 一号多账号(BR-M1-11)：同手机 13900009000 下 翠湖物业PC + 捷信催收CO 两账号。口令均 dev。幂等。 */
+    private void seedMultiAccount(Long cuihuOrg, Long providerOrg, String hash) {
+        String phone = "13900009000";
+        ensureAccountWithRole(cuihuOrg, "duo_pc", "多账号·翠湖协调员", phone, "PC", hash);
+        ensureAccountWithRole(providerOrg, "duo_co", "多账号·捷信催收员", phone, "CO", hash);
+    }
+    private void ensureAccountWithRole(Long orgId, String username, String name, String phone, String role, String hash) {
+        Long aid = jdbc.query("SELECT id FROM account WHERE username = ?", rs -> rs.next() ? rs.getLong(1) : null, username);
+        if (aid != null) return;
+        jdbc.update("INSERT INTO account(org_id, username, name, phone, role_template, status, is_owner, password_hash)"
+                + " VALUES (?, ?, ?, ?, ?, 'ACTIVE', FALSE, ?)", orgId, username, name, phone, role, hash);
+    }
+
     private Long ensureCollector(Long orgId, String username, String name, String phone, String hash) {
         Long aid = jdbc.query("SELECT id FROM account WHERE username = ?",
                 rs -> rs.next() ? rs.getLong(1) : null, username);
