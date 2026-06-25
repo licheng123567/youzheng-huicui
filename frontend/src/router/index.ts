@@ -23,6 +23,8 @@ const router = createRouter({
         { path: 'risks', name: 'risks', component: () => import('../views/RisksView.vue') },
         { path: 'reports', name: 'reports', component: () => import('../views/ReportsView.vue') },
         { path: 'evidence', name: 'evidence', component: () => import('../views/EvidenceView.vue') },
+        { path: 'billing', name: 'billing', component: () => import('../views/BillingView.vue') },
+        { path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
       ],
     },
   ],

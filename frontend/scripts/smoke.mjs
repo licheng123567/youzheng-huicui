@@ -173,5 +173,18 @@ const payB = payR.ok ? await payR.json() : null
 check('M7 业主账单 GET /pay/{token} public(无token) → 200', payR.status === 200 && payB?.payableCents != null, '应付 ' + payB?.payableCents)
 check('M7 错 token → 404(不泄露不5xx)', (await fetch(`${B}/pay/bad-token-xyz`)).status === 404)
 
-console.log(fail === 0 ? '\n🎉 全 11 模块 (M1-M10) 端到端全过 — 全后端切片贯通' : `\n⚠ ${fail} 项失败`)
+// 收口批次2: 设置/计费/批次导入/作废
+const setg = await getJson('/settings', sa)
+check('GET /settings(平台·业务规则域·不含AI)', setg.status === 200 && Array.isArray(setg.body) && !setg.body.some((x) => x.domain === 'AI'), (setg.body || []).map((x) => x.domain).join(','))
+check('PL 看 /settings → 403(仅平台)', (await getJson('/settings', pl)).status === 403)
+check('SA 改 ROTATION 配置 → 2xx', [200, 201].includes((await fetch(`${B}/settings`, { method: 'PUT', headers: { Authorization: `Bearer ${sa}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ domain: 'ROTATION', rotation: { holdCap: 60, maxRotations: 3 } }) })).status))
+check('GET /billing/recharge-log(SA range)', (await getJson('/billing/recharge-log', sa)).status === 200)
+check('SA 充值 STT → 2xx', [200, 201].includes((await post('/billing/recharge', sa, { orgId: '2', type: 'STT', qty: 100 })).status))
+check('CO 充值 → 403(仅平台 billing.recharge)', (await post('/billing/recharge', co, { orgId: '2', type: 'STT', qty: 10 })).status === 403)
+check('GET /sms-records(SA range)', (await getJson('/sms-records', sa)).status === 200)
+// 批次导入(PL own-org, batch.import)
+const imp = await post('/batches/import', sa, { projectId: '1', commInRate: 0.3, rows: [{ acctNo: 'IMP-001', ownerName: '导入业主', phone: '13900002222', room: '9-901', dueCents: 500000, arrearPeriod: '2025-01' }] })
+check('批次导入 → 2xx(创建批次+案件)', [200, 201].includes(imp.status), 'HTTP ' + imp.status)
+
+console.log(fail === 0 ? '\n🎉 全 117 端点·全模块端到端全过 — 契约优先全链路贯通' : `\n⚠ ${fail} 项失败`)
 process.exit(fail === 0 ? 0 : 1)
