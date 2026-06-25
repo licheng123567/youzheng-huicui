@@ -85,7 +85,7 @@ jobs:
           TEST_USER: "admin"
           TEST_PASS: "Admin@123"
         run: |
-          pip install schemathesis
+          pip install "schemathesis==4.21.10"   # pin 版本→生成可复现，避免 latest 静默变异致间歇违约
           TOKEN=$(curl -s -X POST "$TARGET/auth/login" -H 'Content-Type: application/json' \
             -d "{\"mode\":\"password\",\"username\":\"$TEST_USER\",\"password\":\"$TEST_PASS\"}" \
             | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))")

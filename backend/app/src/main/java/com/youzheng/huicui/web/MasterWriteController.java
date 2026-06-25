@@ -6,7 +6,7 @@ import com.youzheng.huicui.error.BizError;
 import com.youzheng.huicui.security.CurrentSubject;
 import com.youzheng.huicui.security.RequirePermission;
 import com.youzheng.huicui.security.SubjectContext;
-import com.youzheng.huicui.web.dto.BatchPlatformView;
+import com.youzheng.huicui.web.dto.BatchPropertyView;
 import com.youzheng.huicui.web.dto.CaseDto;
 import com.youzheng.huicui.web.dto.MasterWriteDtos.BatchImportInput;
 import com.youzheng.huicui.web.dto.MasterWriteDtos.CaseImportRow;
@@ -137,9 +137,12 @@ public class MasterWriteController {
             }
         }
 
-        BatchPlatformView batchView = new BatchPlatformView(
+        // 导入是物业 master-data 动作 → 返物业视角(BatchForProperty,无 payOutRate)：
+        //   ① 未派单批次 payOutRate 本就 null,平台视角必填 payOutRate 是非-null Rate,无法满足→违约;
+        //   ② 资金双线 BR-M9-11:物业不该见付佣比例。平台要全视图可另查 GET /batches。
+        BatchPropertyView batchView = new BatchPropertyView(
                 String.valueOf(batchId), String.valueOf(projectId), batchNo, null, List.of(),
-                "PENDING", "INHERIT", "INHERIT", "PLATFORM", rate, false, null);
+                "PENDING", "INHERIT", "INHERIT", "PROPERTY", rate, false);
         return new ImportResult(batchView, rows.size(), succeeded, skipped, errors);
     }
 
