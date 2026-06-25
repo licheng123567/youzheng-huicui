@@ -31,6 +31,7 @@ function logout() {
           <el-menu-item index="/batches">批次</el-menu-item>
           <el-menu-item index="/sea">公海</el-menu-item>
           <el-menu-item index="/cases">案件</el-menu-item>
+          <el-menu-item index="/settlement">结算</el-menu-item>
         </el-menu>
       </el-aside>
       <el-main>

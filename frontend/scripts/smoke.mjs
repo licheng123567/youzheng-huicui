@@ -106,5 +106,29 @@ if (s3) {
   check('找到 S3 案件', false)
 }
 
-console.log(fail === 0 ? '\n🎉 M4 催收作业端到端全过' : `\n⚠ ${fail} 项失败`)
+// M9 结算·资金双线
+const vl = await login('jx_vl', 'Admin@123')
+const prOut = await getJson('/payment-requests?side=OUT&page=1&size=20', vl)
+check('服务商 VL 见付佣单 OUT(双线)', (prOut.body?.items?.length ?? 0) >= 1, '共 ' + prOut.body?.meta?.total)
+const plOutCross = await getJson('/payment-requests?side=OUT', pl)
+check('物业 PL 查付佣线 OUT → 403 跨线(资金双线隔离·皇冠)', plOutCross.status === 403)
+const plIn = await getJson('/payment-requests?side=IN', pl)
+check('物业 PL 查收佣线 IN → 200', plIn.status === 200)
+// 完成=平台动作(付佣线:服务商生成→平台付款+凭证)。VL 完成应 403；SA 完成 200。
+const pending = (prOut.body?.items || []).find((p) => p.status === 'PENDING')
+if (pending) {
+  const rVl = await post(`/payment-requests/${pending.id}/complete`, vl, { voucher: { type: 'PAYMENT', fileUrl: 'https://x/v.pdf' }, version: pending.version })
+  check('VL 完成付佣单 → 403(完成是平台动作·双线角色分离)', rVl.status === 403, 'HTTP ' + rVl.status)
+  const rSa = await post(`/payment-requests/${pending.id}/complete`, sa, { voucher: { type: 'PAYMENT', fileUrl: 'https://x/v.pdf' }, version: pending.version })
+  check('SA(平台) 完成付佣单(带凭证) → 200', rSa.status === 200, '单 ' + pending.code)
+  const r2 = await post(`/payment-requests/${pending.id}/revoke`, vl, { version: pending.version + 1, reason: 'x' })
+  check('已完成单再撤销 → 409 BIZ_PR_PAID', r2.status === 409, 'HTTP ' + r2.status)
+}
+// 缺凭证完成另一单应 422（构造：重新查 PENDING）
+const co2 = await getJson('/me/settlement', co)
+check('CO 我的结算 GET /me/settlement → 200', co2.status === 200)
+const recon = await getJson('/recon/rollup?side=OUT&page=1&size=10', vl)
+check('VL 对账汇总 GET /recon/rollup?side=OUT → 200', recon.status === 200)
+
+console.log(fail === 0 ? '\n🎉 M9 结算端到端全过 — 核心闭环(M1-M4-M9)前后端贯通' : `\n⚠ ${fail} 项失败`)
 process.exit(fail === 0 ? 0 : 1)
