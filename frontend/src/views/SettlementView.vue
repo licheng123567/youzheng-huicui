@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 
@@ -8,13 +8,16 @@ import { useAuth } from '../stores/auth'
 // 生成链：勾选未结回款明细→生成支付申请单→发送→详情→完成(凭证)/撤销。内催佣金链独立面板。
 const auth = useAuth()
 const role = computed(() => auth.me?.role)
-const sides = computed(() => (role.value === 'PL' || role.value === 'PC') ? ['IN'] : (role.value === 'VL' || role.value === 'CO') ? ['OUT'] : ['IN', 'OUT'])
+// CO(催收员)不看组织级对账/支付申请单(US-M9-09 仅本人佣金只读)，只看「我的佣金」面板。
+const canViewPayReq = computed(() => role.value !== 'CO')
+const sides = computed(() => (role.value === 'PL' || role.value === 'PC') ? ['IN'] : (role.value === 'VL') ? ['OUT'] : ['IN', 'OUT'])
 const side = ref<'IN' | 'OUT'>('IN')
 const rollup = ref<any[]>([]); const prs = ref<any[]>([]); const loading = ref(false)
 const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
 const pct = (r?: number) => (r == null ? '—' : (r * 100).toFixed(2) + '%')
 
 async function load() {
+  if (!canViewPayReq.value) return   // CO 仅「我的佣金」
   loading.value = true
   const rk = await api.GET('/recon/rollup', { params: { query: { side: side.value, page: 1, size: 20 } } as any })
   rollup.value = (rk.data as any)?.items ?? []
@@ -86,11 +89,32 @@ async function confirmPay(doc: any) {
   if (error) { ElMessage.error('确认支付失败：' + ((error as any)?.message ?? '')); return }
   ElMessage.success('已确认支付'); loadCoComm()
 }
+// 设催收员某批次佣金比例（PUT·防倒挂后端校验）
+async function setRate(c: any) {
+  try {
+    const { value } = await ElMessageBox.prompt(`设 ${c.name} 某批次佣金比例（输入 批次id,比例 如 1,0.15）`, '设佣金比例', { inputValidator: (v: string) => /^\d+,0?\.\d+$/.test(v) || '格式 批次id,分数(0-1)' })
+    const [bid, rate] = String(value).split(',')
+    const { error } = await api.PUT('/co-commissions/{collectorId}/batches/{batchId}/rate', { params: { path: { collectorId: String(c.collectorId), batchId: bid } }, body: { rate: Number(rate) } as any })
+    if (error) { ElMessage.error('设比例失败：' + ((error as any)?.message ?? '可能防倒挂')); return }
+    ElMessage.success('已设佣金比例'); loadCoComm()
+  } catch { /* 取消 */ }
+}
+// 生成佣金支付单（POST·lineIds 为该催收员未结内催回款明细 id，从批次回款明细处获取）
+async function genCoPayDoc(c: any) {
+  try {
+    const { value } = await ElMessageBox.prompt(`为 ${c.name} 生成佣金单（输入未结明细 id，逗号分隔）`, '生成佣金支付单', { inputValidator: (v: string) => /^[\d,]+$/.test(v) || '逗号分隔的明细 id' })
+    const lineIds = String(value).split(',').map((x) => x.trim()).filter(Boolean)
+    const { error } = await api.POST('/co-pay-docs', { body: { collectorId: String(c.collectorId), lineIds } as any })
+    if (error) { ElMessage.error('生成失败：' + ((error as any)?.message ?? '')); return }
+    ElMessage.success('已生成佣金支付单（PENDING_PAY）'); loadCoComm()
+  } catch { /* 取消 */ }
+}
 onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
 </script>
 
 <template>
   <el-card header="结算 · 资金双线（IN 收佣 平台↔物业 / OUT 付佣 平台↔服务商）">
+   <template v-if="canViewPayReq">
     <el-radio-group v-model="side" style="margin-bottom:12px" @change="load">
       <el-radio-button v-for="s in sides" :key="s" :label="s">{{ s==='IN'?'收佣线(IN)':'付佣线(OUT)' }}</el-radio-button>
     </el-radio-group>
@@ -121,6 +145,7 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
         </template>
       </el-table-column>
     </el-table>
+   </template>
 
     <!-- 内催佣金链 -->
     <template v-if="showCoComm">
@@ -130,13 +155,17 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
         <el-table-column label="应结"><template #default="{row}">{{ yuan(row.dueCents) }}</template></el-table-column>
         <el-table-column label="已结"><template #default="{row}">{{ yuan(row.settledCents) }}</template></el-table-column>
         <el-table-column label="未结"><template #default="{row}">{{ yuan(row.unsettledCents) }}</template></el-table-column>
+        <el-table-column label="操作" width="170"><template #default="{row}">
+          <el-button size="small" @click="setRate(row)">设比例</el-button>
+          <el-button size="small" type="primary" @click="genCoPayDoc(row)">生成佣金单</el-button>
+        </template></el-table-column>
       </el-table>
-      <div style="margin:8px 0;color:#909399;font-size:13px">佣金支付单（GET /co-pay-docs）</div>
+      <div style="margin:8px 0;color:#909399;font-size:13px">佣金支付单（GET /co-pay-docs · PENDING_PAY → 确认支付 → SETTLED）</div>
       <el-table :data="coDocs" border size="small">
         <el-table-column prop="collectorName" label="催收员" /><el-table-column prop="count" label="笔数" width="70" />
         <el-table-column label="金额"><template #default="{row}">{{ yuan(row.amountCents) }}</template></el-table-column>
-        <el-table-column prop="status" label="状态" width="120" />
-        <el-table-column label="操作" width="110"><template #default="{row}"><el-button v-if="row.status!=='PAID'" size="small" type="primary" @click="confirmPay(row)">确认支付</el-button></template></el-table-column>
+        <el-table-column label="状态" width="120"><template #default="{row}"><el-tag size="small" :type="row.status==='SETTLED'?'success':'warning'">{{ row.status==='SETTLED'?'已结':'待支付' }}</el-tag></template></el-table-column>
+        <el-table-column label="操作" width="110"><template #default="{row}"><el-button v-if="row.status==='PENDING_PAY'" size="small" type="primary" @click="confirmPay(row)">确认支付</el-button></template></el-table-column>
       </el-table>
     </template>
     <template v-if="mySettle">

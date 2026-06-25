@@ -375,6 +375,8 @@ public class PaymentRequestM9Controller {
     /** 读端点组织级 scope（在 assertSideVisible 之后，复核单据归属本组织）。 */
     private void appendOrgScope(CurrentSubject s, String side, StringBuilder where, List<Object> args) {
         if (s.isPlatform()) return;                            // 平台全量
+        // 催收员(CO)不见组织级支付申请单(US-M9-09 本人佣金只读,走 /me/settlement)→裁剪为空。
+        if ("CO".equals(s.role())) { where.append(" AND 1 = 0"); return; }
         if (SIDE_IN.equals(side)) {                            // 物业：按 batch→project.org_id
             where.append(" AND p.org_id = ?");
             args.add(orgIdLong(s));

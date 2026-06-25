@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 
@@ -31,6 +31,13 @@ async function act(id: string, path: any, verb: string, body?: any) {
   if (error) { ElMessage.error(`${verb}失败：${(error as any)?.message ?? '冲突或无权限'}`); return }
   ElMessage.success(`${verb}成功`)
   load()
+}
+// VL 拒接：须填原因（ReasonInput.reason，BR-M3-03a），否则后端 422
+async function rejectCase(id: string) {
+  try {
+    const { value: reason } = await ElMessageBox.prompt('拒接原因（BR-M3-03a 必填）', '拒接案件', { inputValidator: (v: string) => !!v || '原因必填' })
+    await act(id, '/cases/{id}/reject', '拒接', { reason })
+  } catch { /* 取消 */ }
 }
 // VL 指派：把本商承接的案件分给某催收员（POST /cases/{id}/assign）
 const adlg = ref(false); const aForm = ref<any>({ id: '', collectorId: '' })
@@ -71,7 +78,7 @@ onMounted(load)
           <!-- VL：承接/拒接（已派到本商、待接） -->
           <template v-if="auth.has('case.accept') && row.pool==='PROVIDER_SEA'">
             <el-button size="small" :loading="acting===row.id+'承接'" @click="act(row.id,'/cases/{id}/accept','承接')">承接</el-button>
-            <el-button size="small" :loading="acting===row.id+'拒接'" @click="act(row.id,'/cases/{id}/reject','拒接')">拒接</el-button>
+            <el-button size="small" :loading="acting===row.id+'拒接'" @click="rejectCase(row.id)">拒接</el-button>
           </template>
           <!-- SA：开放抢单（平台公海案件→开放池） -->
           <el-button v-if="auth.has('case.dispatch') && row.pool==='PLATFORM_SEA'" size="small"

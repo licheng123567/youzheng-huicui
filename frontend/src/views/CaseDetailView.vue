@@ -46,10 +46,11 @@ async function uploadRecording(e: any) {
   if (!r.ok) { ElMessage.error('上传失败 ' + r.status); return }
   ElMessage.success('已上传，解析中'); getLatest()
 }
-async function parseRec(recId: string) {
-  const { error } = await api.POST('/recordings/{id}/parse', { params: { path: { id: recId } } } as any)
-  if (error) { ElMessage.error('解析失败：' + ((error as any)?.message ?? '')); return }
-  ElMessage.success('已触发解析'); getLatest()
+// FAILED 走 /reprocess(重处理)；parse 仅 QUOTA_BLOCKED/READY 补解析(BR-M5-08)
+async function reprocessRec(recId: string) {
+  const { error } = await api.POST('/recordings/{id}/reprocess', { params: { path: { id: recId } } } as any)
+  if (error) { ElMessage.error('重处理失败：' + ((error as any)?.message ?? '')); return }
+  ElMessage.success('已触发重处理'); getLatest()
 }
 const mkdlg = ref(false); const mkForm = ref<any>({})
 function openMark(recId: string) { mkForm.value = { recId, mark: 'PROMISED' }; mkdlg.value = true }
@@ -189,7 +190,7 @@ onMounted(loadAll)
             <el-descriptions-item label="时长">{{ latest.recording.durationSec }}s</el-descriptions-item>
             <el-descriptions-item label="操作">
               <el-button size="small" type="primary" @click="loadReview(latest.recording.id)">看 AI 复盘</el-button>
-              <el-button v-if="latest.recording.status==='FAILED'" size="small" @click="parseRec(latest.recording.id)">重新解析</el-button>
+              <el-button v-if="latest.recording.status==='FAILED'" size="small" @click="reprocessRec(latest.recording.id)">重新处理</el-button>
               <el-button v-if="auth.has('case.call')" size="small" @click="openMark(latest.recording.id)">标记结果</el-button>
             </el-descriptions-item>
           </el-descriptions>

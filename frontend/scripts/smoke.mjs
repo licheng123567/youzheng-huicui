@@ -169,6 +169,25 @@ if (b2) {
   }
 }
 check('VL 内催佣金名册 GET /co-commissions → 200', (await getJson('/co-commissions?page=1&size=20', vl)).status === 200)
+// codex 审计修复验证
+const allCx = await getJson('/cases?page=1&size=50', sa)
+// ① 拒接：缺 reason→422，带 reason→2xx(S1 案件 PROVIDER_SEA 待接)
+const s1c = (allCx.body?.items || []).find((c) => c.acctNo === 'M3-S1-01')
+if (s1c) {
+  check('VL 拒接缺 reason → 422', (await post(`/cases/${s1c.id}/reject`, vl, {})).status === 422)
+  check('VL 拒接带 reason → 2xx', [200, 201, 204].includes((await post(`/cases/${s1c.id}/reject`, vl, { reason: '不接此批' })).status))
+}
+// ③ 内催: 设比例 + 生成单(用 S2 批次未结明细) + 确认支付
+const coAcct = (await getJson('/me', co)).body?.id
+const b2id = (bsSa.body?.items || []).find((b) => b.code === 'B-CH-2026-01')?.id
+if (coAcct && b2id) {
+  check('VL 设催收员佣金比例 → 2xx', [200, 201, 204].includes((await fetch(`${B}/co-commissions/${coAcct}/batches/${b2id}/rate`, { method: 'PUT', headers: { Authorization: `Bearer ${vl}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ rate: 0.15 }) })).status))
+}
+// ④ CO 越权: CO 拉 /payment-requests?side=OUT 应空(裁剪 1=0)
+const coPr = await getJson('/payment-requests?side=OUT&page=1&size=20', co)
+check('CO 看组织付佣单 → 空(US-M9-09 裁剪)', coPr.status === 200 && (coPr.body?.items?.length ?? 0) === 0)
+// ⑤ billing 只读: PL 读 usage(range 无 perm) → 200
+check('PL 读 billing/usage(range 无perm) → 200', (await getJson('/billing/usage', pl)).status === 200)
 
 // M5 质检
 const risks = await getJson('/risks?page=1&size=30', sa)

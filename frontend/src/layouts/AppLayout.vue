@@ -21,7 +21,7 @@ const MENU = [
   { path: '/risks', label: '质检', perms: ['qc.dispose', 'qc.review', 'qc.escalate'] },
   { path: '/reports', label: '报表', perms: ['report.export'], platform: true },
   { path: '/evidence', label: '存证', perms: ['evidence.create'], platform: true },
-  { path: '/billing', label: '计费', perms: ['billing.recharge'], platform: true },
+  { path: '/billing', label: '计费' },   // usage/recharge-log 无 x-permission·range 读(物业/服务商/平台均可看本范围)；充值按钮内部按 billing.recharge 门控
   { path: '/settings', label: '设置', perms: ['settings.manage'] },
   { path: '/members', label: '成员', perms: ['member.manage'] },
 ]
