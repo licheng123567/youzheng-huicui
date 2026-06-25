@@ -8,6 +8,7 @@ import com.youzheng.huicui.common.RoleResponse;
 import com.youzheng.huicui.error.ApiException;
 import com.youzheng.huicui.error.BizError;
 import com.youzheng.huicui.security.CurrentSubject;
+import com.youzheng.huicui.security.RequirePermission;
 import com.youzheng.huicui.security.SubjectContext;
 import com.youzheng.huicui.web.dto.ProjectDtos.CoordinatorRef;
 import com.youzheng.huicui.web.dto.ProjectDtos.FeeRow;
@@ -15,17 +16,24 @@ import com.youzheng.huicui.web.dto.ProjectDtos.Litigation;
 import com.youzheng.huicui.web.dto.ProjectDtos.Project;
 import com.youzheng.huicui.web.dto.ProjectDtos.ProjectForProvider;
 import com.youzheng.huicui.web.dto.ProjectDtos.ReduceTier;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -152,6 +160,100 @@ public class ProjectsM2Controller {
                 "PROVIDER", base.id(), base.name(), base.area(), base.propCompany(),
                 base.contractType(), feeStdOf(base.feeRows()), base.feeCycle(),
                 base.penalty(), base.payInfo(), tiers, base.litigation(), base.status());
+    }
+
+    // ---------------------------------------------------------------------
+    // [3] POST /projects — createProject（proj.edit, own-org：物业建本组织项目；SA 建于平台组织）
+    // ---------------------------------------------------------------------
+    @PostMapping("/projects")
+    @RequirePermission("proj.edit")
+    @ResponseStatus(HttpStatus.CREATED)
+    @Transactional
+    public Project createProject(@RequestBody(required = false) Map<String, Object> body) {
+        CurrentSubject s = SubjectContext.get();
+        String name = reqStr(body, "name"), area = reqStr(body, "area");
+        java.math.BigDecimal rate = reqRate(body, "commInRate");   // Rate 分数 0-1
+        Long id = jdbc.queryForObject(
+                "INSERT INTO project(org_id, name, org_name, area, province, city, district,"
+                        + " prop_company, contract_type, fee_rows, fee_cycle, penalty, pay_info, comm_in_rate, status)"
+                        + " VALUES (?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,'ACTIVE') RETURNING id",
+                Long.class, Long.parseLong(s.orgId()), name, s.orgName(), area,
+                str(body, "province"), str(body, "city"), str(body, "district"),
+                str(body, "propCompany"), str(body, "contractType"), feeRowsJson(body.get("feeRows")),
+                str(body, "feeCycle"), str(body, "penalty"), str(body, "payInfo"), rate);
+        return fetchPlatformProject(id);
+    }
+
+    // ---------------------------------------------------------------------
+    // [4] PUT /projects/{id} — updateProject（proj.edit, own-org）
+    // ---------------------------------------------------------------------
+    @PutMapping("/projects/{id}")
+    @RequirePermission("proj.edit")
+    @Transactional
+    public Project updateProject(@PathVariable("id") String id, @RequestBody(required = false) Map<String, Object> body) {
+        CurrentSubject s = SubjectContext.get();
+        long projectId = parseIdOr404(id);
+        requireOwnOrgProject(s, projectId);   // 不存在→404 / 越组织→403
+        String name = reqStr(body, "name"), area = reqStr(body, "area");
+        java.math.BigDecimal rate = reqRate(body, "commInRate");
+        jdbc.update(
+                "UPDATE project SET name=?, area=?, province=?, city=?, district=?, prop_company=?,"
+                        + " contract_type=?, fee_rows=?::jsonb, fee_cycle=?, penalty=?, pay_info=?, comm_in_rate=?, updated_at=now()"
+                        + " WHERE id=?",
+                name, area, str(body, "province"), str(body, "city"), str(body, "district"), str(body, "propCompany"),
+                str(body, "contractType"), feeRowsJson(body.get("feeRows")), str(body, "feeCycle"), str(body, "penalty"),
+                str(body, "payInfo"), rate, projectId);
+        return fetchPlatformProject(projectId);
+    }
+
+    /** 创建/更新后重取完整平台视角 Project（含 tiers/coords/财务汇总）。 */
+    private Project fetchPlatformProject(long projectId) {
+        List<Project> rows = jdbc.query("SELECT p.* FROM project p WHERE p.id = ?", projectRowMapper(false), projectId);
+        if (rows.isEmpty()) throw notFound();
+        Project base = rows.get(0);
+        List<ReduceTier> tiers = jdbc.query(
+                "SELECT discount, cap_cents, waive_penalty, decide FROM reduce_tier WHERE project_id = ? AND batch_id IS NULL ORDER BY id",
+                (rs, i) -> new ReduceTier(rs.getString("discount"), (Long) rs.getObject("cap_cents"), rs.getBoolean("waive_penalty"), rs.getString("decide")),
+                projectId);
+        List<CoordinatorRef> coords = jdbc.query(
+                "SELECT a.id AS id, a.name AS name FROM project_coordinators pc JOIN account a ON a.id = pc.coordinator_id WHERE pc.project_id = ? ORDER BY a.id",
+                (rs, i) -> new CoordinatorRef(String.valueOf(rs.getLong("id")), rs.getString("name")), projectId);
+        return new Project("PROPERTY_PLATFORM", base.id(), base.name(), base.area(), base.province(),
+                base.city(), base.district(), base.propCompany(), base.contractType(),
+                base.feeRows(), base.feeCycle(), base.penalty(), base.payInfo(),
+                base.commInRate(), base.org(), base.status(),
+                sumCaseDue(projectId), sumRepay(projectId), coords, tiers, base.litigation());
+    }
+
+    private void requireOwnOrgProject(CurrentSubject s, long projectId) {
+        Long orgId = jdbc.query("SELECT org_id FROM project WHERE id = ?", rs -> rs.next() ? rs.getLong(1) : null, projectId);
+        if (orgId == null) throw notFound();
+        if (!s.isPlatform() && orgId != Long.parseLong(s.orgId())) throw new ApiException(BizError.PERM_403, "无权操作非本组织项目");
+    }
+
+    private long parseIdOr404(String id) {
+        try { return Long.parseLong(id); } catch (NumberFormatException e) { throw notFound(); }
+    }
+    private String reqStr(Map<String, Object> b, String k) {
+        Object v = b == null ? null : b.get(k);
+        if (v == null || String.valueOf(v).isBlank()) throw new ApiException(BizError.VALIDATION_422, k + " 必填");
+        return String.valueOf(v);
+    }
+    private String str(Map<String, Object> b, String k) {
+        Object v = b == null ? null : b.get(k);
+        return v == null ? null : String.valueOf(v);
+    }
+    private java.math.BigDecimal reqRate(Map<String, Object> b, String k) {
+        Object v = b == null ? null : b.get(k);
+        if (v == null) throw new ApiException(BizError.VALIDATION_422, k + " 必填");
+        java.math.BigDecimal r;
+        try { r = new java.math.BigDecimal(String.valueOf(v)); } catch (Exception e) { throw new ApiException(BizError.VALIDATION_422, k + " 非法"); }
+        if (r.signum() < 0 || r.compareTo(java.math.BigDecimal.ONE) > 0) throw new ApiException(BizError.VALIDATION_422, k + " 须为 0-1 分数");
+        return r;
+    }
+    private String feeRowsJson(Object feeRows) {
+        if (feeRows == null) return null;
+        try { return om.writeValueAsString(feeRows); } catch (Exception e) { return null; }
     }
 
     // ---------------------------------------------------------------------

@@ -15,12 +15,18 @@ import com.youzheng.huicui.web.dto.CaseDetailDto;
 import com.youzheng.huicui.web.dto.CaseDto;
 import com.youzheng.huicui.web.dto.CaseProjectRefDto;
 import com.youzheng.huicui.web.dto.CaseReduceTierDto;
+import com.youzheng.huicui.security.RequirePermission;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -195,6 +201,55 @@ public class CasesM2Controller {
     // ── helpers ──────────────────────────────────────────────────────────────
 
     /** x-data-scope=range 追加到 WHERE（含前导 AND）。平台不限；物业按 p.org_id；服务商按 b.provider_id。 */
+    // ── PATCH /cases/{id} patchCase（case.follow, range）：补充诉讼要素/联系方式/说明,不改案件状态(BR-M2-14/M4-18a）──
+    @PatchMapping("/cases/{id}")
+    @RequirePermission("case.follow")
+    @Transactional
+    @SuppressWarnings("unchecked")
+    public CaseDto patchCase(@PathVariable("id") String id, @RequestBody(required = false) Map<String, Object> body) {
+        CurrentSubject s = SubjectContext.get();
+        long caseId;
+        try { caseId = Long.parseLong(id); } catch (NumberFormatException e) { throw new ApiException(BizError.NOT_FOUND_404, "案件不存在"); }
+        // 存在性(404)优先于可见性(403)
+        List<CaseDto> found = jdbc.query(
+                "SELECT c.* FROM \"case\" c JOIN project p ON p.id=c.project_id JOIN batch b ON b.id=c.batch_id WHERE c.id = ?",
+                caseRowMapper(s), caseId);
+        if (found.isEmpty()) throw new ApiException(BizError.NOT_FOUND_404, "案件不存在: " + id);
+        if (!visibleByScope(s, caseId)) throw new ApiException(BizError.PERM_403, "无权操作该案件");
+
+        if (body != null) {
+            Object lit = body.get("litigationFields");
+            if (lit != null) {
+                String litJson;
+                try { litJson = json.writeValueAsString(lit); } catch (Exception e) { throw new ApiException(BizError.VALIDATION_422, "litigationFields 非法"); }
+                jdbc.update("UPDATE \"case\" SET litigation_fields = ?::jsonb, updated_at = now() WHERE id = ?", litJson, caseId);
+            }
+            Object contacts = body.get("contacts");
+            if (contacts instanceof List<?> list) {
+                for (Object o : list) {
+                    if (!(o instanceof Map<?, ?> c)) continue;
+                    Object phone = c.get("phone");
+                    if (phone == null || String.valueOf(phone).isBlank()) throw new ApiException(BizError.VALIDATION_422, "联系方式 phone 必填");
+                    jdbc.update("INSERT INTO contact(case_id, phone, label, is_primary, invalid) VALUES (?, ?, ?, ?, ?)",
+                            caseId, String.valueOf(phone), c.get("label") == null ? null : String.valueOf(c.get("label")),
+                            Boolean.TRUE.equals(c.get("isPrimary")), Boolean.TRUE.equals(c.get("invalid")));
+                }
+            }
+            Object note = body.get("note");
+            if (note != null && !String.valueOf(note).isBlank()) {
+                // 不改状态：补充说明落 activity NOTE 留痕。
+                Long actorId = null;
+                try { actorId = Long.parseLong(s.accountId()); } catch (Exception ignore) {}
+                jdbc.update("INSERT INTO activity(case_id, type, actor_id, content) VALUES (?, 'NOTE', ?, ?)",
+                        caseId, actorId, String.valueOf(note));
+            }
+        }
+        // 重取(契约 PATCH 返 Case)
+        return jdbc.query(
+                "SELECT c.* FROM \"case\" c JOIN project p ON p.id=c.project_id JOIN batch b ON b.id=c.batch_id WHERE c.id = ?",
+                caseRowMapper(s), caseId).get(0);
+    }
+
     private void appendRangeScope(CurrentSubject s, StringBuilder where, List<Object> args) {
         if (s.isPlatform()) return;                       // 平台全量
         if ("PROVIDER".equals(s.orgType())) {

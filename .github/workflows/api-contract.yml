@@ -24,6 +24,15 @@ jobs:
       - name: Spectral lint
         run: npx -y @stoplight/spectral-cli lint "$SPEC" --ruleset docs/api/.spectral.yaml --fail-severity=error
 
+  route-coverage:                      # Gate0c：契约每个 operation 必须有后端 handler。
+    runs-on: ubuntu-latest               # 补 gate1 盲区：缺 handler 返 404,被 not_a_server_error/response_schema 放过(排除了 status_code_conformance)。静态对账,无需起后端。
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.12" }
+      - name: 路由覆盖对账（契约 operation ↔ 控制器 @*Mapping）
+        run: pip install pyyaml && python3 backend/scripts/route_coverage.py
+
   breaking-change:                     # Gate0b：破坏性变更检测（删字段/改类型/改必填 → 标 breaking，需升版本+双 approve）
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
