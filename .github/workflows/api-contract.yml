@@ -34,9 +34,9 @@ jobs:
           git show "origin/${{ github.base_ref }}:$SPEC" > /tmp/base.yaml 2>/dev/null || { echo "base 无契约，跳过"; exit 0; }
           docker run --rm -v /tmp:/tmp -v "$PWD:/repo" tufin/oasdiff breaking /tmp/base.yaml "/repo/$SPEC" --fail-on ERR
 
-  contract-test:                       # Gate1：后端必须符合契约（命门）。需后端可达；未就绪时本 job 可暂置 continue-on-error
+  contract-test:                       # Gate1：后端必须符合契约（命门）。需后端可达。
     runs-on: ubuntu-latest
-    # continue-on-error: true          # 后端尚未实现时临时放开；实现后去掉，转硬红线
+    continue-on-error: true            # 【地基期】后端未起→放开，仅信息。每完成一里程碑模块，把该模块 path 纳入 gate1-strict 硬校验；全部实现后删本 job、gate1-strict 去过滤=整体硬红线。
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -48,6 +48,24 @@ jobs:
           # 注：契约用 OpenAPI 3.1.0；--checks all 校验状态码/响应 schema/错误结构是否符合契约
           schemathesis run "$SPEC" --base-url "$TARGET" --checks all --hypothesis-max-examples=20 || {
             echo "::error::后端响应违反契约（Gate1 命门）"; exit 1; }
+
+  gate1-strict:                        # Gate1 硬红线·按里程碑逐模块收紧：只打"已实现模块"的 path，违约即挂。
+    runs-on: ubuntu-latest               # 每完成一个里程碑，往 DONE_PATHS 加该模块 path 正则；全部完成后删过滤 + 删 contract-test/continue-on-error。
+    env:
+      # 已转硬红线的模块 path 正则（地基期为空=本 job 跳过；M1 完成后填 "^/auth|^/me" …）
+      DONE_PATHS: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: schemathesis 硬校验已完成模块
+        if: ${{ env.DONE_PATHS != '' }}
+        env: { TARGET: "${{ vars.API_BASE_URL || 'http://localhost:8080/v1' }}" }
+        run: |
+          pip install schemathesis
+          schemathesis run "$SPEC" --base-url "$TARGET" --checks all \
+            --include-path-regex "$DONE_PATHS" --hypothesis-max-examples=30 || {
+            echo "::error::已完成模块响应违反契约（Gate1 硬红线）"; exit 1; }
 
   mock-smoke:                          # 辅助：Prism 起 mock，确保契约可被 mock（前端可对 mock 开发）
     runs-on: ubuntu-latest
