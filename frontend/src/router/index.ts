@@ -14,6 +14,7 @@ const router = createRouter({
         { path: 'projects', name: 'projects', component: () => import('../views/ProjectsView.vue') },
         { path: 'projects/:id', name: 'project-detail', component: () => import('../views/ProjectDetailView.vue') },
         { path: 'batches', name: 'batches', component: () => import('../views/BatchesView.vue') },
+        { path: 'sea', name: 'sea', component: () => import('../views/SeaView.vue') },
         { path: 'cases', name: 'cases', component: () => import('../views/CasesView.vue') },
         { path: 'cases/:id', name: 'case-detail', component: () => import('../views/CaseDetailView.vue') },
       ],

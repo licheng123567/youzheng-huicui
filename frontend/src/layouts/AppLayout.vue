@@ -29,6 +29,7 @@ function logout() {
           <el-menu-item index="/dashboard">当前主体</el-menu-item>
           <el-menu-item index="/projects">项目</el-menu-item>
           <el-menu-item index="/batches">批次</el-menu-item>
+          <el-menu-item index="/sea">公海</el-menu-item>
           <el-menu-item index="/cases">案件</el-menu-item>
         </el-menu>
       </el-aside>

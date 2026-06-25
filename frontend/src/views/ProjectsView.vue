@@ -31,7 +31,7 @@ onMounted(load)
       <el-table-column label="物业"><template #default="{ row }">{{ row.org?.name ?? row.orgName }}</template></el-table-column>
       <el-table-column prop="area" label="区域" width="100" />
       <el-table-column label="收佣比例" width="110">
-        <template #default="{ row }">{{ row.commInRate != null ? row.commInRate + '%' : '—（服务商视角无）' }}</template>
+        <template #default="{ row }">{{ row.commInRate != null ? (row.commInRate * 100).toFixed(2) + '%' : '—（服务商视角无）' }}</template>
       </el-table-column>
       <el-table-column prop="status" label="状态" width="90" />
     </el-table>
