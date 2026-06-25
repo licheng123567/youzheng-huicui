@@ -190,5 +190,19 @@ if (impBatchId) {
   check('SA 作废导入批次 → 2xx(留痕)', [200, 201, 204].includes((await post(`/batches/${impBatchId}/void`, sa, { reason: 'E2E 作废' })).status))
 }
 
+// 成员管理/督导（PL 管本组织成员）+ reset-password 指定 newPassword(#3 验证)
+const newMem = await post('/members', pl, { username: 'pc_e2e', name: '协调员E2E', phone: '13900009999', role: 'PC' })
+check('PL 建本组织成员 → 2xx', [200, 201].includes(newMem.status), 'HTTP ' + newMem.status)
+const memId = newMem.body?.id
+if (memId) {
+  check('PL 重置成员密码(指定 newPassword) → 2xx', [200, 201].includes((await post(`/members/${memId}/reset-password`, pl, { newPassword: 'Pc@E2E123' })).status))
+  // 验证 #3: 指定的 newPassword 真生效(新成员能用它登录)
+  const memLogin = await fetch(`${B}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'password', username: 'pc_e2e', password: 'Pc@E2E123' }) })
+  check('新成员用指定口令登录 → 200(#3 newPassword 生效)', memLogin.status === 200)
+  check('PL 督导成员(TRAINING) → 2xx', [200, 201].includes((await post(`/members/${memId}/supervision-actions`, pl, { action: 'TRAINING', note: 'E2E 培训' })).status))
+  check('PL 停用成员 → 2xx', [200, 201, 204].includes((await post(`/members/${memId}/disable`, pl, {})).status))
+}
+check('VL 改翠湖成员 → 403(跨组织 BR-M1-04a)', memId ? (await post(`/members/${memId}/disable`, vl, {})).status === 403 : true)
+
 console.log(fail === 0 ? '\n🎉 全 117 端点·全模块端到端全过 — 契约优先全链路贯通' : `\n⚠ ${fail} 项失败`)
 process.exit(fail === 0 ? 0 : 1)
