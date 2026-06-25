@@ -450,10 +450,16 @@ public class CoCommissionM9Controller {
 
     /** 本人（me/settlement）：本人设过比例的（批次,比率）——不限 provider，本人天然属本商。 */
     private List<RateBatch> loadRateBatchesSelf(long collectorId) {
+        // 仅本商批次：JOIN batch 并按 provider_id = 本人所属服务商 org 过滤，
+        // 防历史跨商设过比例的批次串入本人结算(审计 M-3)。
         return jdbc.query(
-                "SELECT batch_id, rate FROM co_commission WHERE collector_id = ? ORDER BY batch_id",
+                "SELECT cc.batch_id, cc.rate FROM co_commission cc"
+                        + " JOIN batch b ON b.id = cc.batch_id"
+                        + " WHERE cc.collector_id = ?"
+                        + "   AND b.provider_id = (SELECT org_id FROM account WHERE id = ?)"
+                        + " ORDER BY cc.batch_id",
                 (rs, i) -> new RateBatch(rs.getLong("batch_id"), rs.getBigDecimal("rate")),
-                collectorId);
+                collectorId, collectorId);
     }
 
     /**
@@ -578,17 +584,15 @@ public class CoCommissionM9Controller {
     // ── activity 审计 ─────────────────────────────────────────────────────────
     // 内部提成无关联单一案件（聚合维度=人/单），写无 case_id 维度审计行（type 复用 activity）。
     private void insertCoActivity(String type, Long actorId, String content) {
-        // activity 表要求 case_id 非空；内部提成审计无单一案件锚点，落 NULL 不可——
-        // 故此处以「不抛错」为底线：activity 写失败不应阻断主流程（审计尽力）。TODO: 专用 co_audit 表。
+        // 佣金线属资金动作须留痕。activity.case_id NOT NULL 而内部提成无单一案件锚点——
+        // 故改落 audit_log(无 case 约束)，确保设比例/生成佣金单/确认支付有审计(审计 M-2)。
         try {
             jdbc.update(
-                    "INSERT INTO activity(case_id, type, actor_id, content, ref_type, ref_id, method)"
-                            + " SELECT NULL, ?, ?, ?, 'co_commission', NULL, NULL"
-                            + " WHERE EXISTS (SELECT 1)",
-                    type, actorId, content);
+                    "INSERT INTO audit_log(actor_id, actor, action, target, target_type)"
+                            + " VALUES (?, ?, ?, ?, 'co_commission')",
+                    actorId, String.valueOf(actorId), type, content);
         } catch (RuntimeException e) {
-            // 审计尽力而为：case_id NOT NULL 约束下内部提成审计无法落 activity，吞掉不影响主流程。
-            // 关键写操作的业务一致性已由事务+乐观/行锁保证，审计缺失留 TODO 补专用表。
+            // 审计尽力而为：写失败不阻断主流程（业务一致性已由事务+乐观/行锁保证）。
         }
     }
 

@@ -9,7 +9,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -71,22 +70,8 @@ public class AuthController {
         throw new ApiException(BizError.VALIDATION_422, "多账号选择待 M1 完整实现");
     }
 
-    /** 骨架：按角色给代表性权限点（生产从 permission 表/角色模板加载）。 */
+    /** 骨架：按角色给代表性权限点。单一事实来源见 {@link com.youzheng.huicui.common.Permissions}（M10 权限矩阵共用）。 */
     private Set<String> permissionsOf(String role) {
-        return switch (role) {
-            // 平台：派单/再派/开放抢单/作废 + 结算/质检/主数据
-            case "SA", "SE" -> Set.of("proj.edit", "batch.import", "case.dispatch", "case.void", "case.close",
-                    "payreq.create", "payreq.complete", "qc.review", "qc.escalate", "member.manage", "report.export");
-            // 物业负责人/协调员（+处置/上报本物业员工质检风险 BR-M5-07a；+撤案/坏账 BR-M8）
-            case "PL", "PC" -> Set.of("proj.edit", "reduce.policy.edit", "case.follow", "case.paylink",
-                    "case.repay.mark", "case.reduce", "evidence.create", "legal.create", "qc.dispose", "qc.escalate", "case.close");
-            // 服务商负责人：承接/拒接/分配/退案 + 处置/上报本商催收员风险(BR-M5-07a)
-            case "VL" -> Set.of("case.accept", "case.assign", "case.return", "cocomm.manage", "payreq.create",
-                    "qc.dispose", "qc.escalate");
-            // 催收员：抢单/释放/跟进/通话/承诺/工单/缴费链接/标回款
-            case "CO" -> Set.of("case.claim", "case.release", "case.follow", "case.call",
-                    "case.promise", "case.ticket", "case.paylink", "case.repay.mark", "cocomm.self.view");
-            default -> Set.of();
-        };
+        return com.youzheng.huicui.common.Permissions.of(role);
     }
 }

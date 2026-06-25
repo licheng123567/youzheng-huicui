@@ -50,6 +50,12 @@ public class GlobalExceptionHandler {
         return build(BizError.NOT_FOUND_404, "资源不存在", null);
     }
 
+    /** 唯一约束冲突(如并发生成同单号 payment_request.no)→ 409 可重试，而非兜底 422(审计 H-3)。 */
+    @ExceptionHandler(org.springframework.dao.DuplicateKeyException.class)
+    public ResponseEntity<ApiError> handleDuplicate(Exception ex) {
+        return build(BizError.STATE_409, "资源冲突（并发或重复），请重试", null);
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> handleOther(Exception ex) {
         // 兜底：对客户端不泄露内部细节(仅 traceId+异常类名)，但服务端必须记完整堆栈——

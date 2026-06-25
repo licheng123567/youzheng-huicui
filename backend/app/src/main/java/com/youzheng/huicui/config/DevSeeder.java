@@ -66,6 +66,9 @@ public class DevSeeder implements CommandLineRunner {
         Long co1 = ensureCollector(provider, "jx_co1", "催收员甲", "13900000004", hash);
         Long co2 = ensureCollector(provider, "jx_co2", "催收员乙", "13900000005", hash);
 
+        // M10 监管动作：VL(jx_vl) 对本组织成员 CO(jx_co1) 种 1 条 TRAINING（own-org 裁剪目标）
+        seedM10Supervision(provider, "jx_vl", "jx_co1");
+
         // 4) ROTATION 配置（CFG-HOLDCAP）：holdCap=50
         ensureRotationSettings(50);
 
@@ -564,6 +567,42 @@ public class DevSeeder implements CommandLineRunner {
                     Long.class, coHolder, "[" + line2 + "]", coAmount);
             jdbc.update("INSERT INTO co_pay_doc_line(co_pay_doc_id, repay_line_id) VALUES (?, ?)", cpd, line2);
         }
+    }
+
+    // ── M10 组织监管动作种子（VL→CO，供 own-org 监管视图与处置端点有目标）──────────
+    //
+    // 表 supervision_action（V4__supervision_action.sql，物理隔离）。
+    // 给服务商负责人（操作人）对本组织催收员（被督导成员）种 1 条 TRAINING：
+    //   org_id   = 服务商组织（own-org 裁剪键）
+    //   member_id= 被督导催收员 account.id
+    //   operator_id = 负责人 account.id
+    // → GET /members/supervision（VL/own-org）返 ≥1 条；POST /members/{co}/supervision-actions 有目标成员。
+    // 幂等：本组织对该成员已有任一监管动作则跳过。
+
+    /**
+     * @param org              被督导成员所属组织 id（捷信催收）
+     * @param operatorUsername 操作人=组织负责人用户名（jx_vl）
+     * @param memberUsername   被督导成员用户名（jx_co1）
+     */
+    private void seedM10Supervision(Long org, String operatorUsername, String memberUsername) {
+        if (org == null) return;
+        Long operatorId = accountIdByUsername(operatorUsername);
+        Long memberId = accountIdByUsername(memberUsername);
+        if (operatorId == null || memberId == null) return;
+        Integer exists = jdbc.queryForObject(
+                "SELECT count(*) FROM supervision_action WHERE org_id = ? AND member_id = ?",
+                Integer.class, org, memberId);
+        if (exists != null && exists > 0) return;
+        jdbc.update(
+                "INSERT INTO supervision_action(org_id, member_id, action, note, operator_id) "
+                        + "VALUES (?, ?, 'TRAINING', '(演示)安排话术规范培训', ?)",
+                org, memberId, operatorId);
+    }
+
+    /** 按 username 取 account.id（不存在返 null）。 */
+    private Long accountIdByUsername(String username) {
+        return jdbc.query("SELECT id FROM account WHERE username = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, username);
     }
 
     /** 取 M2 演示批次下某户号案件 id。 */
