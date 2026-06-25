@@ -102,6 +102,22 @@ if (s3) {
   check('CO 发缴费链接 → 2xx', [200, 201].includes((await post(`/cases/${s3.id}/pay-links`, co, { channel: 'SMS' })).status))
   const pr = await getJson(`/cases/${s3.id}/promises?page=1&size=20`, co)
   check('GET 承诺列表增长(≥2)', (pr.body?.items?.length ?? 0) >= 2, '共 ' + pr.body?.meta?.total)
+  // P2 子链
+  check('CO 分期承诺 → 201', (await post(`/cases/${s3.id}/promises`, co, { date: '2026-09-01', amountCents: 200000, installments: [{ seq: 1, dueDate: '2026-09-01', amountCents: 100000 }, { seq: 2, dueDate: '2026-10-01', amountCents: 100000 }] })).status === 201)
+  check('CO 登记还款 → 201', (await post(`/cases/${s3.id}/repay-lines`, co, { amountCents: 50000, channel: 'WECHAT_QR', paidAt: '2026-06-25' })).status === 201)
+  check('CO 新增联系人 → 2xx', [200, 201].includes((await post(`/cases/${s3.id}/contacts`, co, { phone: '13900008888', label: '补充' })).status))
+  // 工单处理：S3 工单 to_role=PC → 协调员 cuihu_pc 处理(ticket.handle)
+  const pc = await login('cuihu_pc', 'Admin@123')
+  const tks = await getJson(`/cases/${s3.id}/tickets?page=1&size=20`, co)
+  const pendTk = (tks.body?.items || []).find((t) => t.status === 'PENDING')
+  if (pendTk) check('PC 处理工单(ticket.handle) → 2xx', [200, 201].includes((await post(`/tickets/${pendTk.id}/handle`, pc, { result: '已上门核实' })).status))
+  // 录音结果标记(S3 种子录音)
+  const lat2 = await getJson(`/cases/${s3.id}/recordings/latest`, co)
+  const recId2 = lat2.body?.recording?.id
+  if (recId2) check('CO 通话结果标记 → 2xx', [200, 201].includes((await post(`/recordings/${recId2}/ai-review`, co, { mark: 'PROMISED' })).status))
+  // 法务/存证(PL: legal.create/evidence.create)；存证 RECORDING 场景关联就绪录音
+  check('PL 申请法务文书 → 2xx', [200, 201].includes((await post(`/cases/${s3.id}/legal-docs`, pl, { type: 'COLLECTION_LETTER' })).status))
+  if (recId2) check('PL 发起存证(RECORDING) → 2xx', [200, 201].includes((await post(`/cases/${s3.id}/evidence`, pl, { scene: 'RECORDING', refIds: [String(recId2)] })).status))
 } else {
   check('找到 S3 案件', false)
 }
@@ -173,7 +189,8 @@ if (active) {
 // M6 存证 / M10 报表 / M7 H5
 const ev = await getJson('/evidence?page=1&size=20', sa)
 check('GET /evidence 列表(SA·三方隔离)', (ev.body?.items?.length ?? 0) >= 1, '共 ' + ev.body?.meta?.total)
-const evId = ev.body?.items?.[0]?.id
+// 取已出证(ISSUED·有 certNo)的存证验真；ISSUING 的尚无证书号(P2 可能新建在前)
+const evId = (ev.body?.items || []).find((e) => e.status === 'ISSUED' || e.certNo)?.id ?? ev.body?.items?.[0]?.id
 if (evId) {
   // 验真 public：不带 token 也能验
   const vf = await fetch(`${B}/evidence/${evId}/verify`)

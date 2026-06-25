@@ -26,13 +26,13 @@ public final class Permissions {
             // 物业负责人/协调员（+处置/上报质检 BR-M5-07a；+撤案/坏账 BR-M8；+管本组织成员；+采纳作战手册 BR-M5）
             case "PL", "PC" -> Set.of("proj.edit", "reduce.policy.edit", "case.follow", "case.paylink",
                     "case.repay.mark", "case.reduce", "evidence.create", "legal.create", "qc.dispose", "qc.escalate",
-                    "case.close", "member.manage", "playbook.adopt");
-            // 服务商负责人：承接/拒接/分配/退案 + 处置/上报本商催收员风险 + 管本商成员
+                    "case.close", "member.manage", "playbook.adopt", "ticket.handle");   // 协调员处理 CO 转来的工单
+            // 服务商负责人：承接/拒接/分配/退案 + 处置/上报本商催收员风险 + 管本商成员 + 处理工单
             case "VL" -> Set.of("case.accept", "case.assign", "case.return", "cocomm.manage", "payreq.create",
-                    "qc.dispose", "qc.escalate", "member.manage");
-            // 催收员：抢单/释放/跟进/通话/承诺/工单/缴费链接/标回款
+                    "qc.dispose", "qc.escalate", "member.manage", "ticket.handle");
+            // 催收员：抢单/释放/跟进/通话/承诺/工单/缴费链接/标回款 + 处理工单
             case "CO" -> Set.of("case.claim", "case.release", "case.follow", "case.call",
-                    "case.promise", "case.ticket", "case.paylink", "case.repay.mark", "cocomm.self.view");
+                    "case.promise", "case.ticket", "case.paylink", "case.repay.mark", "cocomm.self.view", "ticket.handle");
             default -> Set.of();
         };
     }
