@@ -143,5 +143,15 @@ const dtSa = await getJson('/dispose-tasks', sa)
 const dtVl = await getJson('/dispose-tasks', vl)
 check('处置任务跟踪仅平台(SA 200 / VL 403 BR-M5-07b)', dtSa.status === 200 && dtVl.status === 403, `SA ${dtSa.status}/VL ${dtVl.status}`)
 
-console.log(fail === 0 ? '\n🎉 M5 质检端到端全过 — 主干模块 M1-M5+M9 后端全绿' : `\n⚠ ${fail} 项失败`)
+// M8 结案（PL 撤案/坏账）
+const plCases = await getJson('/cases?page=1&size=50', pl)
+const active = (plCases.body?.items || []).find((c) => ['IN_PROGRESS', 'PROMISED', 'PROVIDER_SEA', 'PENDING_DISPATCH'].includes(c.status))
+if (active) {
+  check('PL 结案缺 reason → 422', (await post(`/cases/${active.id}/close`, pl, { kind: 'WITHDRAWN' })).status === 422)
+  check('CO 结案 → 403(无 case.close)', (await post(`/cases/${active.id}/close`, co, { kind: 'WITHDRAWN', reason: 'x' })).status === 403)
+  check('PL 撤案 → 200 WITHDRAWN', (await post(`/cases/${active.id}/close`, pl, { kind: 'WITHDRAWN', reason: '业主已售房' })).status === 200)
+  check('已终态再结案 → 409', (await post(`/cases/${active.id}/close`, pl, { kind: 'BAD_DEBT', reason: 'y' })).status === 409)
+}
+
+console.log(fail === 0 ? '\n🎉 全模块 M1-M5+M8+M9 端到端全过 — 核心闭环含生命周期收尾' : `\n⚠ ${fail} 项失败`)
 process.exit(fail === 0 ? 0 : 1)

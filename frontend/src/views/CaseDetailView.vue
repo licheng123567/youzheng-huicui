@@ -44,6 +44,7 @@ function openAct(kind: string, title: string, sourceSuggestionId?: string) {
   form.value = kind === 'follow' ? { content: '', method: 'CALL', sourceSuggestionId }
     : kind === 'promise' ? { date: '', amountYuan: 0, sourceSuggestionId }
     : kind === 'ticket' ? { type: '上门核实', note: '', sourceSuggestionId }
+    : kind === 'close' ? { closeKind: 'WITHDRAWN', reason: '' }
     : { channel: 'SMS', sourceSuggestionId }
   dlg.value = { open: true, kind, title }
 }
@@ -53,6 +54,7 @@ async function submitAct() {
   if (k === 'follow') res = await api.POST('/cases/{id}/follow-ups', { params: { path: { id } }, body: { content: f.content, method: f.method, sourceSuggestionId: f.sourceSuggestionId } as any })
   else if (k === 'promise') res = await api.POST('/cases/{id}/promises', { params: { path: { id } }, body: { date: f.date, amountCents: Math.round(f.amountYuan * 100), sourceSuggestionId: f.sourceSuggestionId } as any })
   else if (k === 'ticket') res = await api.POST('/cases/{id}/tickets', { params: { path: { id } }, body: { type: f.type, note: f.note, sourceSuggestionId: f.sourceSuggestionId } as any })
+  else if (k === 'close') res = await api.POST('/cases/{id}/close', { params: { path: { id } }, body: { kind: f.closeKind, reason: f.reason } as any })
   else res = await api.POST('/cases/{id}/pay-links', { params: { path: { id } }, body: { channel: f.channel, sourceSuggestionId: f.sourceSuggestionId } as any })
   if (res.error) { ElMessage.error('提交失败：' + ((res.error as any)?.message ?? '')); return }
   ElMessage.success(dlg.value.title + '成功'); dlg.value.open = false; loadAll()
@@ -77,6 +79,7 @@ onMounted(loadAll)
       <el-button v-if="auth.has('case.ticket')" @click="openAct('ticket','转工单')">转工单</el-button>
       <el-button v-if="auth.has('case.paylink')" @click="openAct('paylink','发缴费链接')">发缴费链接</el-button>
       <el-button @click="getLatest">获取最新通话录音</el-button>
+      <el-button v-if="auth.has('case.close')" type="danger" plain @click="openAct('close','结案')">结案（撤案/坏账）</el-button>
     </el-card>
 
     <el-row :gutter="12">
@@ -139,6 +142,10 @@ onMounted(loadAll)
         <template v-else-if="dlg.kind==='ticket'">
           <el-form-item label="类型"><el-input v-model="form.type" /></el-form-item>
           <el-form-item label="说明"><el-input v-model="form.note" type="textarea" :rows="2" /></el-form-item>
+        </template>
+        <template v-else-if="dlg.kind==='close'">
+          <el-form-item label="结案类型"><el-select v-model="form.closeKind"><el-option label="撤案 WITHDRAWN" value="WITHDRAWN" /><el-option label="坏账 BAD_DEBT" value="BAD_DEBT" /></el-select></el-form-item>
+          <el-form-item label="原因"><el-input v-model="form.reason" type="textarea" :rows="2" placeholder="受控原因，仅留痕、不流转审批" /></el-form-item>
         </template>
         <template v-else>
           <el-form-item label="渠道"><el-select v-model="form.channel"><el-option label="短信" value="SMS" /><el-option label="微信转发" value="WECHAT_COPY" /></el-select></el-form-item>
