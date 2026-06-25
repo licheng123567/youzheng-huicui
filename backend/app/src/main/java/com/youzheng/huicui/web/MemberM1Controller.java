@@ -326,10 +326,10 @@ public class MemberM1Controller {
         audit.write(s, "member.reset_password", "account", String.valueOf(memberId),
                 "重置密码", null, after);
 
-        // 地基期：body 回传生成密码供前端展示（不入审计）。
+        // 不回传明文口令(审计 H-2)：明文经响应体会落日志/前端状态/APM。
+        // 生产应带外下发(短信/邮件 notify 通道)；契约 reset-password 响应仅 200 ok。
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("ok", true);
-        resp.put("password", pw);
         return resp;
     }
 

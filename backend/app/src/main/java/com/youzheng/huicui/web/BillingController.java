@@ -100,10 +100,11 @@ public class BillingController {
             throw new ApiException(BizError.BIZ_QUOTA_EXHAUSTED, "无可解析录音或余额已耗尽");
         }
 
-        // STT 余额（最新 balance 快照）：平台主体按各录音归属 org 处理（此处仅取本 org 余额作扣减账户；
-        // 平台调用通常无录音，targets 已为空，不进此分支）。
-        BigDecimal balance = sttBalance(s.isPlatform() ? targets.get(0).orgId() : myOrg);
         long billingOrg = s.isPlatform() ? targets.get(0).orgId() : myOrg;
+        // 串行化本 org STT 余额读-扣-写：advisory 事务锁防并发丢失更新(审计 H-1)。@Transactional 提交时释放。
+        jdbc.queryForList("SELECT pg_advisory_xact_lock(?, ?)", (int) billingOrg, "STT".hashCode());
+        // STT 余额（最新 balance 快照）。
+        BigDecimal balance = sttBalance(billingOrg);
 
         int queued = 0, skipped = 0;
         for (RecRow r : targets) {

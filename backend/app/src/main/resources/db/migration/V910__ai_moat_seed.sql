@@ -1,23 +1,10 @@
 -- ============================================================================
--- V910__ai_moat_seed.sql 设计（话术飞轮护城河种子 + ai_config 存储位补齐）
--- 前置 DDL 调整（V910 顶部）：settings 表为刚性 domain CHECK + 固定 JSONB 列，
---   无通用 key/value，故 ai_config 需补存储位：
---   (1) 扩 CHECK 允许 'AI' 域：
---       ALTER TABLE settings DROP CONSTRAINT chk_settings_domain;
---       ALTER TABLE settings ADD CONSTRAINT chk_settings_domain
---         CHECK (domain IN ('TIMERS','ROTATION','MARK_CODES','CLOSE_REASONS','SMS','AI'));
---   (2) 加通用 value JSONB 列承载 AiConfig（现有 5 个域专列不适配 AI）：
---       ALTER TABLE settings ADD COLUMN IF NOT EXISTS value JSONB;
---       COMMENT ON COLUMN settings.value IS '通用 JSONB 配置体（AI 域 key=ai_config 存 {llm,asr,prompts,flywheel}）';
--- 说明：task 表述 key=ai_config 即以 domain='AI' 作逻辑 key，配置体落 value jsonb。
+-- V910__ai_moat_seed.sql —— 话术飞轮护城河种子（纯数据 INSERT）
+-- settings 的 'AI' 域 CHECK + value JSONB 列结构变更已移至正式迁移 V6__settings_ai_value.sql(审计 M-2)；
+-- 本文件仅 INSERT 种子(script_lib / playbook / settings 'AI' 行)，不含 DDL。
+-- 说明：ai_config 以 domain='AI' 作逻辑 key，配置体落 value jsonb。
 -- 幂等：全程 IF NOT EXISTS / WHERE NOT EXISTS 包裹，可重复执行。
-
--- (前置 DDL 调整：扩 CHECK 允许 'AI' 域 + 加通用 value JSONB 列) -----------------
-ALTER TABLE settings DROP CONSTRAINT chk_settings_domain;
-ALTER TABLE settings ADD CONSTRAINT chk_settings_domain
-  CHECK (domain IN ('TIMERS','ROTATION','MARK_CODES','CLOSE_REASONS','SMS','AI'));
-ALTER TABLE settings ADD COLUMN IF NOT EXISTS value JSONB;
-COMMENT ON COLUMN settings.value IS '通用 JSONB 配置体（AI 域 key=ai_config 存 {llm,asr,prompts,flywheel}）';
+-- ============================================================================
 
 DO $$
 DECLARE

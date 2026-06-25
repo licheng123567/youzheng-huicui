@@ -172,6 +172,8 @@ public class BillingM9Controller {
         String orgType = loadOrgType(orgId);                 // 不存在→404
         assertOrgTypeMatrix(orgType, type);                  // 服务商充 SMS→422
 
+        // 串行化本 org×type 余额读-改-写：advisory 事务锁防并发丢失更新(审计 H-1)。@Transactional 提交时自动释放。
+        jdbc.queryForList("SELECT pg_advisory_xact_lock(?, ?)", (int) orgId, type.hashCode());
         // 读当前 org×type 最新 balance（无→0），新余额=旧+qty。
         BigDecimal oldBalance = latestBalance(orgId, type);
         BigDecimal newBalance = oldBalance.add(qty);
