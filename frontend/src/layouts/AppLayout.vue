@@ -33,6 +33,8 @@ function logout() {
           <el-menu-item index="/cases">案件</el-menu-item>
           <el-menu-item index="/settlement">结算</el-menu-item>
           <el-menu-item index="/risks">质检</el-menu-item>
+          <el-menu-item index="/reports">报表</el-menu-item>
+          <el-menu-item index="/evidence">存证</el-menu-item>
         </el-menu>
       </el-aside>
       <el-main>

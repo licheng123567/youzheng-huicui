@@ -5,6 +5,8 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/login', name: 'login', component: () => import('../views/LoginView.vue'), meta: { public: true } },
+    // M7 业主自助 H5：公开页(免登录·不进 AppLayout)，业主扫码/短信链接进入
+    { path: '/pay/:token', name: 'owner-bill', component: () => import('../views/OwnerBillView.vue'), meta: { public: true } },
     {
       path: '/',
       component: () => import('../layouts/AppLayout.vue'),
@@ -19,6 +21,8 @@ const router = createRouter({
         { path: 'cases/:id', name: 'case-detail', component: () => import('../views/CaseDetailView.vue') },
         { path: 'settlement', name: 'settlement', component: () => import('../views/SettlementView.vue') },
         { path: 'risks', name: 'risks', component: () => import('../views/RisksView.vue') },
+        { path: 'reports', name: 'reports', component: () => import('../views/ReportsView.vue') },
+        { path: 'evidence', name: 'evidence', component: () => import('../views/EvidenceView.vue') },
       ],
     },
   ],

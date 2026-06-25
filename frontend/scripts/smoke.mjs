@@ -153,5 +153,25 @@ if (active) {
   check('已终态再结案 → 409', (await post(`/cases/${active.id}/close`, pl, { kind: 'BAD_DEBT', reason: 'y' })).status === 409)
 }
 
-console.log(fail === 0 ? '\n🎉 全模块 M1-M5+M8+M9 端到端全过 — 核心闭环含生命周期收尾' : `\n⚠ ${fail} 项失败`)
+// M6 存证 / M10 报表 / M7 H5
+const ev = await getJson('/evidence?page=1&size=20', sa)
+check('GET /evidence 列表(SA·三方隔离)', (ev.body?.items?.length ?? 0) >= 1, '共 ' + ev.body?.meta?.total)
+const evId = ev.body?.items?.[0]?.id
+if (evId) {
+  // 验真 public：不带 token 也能验
+  const vf = await fetch(`${B}/evidence/${evId}/verify`)
+  const vb = vf.ok ? await vf.json() : null
+  check('存证验真 public(无 token) → 200 valid', vf.status === 200 && vb?.valid === true, 'certNo ' + vb?.certNo)
+}
+const rep = await getJson('/reports/operation', sa)
+check('GET /reports/operation(SA·KPI+rows) → 200', rep.status === 200 && Array.isArray(rep.body?.kpis), (rep.body?.kpis?.length ?? 0) + ' KPI')
+check('POST /reports/export(report.export) → 2xx', [200, 202].includes((await post('/reports/export', sa, { kind: 'operation' })).status))
+// M7 业主账单 public(无 token)
+const s3id = s3?.id
+const payR = await fetch(`${B}/pay/demo-paylink-${s3id}`)
+const payB = payR.ok ? await payR.json() : null
+check('M7 业主账单 GET /pay/{token} public(无token) → 200', payR.status === 200 && payB?.payableCents != null, '应付 ' + payB?.payableCents)
+check('M7 错 token → 404(不泄露不5xx)', (await fetch(`${B}/pay/bad-token-xyz`)).status === 404)
+
+console.log(fail === 0 ? '\n🎉 全 11 模块 (M1-M10) 端到端全过 — 全后端切片贯通' : `\n⚠ ${fail} 项失败`)
 process.exit(fail === 0 ? 0 : 1)
