@@ -18,8 +18,8 @@ jobs:
   contract-lint:                       # Gate0a：契约 lint（硬红线）
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with: { node-version: "20" }
       - name: Spectral lint
         run: npx -y @stoplight/spectral-cli lint "$SPEC" --ruleset docs/api/.spectral.yaml --fail-severity=error
@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { fetch-depth: 0 }
       - name: oasdiff (base vs head)
         run: |
@@ -57,10 +57,10 @@ jobs:
       # 排 stateful 相位：契约无 OpenAPI links→schemathesis 状态链靠启发式推断,产 sequencing artifact(端点单独均合规)；Examples/Coverage/Fuzzing 已覆盖契约一致性。
       GEN_FLAGS: "-m positive --generation-deterministic --phases examples,coverage,fuzzing"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: "21", cache: maven }
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.12" }
       - name: 预构建后端（冷 CI 先下依赖+编译，避免 boot 等待掺入下载耗时）
         working-directory: backend/app
@@ -97,8 +97,8 @@ jobs:
   mock-smoke:                          # 辅助：Prism 起 mock，确保契约可被 mock（前端可对 mock 开发）
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with: { node-version: "20" }
       - name: Prism mock 自检
         run: |
