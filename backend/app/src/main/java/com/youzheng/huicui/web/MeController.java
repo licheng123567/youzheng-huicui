@@ -2,10 +2,14 @@ package com.youzheng.huicui.web;
 
 import com.youzheng.huicui.security.CurrentSubject;
 import com.youzheng.huicui.security.SubjectContext;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * GET /v1/me —— 当前主体（契约 getMe → Me）。
@@ -28,4 +32,13 @@ public class MeController {
                 s.isPlatform() ? null : java.util.Map.of("areas", List.of(), "properties", List.of(), "providers", List.of()),
                 s.permissions().stream().sorted().toList());
     }
+
+    /** PATCH /v1/me —— 自助改密/换手机（契约 updateMe → 204）。骨架：校验通过即 204，真逻辑后续。 */
+    @PatchMapping("/me")
+    public ResponseEntity<Void> updateMe(@RequestBody(required = false) Map<String, Object> body) {
+        SubjectContext.get();   // 须已认证
+        // TODO: 校验 oldPassword/smsCode → 更新 newPassword(BCrypt)/newPhone；异常走 422。
+        return ResponseEntity.noContent().build();
+    }
 }
+

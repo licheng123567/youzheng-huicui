@@ -28,10 +28,11 @@ public class AuthController {
     }
 
     public record LoginByPassword(String mode, String username, String password) {}
-    public record TokenResult(String token, String accountId, String role) {}
+    // 契约 LoginResult：单账号返 token；多账号返 loginTicket+accounts（本地基期均单账号）。
+    public record LoginResult(String token, String loginTicket, Object accounts) {}
 
     @PostMapping("/login")
-    public TokenResult login(@RequestBody LoginByPassword body) {
+    public LoginResult login(@RequestBody LoginByPassword body) {
         if (body == null || body.username() == null || body.password() == null) {
             throw new ApiException(BizError.VALIDATION_422, "用户名/口令必填");
         }
@@ -55,7 +56,7 @@ public class AuthController {
                 String.valueOf(row.get("id")), (String) row.get("name"),
                 String.valueOf(row.get("oid")), (String) row.get("otype"), (String) row.get("oname"),
                 (String) row.get("role_template"), permissionsOf((String) row.get("role_template")));
-        return new TokenResult(jwt.issue(s), s.accountId(), s.role());
+        return new LoginResult(jwt.issue(s), null, null);   // 单账号：token；loginTicket/accounts 为 null
     }
 
     @PostMapping("/sms-code")

@@ -1,5 +1,6 @@
 package com.youzheng.huicui.error;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import org.slf4j.MDC;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -13,6 +14,8 @@ import java.util.Map;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    // 契约 Error{code,message,traceId?,details?[]}：省略 null（details 为非空数组类型，不可序列化 null）。
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public record ApiError(String code, String message, String traceId, List<Map<String, Object>> details) {}
 
     private ResponseEntity<ApiError> build(BizError e, String message, List<Map<String, Object>> details) {
