@@ -4,6 +4,7 @@ name: API 契约红线（防漂移）
 #   Gate1 后端符合契约：schemathesis 拿契约打后端（响应违约即失败）—— 命门
 # 触发：改动契约或后端实现的 PR / push
 on:
+  workflow_dispatch: {}        # 允许手动触发（gh workflow run / Actions 页面按钮）
   pull_request:
     paths: ["docs/api/**", "backend/**"]
   push:
