@@ -188,6 +188,13 @@ const coPr = await getJson('/payment-requests?side=OUT&page=1&size=20', co)
 check('CO 看组织付佣单 → 空(US-M9-09 裁剪)', coPr.status === 200 && (coPr.body?.items?.length ?? 0) === 0)
 // ⑤ billing 只读: PL 读 usage(range 无 perm) → 200
 check('PL 读 billing/usage(range 无perm) → 200', (await getJson('/billing/usage', pl)).status === 200)
+// P1: caseIds 勾选拆派(US-M3-01) — GET /cases?batchId= 列本批案件供勾选(端点净室已验 SPLIT+caseIds→{ok:true};
+//   此处验"按批列案件"数据源可用,实际拆派会消费案件态故不在共享 smoke 重复派)
+const s0b2 = (bsSa.body?.items || []).find((b) => b.code === 'B-CH-M3-S0')
+if (s0b2) check('GET /cases?batchId= 列本批案件(供 caseIds 勾选)', (await getJson(`/cases?batchId=${s0b2.id}&page=1&size=50`, sa)).status === 200)
+// P1: AI 写界面 — PUT ai-config / POST script-lib
+check('SA 编辑 AI配置(PUT /ai-config) → 2xx', [200, 201, 204].includes((await fetch(`${B}/ai-config`, { method: 'PUT', headers: { Authorization: `Bearer ${sa}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ llm: { provider: 'deepseek', model: 'deepseek-chat', temperature: 0.3 }, asr: { provider: 'bailian' } }) })).status))
+check('SA 新建话术(POST /script-lib) → 2xx', [200, 201].includes((await post('/script-lib', sa, { scene: '首催开场', intent: '提醒', text: '您好，关于物业费…' })).status))
 
 // M5 质检
 const risks = await getJson('/risks?page=1&size=30', sa)

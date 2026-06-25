@@ -20,15 +20,29 @@ async function load() {
   total.value = data?.meta?.total ?? 0
 }
 
-// M3 派单/重派：mode WHOLE(整批)/SPLIT(拆分·splitCount 按入池序选 N 个)
+// M3 派单/重派：WHOLE(整批) / SPLIT(拆分: splitBy=count 按件数 / cases 勾选具体案件→caseIds，US-M3-01)
 const dlg = ref(false)
-const form = ref<any>({ batchId: '', providerId: '', payOutRate: 0.2, mode: 'WHOLE', splitCount: 10, redispatch: false })
-function openDispatch(id: string, redispatch = false) { form.value = { batchId: id, providerId: '', payOutRate: 0.2, mode: 'WHOLE', splitCount: 10, redispatch }; dlg.value = true }
+const dispCases = ref<any[]>([]); const caseSel = ref<any[]>([])
+const form = ref<any>({ batchId: '', providerId: '', payOutRate: 0.2, mode: 'WHOLE', splitBy: 'count', splitCount: 10, redispatch: false })
+function openDispatch(id: string, redispatch = false) {
+  form.value = { batchId: id, providerId: '', payOutRate: 0.2, mode: 'WHOLE', splitBy: 'count', splitCount: 10, redispatch }
+  dispCases.value = []; caseSel.value = []; dlg.value = true
+}
+async function loadDispatchCases() {
+  const { data } = await api.GET('/cases', { params: { query: { batchId: form.value.batchId, page: 1, size: 200 } } as any })
+  dispCases.value = (data as any)?.items ?? []
+  if (!dispCases.value.length) ElMessage.info('该批次暂无可派案件')
+}
 async function submitDispatch() {
   if (!form.value.providerId) { ElMessage.warning('请填服务商 org id'); return }
-  acting.value = form.value.batchId
   const body: any = { mode: form.value.mode, providerId: form.value.providerId, payOutRate: form.value.payOutRate }
-  if (form.value.mode === 'SPLIT') body.splitCount = form.value.splitCount
+  if (form.value.mode === 'SPLIT') {
+    if (form.value.splitBy === 'cases') {
+      if (!caseSel.value.length) { ElMessage.warning('请勾选案件'); return }
+      body.caseIds = caseSel.value.map((c) => String(c.id))   // caseIds 优先(D3)
+    } else body.splitCount = form.value.splitCount
+  }
+  acting.value = form.value.batchId
   const ep = form.value.redispatch ? '/batches/{id}/redispatch' : '/batches/{id}/dispatch'
   const { error } = await api.POST(ep as any, { params: { path: { id: form.value.batchId } }, body })
   acting.value = ''; dlg.value = false
@@ -94,10 +108,22 @@ onMounted(load)
     </el-table>
 
     <!-- 派单/重派 -->
-    <el-dialog v-model="dlg" :title="(form.redispatch?'重派':'派单')+'（POST /batches/{id}/'+(form.redispatch?'redispatch':'dispatch')+'）'" width="440px">
+    <el-dialog v-model="dlg" :title="(form.redispatch?'重派':'派单')+'（POST /batches/{id}/'+(form.redispatch?'redispatch':'dispatch')+'）'" width="640px">
       <el-form label-width="120px">
         <el-form-item label="方式"><el-radio-group v-model="form.mode"><el-radio-button label="WHOLE">整批</el-radio-button><el-radio-button label="SPLIT">拆分</el-radio-button></el-radio-group></el-form-item>
-        <el-form-item v-if="form.mode==='SPLIT'" label="拆分件数"><el-input-number v-model="form.splitCount" :min="1" /><span style="margin-left:8px;color:#909399">按入池序选 N 个(D3)</span></el-form-item>
+        <template v-if="form.mode==='SPLIT'">
+          <el-form-item label="拆分依据"><el-radio-group v-model="form.splitBy"><el-radio-button label="count">按件数</el-radio-button><el-radio-button label="cases">勾选案件</el-radio-button></el-radio-group></el-form-item>
+          <el-form-item v-if="form.splitBy==='count'" label="拆分件数"><el-input-number v-model="form.splitCount" :min="1" /><span style="margin-left:8px;color:#909399">按入池序选 N 个(D3)</span></el-form-item>
+          <el-form-item v-else label="勾选案件">
+            <el-button size="small" @click="loadDispatchCases">加载本批案件</el-button>
+            <el-table :data="dispCases" border size="small" max-height="240" style="margin-top:6px" @selection-change="(v:any)=>caseSel=v">
+              <el-table-column type="selection" width="40" />
+              <el-table-column prop="ownerName" label="业主" /><el-table-column prop="room" label="房号" />
+              <el-table-column prop="status" label="状态" /><el-table-column prop="acctNo" label="户号" />
+            </el-table>
+            <span style="color:#606266">已选 {{ caseSel.length }} 件（US-M3-01 同批部分案件派不同服务商）</span>
+          </el-form-item>
+        </template>
         <el-form-item label="服务商 org id"><el-input v-model="form.providerId" placeholder="如捷信催收的 org id" /></el-form-item>
         <el-form-item label="付佣比例(小数)"><el-input-number v-model="form.payOutRate" :min="0" :max="1" :step="0.01" /><span style="margin-left:8px;color:#909399">0.2=20%（须≤收佣，防倒挂）</span></el-form-item>
       </el-form>
