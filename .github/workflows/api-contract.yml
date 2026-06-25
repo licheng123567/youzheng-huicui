@@ -52,8 +52,8 @@ jobs:
   gate1-strict:                        # Gate1 硬红线·按里程碑逐模块收紧：只打"已实现模块"的 path，违约即挂。
     runs-on: ubuntu-latest               # 每完成一个里程碑，往 DONE_PATHS 加该模块 path 正则；全部完成后删过滤 + 删 contract-test/continue-on-error。
     env:
-      # 已转硬红线的模块 path 正则。M1=auth+me；M2=projects/batches/cases 读端点；M3=派单/公海 action + /sea。
-      DONE_PATHS: "^/(auth|me)$|^/auth/|^/me$|^/(projects|batches|cases)(/\\{id\\})?$|^/sea$|^/batches/\\{id\\}/(dispatch|redispatch|open-rate)$|^/cases/\\{id\\}/(accept|reject|claim|assign|release|return|open-for-claim)$"
+      # 已转硬红线的模块 path 正则。M1=auth+me；M2=projects/batches/cases 读；M3=派单/公海 action+/sea；M4=催收作业(录音/跟进/承诺/工单/联系人/缴费/减免/回款)。
+      DONE_PATHS: "^/(auth|me)$|^/auth/|^/me$|^/(projects|batches|cases)(/\\{id\\})?$|^/sea$|^/batches/\\{id\\}/(dispatch|redispatch|open-rate)$|^/cases/\\{id\\}/(accept|reject|claim|assign|release|return|open-for-claim)$|^/cases/\\{id\\}/(follow-ups|promises|tickets|contacts|pay-links|reductions|repay-lines|recordings)$|^/cases/\\{id\\}/recordings/latest$|^/recordings(/\\{id\\}(/ai-review|/reprocess|/parse)?)?$|^/tickets(/\\{id\\}/handle)?$|^/contacts/\\{id\\}$|^/pay-links/\\{id\\}/(resend|void)$|^/repay-lines/\\{id\\}/reverse$|^/reductions/\\{id\\}/approve$"
       # 要害 check 集（保留有意义的、排除噪声的）：
       #   保留 not_a_server_error(无5xx) / response_schema_conformance(响应schema) / content_type / response_headers / ignored_auth(鉴权强制)
       #   排除 status_code_conformance+unsupported_method = 传输层(畸形头 Tomcat 400 / 未文档化方法 405)，业务契约未枚举
@@ -62,7 +62,8 @@ jobs:
       # -m positive(只生成 schema-合法数据,测后端honor契约) + 确定性 = 稳定不 flaky。
       #   action 端点的 {id} 路径参数若被负向 fuzz 塞控制字符→畸形 URL→Tomcat 连接器 400 HTML→schemathesis JSON 反序列化失败(传输层 artifact,非契约缺陷)；
       #   故硬门用 positive 模式(契约 honor)。负向健壮性由横切层统一错误处理 + not_a_server_error 覆盖；完整负向 fuzz 在非阻断 contract-test job 作信息。
-      GEN_FLAGS: "-m positive --generation-deterministic"
+      # 排 stateful 相位：契约无 OpenAPI links→schemathesis 状态链靠启发式推断,产 sequencing artifact(端点单独均合规)；Examples/Coverage/Fuzzing 已覆盖契约一致性。
+      GEN_FLAGS: "-m positive --generation-deterministic --phases examples,coverage,fuzzing"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

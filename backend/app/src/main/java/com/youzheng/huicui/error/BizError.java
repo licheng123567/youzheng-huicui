@@ -14,7 +14,10 @@ public enum BizError {
     BIZ_HOLD_CAP(409, "BIZ_HOLD_CAP"),                   // 催收员私海持有上限 CFG-HOLDCAP
     BIZ_OPEN_RATE_REQUIRED(409, "BIZ_OPEN_RATE_REQUIRED"), // 开放抢单前批次 open_rate 未设 BR-M9-18
     BIZ_CAP_EXCEEDED(409, "BIZ_CAP_EXCEEDED"),           // 服务商持有余量不足 BR-M3-23(CFG-HOLDCAP)
-    BIZ_PAYOUT_INVERT(422, "BIZ_PAYOUT_INVERT");         // 防倒挂：付佣比例 > 收佣比例
+    BIZ_PAYOUT_INVERT(422, "BIZ_PAYOUT_INVERT"),         // 防倒挂：付佣比例 > 收佣比例
+    // ── M4 缴费链接/回款 ──
+    BIZ_SMS_COOLDOWN(409, "BIZ_SMS_COOLDOWN"),           // 同案缴费短信冷却未到 BR-M4-14a
+    BIZ_QUOTA_EXHAUSTED(409, "BIZ_QUOTA_EXHAUSTED");     // 短信/分钟余量不足（M9 预付费，地基期可不触发）
 
     public final int httpStatus;
     public final String code;

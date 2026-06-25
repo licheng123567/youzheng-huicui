@@ -13,6 +13,11 @@ import org.springframework.stereotype.Component;
  * M3 扩充：种 1 个服务商组织（VL 负责人 + 2 个 CO 催收员）、ROTATION.holdCap 配置，
  * 以及覆盖五稳态的案件（S0 待派单 / S1 待接单 / S2 服务商公海 / S3 私海进行中 / S4 开放抢单池），
  * 供 M3 派单/抢单端点联调与 schemathesis 跑通各前置态。所有 ensure 与状态种子均幂等。
+ *
+ * M4 扩充：给 S3 私海案件（acct_no=M3-S3-01，holder=jx_co1）挂外围实体各 1 条——
+ * 录音(READY)/AI复盘/承诺(分期)/联系人/工单（+缴费链接/减免/回款明细 与 翠湖物业 PC 协调员），
+ * 使 M4 GET 端点（latest/recordings/{id}/listRecordings/ai-review/promises/contacts/tickets）种子返 200。
+ * 见 {@link #seedM4Collection}。全部幂等（先 SELECT count 判存在）。
  */
 @Component
 public class DevSeeder implements CommandLineRunner {
@@ -101,6 +106,160 @@ public class DevSeeder implements CommandLineRunner {
         Long b4 = ensureBatch(projId, "B-CH-M3-S4", "0.3000", "0.2000", null, "0.1800", "PENDING");
         ensureSeaCase(b4, projId, "翠湖一期", "M3-S4-01", "吴抢单", "S4-101", 240000L,
                 "PENDING_DISPATCH", "OPEN_POOL", null, "OPEN", "OPEN_POOL", false, false);
+
+        // M4 外围实体：给 S3 私海案件挂 录音/AI复盘/承诺/联系人/工单（+pay_link/reduction/repay_line）
+        Long caseS3Id = jdbc.query(
+                "SELECT id FROM \"case\" WHERE batch_id = ? AND acct_no = 'M3-S3-01'",
+                rs -> rs.next() ? rs.getLong(1) : null, b2);
+        if (caseS3Id != null) {
+            seedM4Collection(caseS3Id, projId, b2, coHolder);
+        }
+    }
+
+    // ── M4 外围实体种子（私海案件 M3-S3-01 各挂 1 条，供 M4 GET 端点返 200）──────
+    //
+    // 全部幂等：先 SELECT count 判存在再插。覆盖：
+    //   1) call_recording（READY，供 latest / recordings/{id} / listRecordings / ai-review）
+    //   2) ai_review（result_mark=PROMISED，供 GET ai-review 200）
+    //   3) promise + 2 promise_installment（供 GET /cases/{id}/promises）
+    //   4) contact（供 详情 contacts / PATCH /contacts/{id}）
+    //   5) ticket（PC 协调员一并种，使 listTickets range 裁剪命中）
+    //   6) pay_link / reduction / repay_line（供 resend/void/reverse/approve 端点有目标 id）
+
+    /**
+     * @param caseS3Id 私海案件 id（M3-S3-01）
+     * @param projId   案件所属项目 id（翠湖一期）
+     * @param batchId  案件所属批次 id（B-CH-M3-S2）
+     * @param coHolder 持有催收员 account id（jx_co1）
+     */
+    private void seedM4Collection(Long caseS3Id, Long projId, Long batchId, Long coHolder) {
+        // 0) 翠湖物业 PC 协调员（关联本项目，使 listTickets 的 range 裁剪能命中物业侧）
+        ensureCoordinator(projId, "cuihu_pc", "翠湖协调员", "13900000006");
+
+        // 1) 录音 1 条（READY）。幂等键：(case_id, source=APP_AUTO)——本演示每案至多一条自动录音。
+        Long recId = jdbc.query(
+                "SELECT id FROM call_recording WHERE case_id = ? AND source = 'APP_AUTO'",
+                rs -> rs.next() ? rs.getLong(1) : null, caseS3Id);
+        if (recId == null) {
+            recId = jdbc.queryForObject(
+                    "INSERT INTO call_recording(case_id, collector_id, source, status, recorded_at, "
+                            + "duration_sec, phone, transcript) "
+                            + "VALUES (?, ?, 'APP_AUTO', 'READY', now() - interval '1 day', 180, '13900000099', ?) "
+                            + "RETURNING id",
+                    Long.class, caseS3Id, coHolder, "(演示)业主称下月缴清");
+        }
+
+        // 2) AI 复盘 1 条（uq_ai_review_call 唯一，幂等）
+        Integer reviewExists = jdbc.queryForObject(
+                "SELECT count(*) FROM ai_review WHERE call_id = ?", Integer.class, recId);
+        if (reviewExists == null || reviewExists == 0) {
+            jdbc.update(
+                    "INSERT INTO ai_review(call_id, summary, dialogue, risks, suggestions, result_mark) "
+                            + "VALUES (?, ?, ?::jsonb, ?::jsonb, ?::jsonb, 'PROMISED')",
+                    recId,
+                    "业主有还款意愿，承诺下月",
+                    "[{\"speaker\":\"催收员\",\"text\":\"您好，关于物业费的事...\"},"
+                            + "{\"speaker\":\"业主\",\"text\":\"我下月一定缴清\"}]",
+                    "[{\"level\":\"LOW\",\"desc\":\"无违规话术\",\"segmentTs\":\"00:30\"}]",
+                    "[{\"id\":\"s1\",\"type\":\"SUGGEST\",\"title\":\"登记承诺\","
+                            + "\"body\":\"建议登记下月承诺\",\"actionRef\":\"PROMISE\"}]");
+        }
+
+        // 3) 承诺 1 条（分期）+ 2 期明细
+        Long promiseId = jdbc.query(
+                "SELECT id FROM promise WHERE case_id = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, caseS3Id);
+        if (promiseId == null) {
+            promiseId = jdbc.queryForObject(
+                    "INSERT INTO promise(case_id, date, amount_cents, state, created_by) "
+                            + "VALUES (?, (now() + interval '30 days')::date, 260000, 'PENDING', ?) RETURNING id",
+                    Long.class, caseS3Id, coHolder);
+            jdbc.update(
+                    "INSERT INTO promise_installment(promise_id, seq, due_date, amount_cents, state) "
+                            + "VALUES (?, 1, (now() + interval '30 days')::date, 130000, 'PENDING')",
+                    promiseId);
+            jdbc.update(
+                    "INSERT INTO promise_installment(promise_id, seq, due_date, amount_cents, state) "
+                            + "VALUES (?, 2, (now() + interval '60 days')::date, 130000, 'PENDING')",
+                    promiseId);
+        }
+
+        // 4) 联系人 1 条（本人，主要）
+        Integer contactExists = jdbc.queryForObject(
+                "SELECT count(*) FROM contact WHERE case_id = ?", Integer.class, caseS3Id);
+        if (contactExists == null || contactExists == 0) {
+            jdbc.update(
+                    "INSERT INTO contact(case_id, phone, label, is_primary, invalid) "
+                            + "VALUES (?, '13900000099', '本人', TRUE, FALSE)",
+                    caseS3Id);
+        }
+
+        // 5) 工单 1 条（CO→PC，待处理）
+        Integer ticketExists = jdbc.queryForObject(
+                "SELECT count(*) FROM ticket WHERE case_id = ?", Integer.class, caseS3Id);
+        if (ticketExists == null || ticketExists == 0) {
+            jdbc.update(
+                    "INSERT INTO ticket(case_id, type, note, from_role, to_role, status, created_by) "
+                            + "VALUES (?, '上门核实', '核实房屋是否出租', 'CO', 'PC', 'PENDING', ?)",
+                    caseS3Id, coHolder);
+        }
+
+        // 6a) 缴费链接 1 条（ACTIVE，供 resend/void 端点有目标 id）
+        Integer payLinkExists = jdbc.queryForObject(
+                "SELECT count(*) FROM pay_link WHERE case_id = ?", Integer.class, caseS3Id);
+        if (payLinkExists == null || payLinkExists == 0) {
+            jdbc.update(
+                    "INSERT INTO pay_link(case_id, token, amount_cents, expires_at, status, channel, created_by) "
+                            + "VALUES (?, ?, 260000, now() + interval '7 days', 'ACTIVE', 'WECHAT_COPY', ?)",
+                    caseS3Id, "demo-paylink-" + caseS3Id, coHolder);
+        }
+
+        // 6b) 减免 1 条（催收员自决，生效，供减免相关端点有目标 id）
+        Integer reductionExists = jdbc.queryForObject(
+                "SELECT count(*) FROM reduction WHERE case_id = ?", Integer.class, caseS3Id);
+        if (reductionExists == null || reductionExists == 0) {
+            jdbc.update(
+                    "INSERT INTO reduction(case_id, tier_ref, discount, amount_cents, decide, state, applied_by, note) "
+                            + "VALUES (?, 0, '9折', 26000, 'COLLECTOR_SELF', 'EFFECTIVE', ?, '(演示)自决档减免')",
+                    caseS3Id, coHolder);
+        }
+
+        // 6c) 回款明细 1 条（微信收款，未结算，供 reverse/approve 端点有目标 id）
+        Integer repayExists = jdbc.queryForObject(
+                "SELECT count(*) FROM repay_line WHERE case_id = ?", Integer.class, caseS3Id);
+        if (repayExists == null || repayExists == 0) {
+            jdbc.update(
+                    "INSERT INTO repay_line(case_id, batch_id, amount_cents, channel, paid_at, marked_by, settled) "
+                            + "VALUES (?, ?, 130000, 'WECHAT_QR', now()::date, ?, FALSE)",
+                    caseS3Id, batchId, coHolder);
+        }
+
+        // 时间线：录音上传一条 activity（CALL，ref→call_recording），对齐 ERD ACTIVITY.ref 跳转
+        Integer actExists = jdbc.queryForObject(
+                "SELECT count(*) FROM activity WHERE case_id = ? AND type = 'CALL' AND ref_type = 'call_recording'",
+                Integer.class, caseS3Id);
+        if (actExists == null || actExists == 0) {
+            jdbc.update(
+                    "INSERT INTO activity(case_id, type, actor_id, content, ref_type, ref_id, method) "
+                            + "VALUES (?, 'CALL', ?, '通话录音上传', 'call_recording', ?, 'CALL')",
+                    caseS3Id, coHolder, recId);
+        }
+    }
+
+    /** 物业协调员账号（role_template=PC，非负责人）。绑到指定项目的物业组织下。返回 account.id。 */
+    private Long ensureCoordinator(Long projId, String username, String name, String phone) {
+        Long aid = jdbc.query("SELECT id FROM account WHERE username = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, username);
+        if (aid != null) return aid;
+        Long propOrgId = jdbc.query("SELECT org_id FROM project WHERE id = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, projId);
+        if (propOrgId == null) return null;
+        String hash = bcrypt.encode(devPassword);
+        aid = jdbc.queryForObject(
+                "INSERT INTO account(org_id, username, name, phone, role_template, status, is_owner, password_hash) "
+                        + "VALUES (?, ?, ?, ?, 'PC', 'ACTIVE', FALSE, ?) RETURNING id",
+                Long.class, propOrgId, username, name, phone, hash);
+        return aid;
     }
 
     /** 批次幂等：按 (project_id, no) 唯一。可选 provider_id / open_rate。 */
