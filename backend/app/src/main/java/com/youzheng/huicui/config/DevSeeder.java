@@ -89,7 +89,113 @@ public class DevSeeder implements CommandLineRunner {
             if (batch != null) {
                 seedM9Settlement(batch, proj, provider, co1);
             }
+
+            // M9-B 计费流水种子：充值/扣减流水（recharge_log）+ 短信发送流水（sms_record）。
+            // 复用 base 既有 org/account/project/case（不重建 base 已管实体——避 V910 顺序 shadow 坑）。
+            // 物业 org=翠湖物业（cuihu），服务商 org=捷信（provider），案件=S3 私海案件（M3-S3-01）。
+            Long caseS3Id = jdbc.query(
+                    "SELECT id FROM \"case\" WHERE project_id = ? AND acct_no = 'M3-S3-01'",
+                    rs -> rs.next() ? rs.getLong(1) : null, proj);
+            // 平台操作员（recharge_log.operated_by NOT NULL）：取任一 SA 账号（平台后台操作）。
+            Long saAcct = jdbc.query("SELECT id FROM account WHERE role_template = 'SA' ORDER BY id LIMIT 1",
+                    rs -> rs.next() ? rs.getLong(1) : null);
+            if (saAcct != null) {
+                seedM9Billing(cuihu, provider, saAcct);
+            }
+            seedSmsRecords(cuihu, proj, caseS3Id);
         }
+    }
+
+    // ── M9-B 计费流水种子（recharge_log 充值/扣减流水）─────────────────────────
+    //
+    // 表 recharge_log 已在 V2__peripheral_and_audit.sql 建表（仅插数据，不建表）。
+    //   recharge_log(org_id, type∈STT/SMS/EVIDENCE/LEGAL, delta（+充值/-扣减）, balance（操作后快照）,
+    //                ref（关联单据号）, note, operated_by（平台操作员）, tm)
+    // 复用 base 既有 org（翠湖物业 / 捷信服务商），operated_by=平台 SA。BR-M9-06a 对账演示。
+    // 注：EVIDENCE/LEGAL 不预充（RechargeTypeEnum 仅 STT/SMS），但流水里可有 EVIDENCE/LEGAL 扣减
+    //     （chk_recharge_type 允许四值）。
+    // 全部幂等：本物业 org 已有 ref='RC-2025-001' 流水则整体跳过（首笔充值即哨兵）。
+
+    /**
+     * @param propertyOrg      物业组织 id（翠湖物业）——STT/SMS 充值与扣减归属
+     * @param providerOrg      服务商组织 id（捷信催收）——STT 充值与扣减归属
+     * @param operatorAccountId 平台操作员 account id（SA）——recharge_log.operated_by
+     */
+    private void seedM9Billing(Long propertyOrg, Long providerOrg, Long operatorAccountId) {
+        if (propertyOrg == null || providerOrg == null || operatorAccountId == null) return;
+        // 幂等哨兵：物业首笔 STT 充值 ref（RC-2025-001）已存在则整体跳过。
+        Integer exists = jdbc.queryForObject(
+                "SELECT count(*) FROM recharge_log WHERE org_id = ? AND ref = 'RC-2025-001'",
+                Integer.class, propertyOrg);
+        if (exists != null && exists > 0) return;
+
+        // 1) 物业 STT 充值 +600.000（balance 快照 600.000）
+        jdbc.update("INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by) "
+                        + "VALUES (?, 'STT', 600.000, 600.000, 'RC-2025-001', '(演示)STT转写充值', ?)",
+                propertyOrg, operatorAccountId);
+        // 2) 物业 SMS 充值 +1000.000（balance 1000.000）
+        jdbc.update("INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by) "
+                        + "VALUES (?, 'SMS', 1000.000, 1000.000, 'RC-2025-002', '(演示)短信条数充值', ?)",
+                propertyOrg, operatorAccountId);
+        // 3) 服务商 STT 充值 +300.000（balance 300.000）
+        jdbc.update("INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by) "
+                        + "VALUES (?, 'STT', 300.000, 300.000, 'RC-2025-003', '(演示)服务商STT充值', ?)",
+                providerOrg, operatorAccountId);
+        // 4) 扣减各 1 笔（delta<0，对账演示 BR-M9-06a）：
+        //    物业 STT 扣减 -120.000（用量 → balance 480.000）
+        jdbc.update("INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by) "
+                        + "VALUES (?, 'STT', -120.000, 480.000, NULL, '(演示)STT转写用量扣减', ?)",
+                propertyOrg, operatorAccountId);
+        //    物业 SMS 扣减 -3.000（发 3 条 → balance 997.000）
+        jdbc.update("INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by) "
+                        + "VALUES (?, 'SMS', -3.000, 997.000, NULL, '(演示)短信发送用量扣减', ?)",
+                propertyOrg, operatorAccountId);
+        //    物业 EVIDENCE 扣减 -2.000（出证 2 次 → 无预充, balance -2.000 表欠用记账）
+        jdbc.update("INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by) "
+                        + "VALUES (?, 'EVIDENCE', -2.000, -2.000, NULL, '(演示)存证出证用量扣减(不预充)', ?)",
+                propertyOrg, operatorAccountId);
+        //    物业 LEGAL 扣减 -1.000（律师函 1 件 → balance -1.000）
+        jdbc.update("INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by) "
+                        + "VALUES (?, 'LEGAL', -1.000, -1.000, NULL, '(演示)法律文书用量扣减(不预充)', ?)",
+                propertyOrg, operatorAccountId);
+        //    服务商 STT 扣减 -50.000（→ balance 250.000）
+        jdbc.update("INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by) "
+                        + "VALUES (?, 'STT', -50.000, 250.000, NULL, '(演示)服务商STT用量扣减', ?)",
+                providerOrg, operatorAccountId);
+    }
+
+    // ── M9-B 短信发送流水种子（sms_record，挂 base 物业 org/project/case）────────
+    //
+    // 表 sms_record 由 V5__sms_record.sql 新建（契约 SmsSendRecord 落库）。
+    //   sms_record(org_id（range 裁剪锚点）, case_id, project_id, template, status∈SENT/FAILED/DELIVERED,
+    //              failure_reason, sent_at)
+    // 复用 base 物业 org/project/case（不重建）。BR-M9-08：失败不退条数（FAILED 留 failure_reason）。
+    // 全部幂等：本物业 org 已有任一 sms_record 则整体跳过。
+
+    /**
+     * @param propertyOrg 物业组织 id（翠湖物业）——sms_record.org_id（range 裁剪锚点）
+     * @param projId      项目 id（翠湖一期）——sms_record.project_id
+     * @param caseS3Id    案件 id（M3-S3-01，可空）——sms_record.case_id
+     */
+    private void seedSmsRecords(Long propertyOrg, Long projId, Long caseS3Id) {
+        if (propertyOrg == null) return;
+        // 幂等：本物业 org 已有任一短信流水则整体跳过。
+        Integer exists = jdbc.queryForObject(
+                "SELECT count(*) FROM sms_record WHERE org_id = ?", Integer.class, propertyOrg);
+        if (exists != null && exists > 0) return;
+
+        // 1) SENT 1 条（催缴提醒，2 天前发出）
+        jdbc.update("INSERT INTO sms_record(org_id, case_id, project_id, template, status, sent_at) "
+                        + "VALUES (?, ?, ?, '催缴提醒', 'SENT', now() - interval '2 days')",
+                propertyOrg, caseS3Id, projId);
+        // 2) DELIVERED 1 条（催缴提醒，1 天前送达）
+        jdbc.update("INSERT INTO sms_record(org_id, case_id, project_id, template, status, sent_at) "
+                        + "VALUES (?, ?, ?, '催缴提醒', 'DELIVERED', now() - interval '1 day')",
+                propertyOrg, caseS3Id, projId);
+        // 3) FAILED 1 条（号码空号，失败不退条数 BR-M9-08）
+        jdbc.update("INSERT INTO sms_record(org_id, case_id, project_id, template, status, failure_reason, sent_at) "
+                        + "VALUES (?, ?, ?, '催缴提醒', 'FAILED', '号码空号 BR-M9-08·失败不退条数', now())",
+                propertyOrg, caseS3Id, projId);
     }
 
     // ── M3 五稳态案件种子 ─────────────────────────────────────────────────────

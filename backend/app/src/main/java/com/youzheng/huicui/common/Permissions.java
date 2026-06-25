@@ -22,7 +22,7 @@ public final class Permissions {
             // 平台：派单/再派/开放抢单/作废 + 结算/质检/主数据
             case "SA", "SE" -> Set.of("proj.edit", "batch.import", "case.dispatch", "case.void", "case.close",
                     "payreq.create", "payreq.complete", "qc.review", "qc.escalate", "member.manage", "report.export",
-                    "org.manage", "ai.config");   // org.manage 建组织/改owner、ai.config 话术库/AI配置（平台）
+                    "org.manage", "ai.config", "billing.recharge", "settings.manage");   // 平台：建组织/AI配置/充值/系统设置
             // 物业负责人/协调员（+处置/上报质检 BR-M5-07a；+撤案/坏账 BR-M8；+管本组织成员；+采纳作战手册 BR-M5）
             case "PL", "PC" -> Set.of("proj.edit", "reduce.policy.edit", "case.follow", "case.paylink",
                     "case.repay.mark", "case.reduce", "evidence.create", "legal.create", "qc.dispose", "qc.escalate",
