@@ -175,7 +175,10 @@ public class PayReduceRepayM4Controller {
         }
 
         long amount = amountCents != null ? amountCents : 0L;
-        if (amount < 0) throw new ApiException(BizError.VALIDATION_422, "amountCents 非法");
+        // 减免额须在 [0, 应收]：超过应收会使 reduce_after_cents 变负，传导到业主账单 payableCents/对账分母(审计 H-4)。
+        if (amount < 0 || amount > c.dueCents()) {
+            throw new ApiException(BizError.VALIDATION_422, "amountCents 非法（须 0 ≤ 减免 ≤ 应收）");
+        }
 
         boolean selfDecide = "COLLECTOR_SELF".equals(tier.decide);
         String state = selfDecide ? "EFFECTIVE" : "OFFLINE_TRACE";
@@ -303,10 +306,12 @@ public class PayReduceRepayM4Controller {
         long paid = sumActiveRepay(caseId);
         boolean onlineStatus = "IN_PROGRESS".equals(c.status()) || "PROMISED".equals(c.status());
         if (paid >= target && target > 0 && onlineStatus) {
-            jdbc.update(
-                    "UPDATE \"case\" SET status = 'SETTLED', closed_at = now(), updated_at = now() WHERE id = ?",
+            // 状态前置 CAS：c.status() 取自非锁快照，UPDATE 带 status 条件防并发回款/冲正基于陈旧态重复转移(审计 H-5)。
+            int n = jdbc.update(
+                    "UPDATE \"case\" SET status = 'SETTLED', closed_at = now(), updated_at = now()"
+                            + " WHERE id = ? AND status IN ('IN_PROGRESS','PROMISED')",
                     caseId);
-            insertActivity(caseId, "STATUS", null, "回款达标自动结清(SETTLED)", "case", caseId, null);
+            if (n > 0) insertActivity(caseId, "STATUS", null, "回款达标自动结清(SETTLED)", "case", caseId, null);
         }
     }
 
@@ -316,10 +321,11 @@ public class PayReduceRepayM4Controller {
         long target = c.reduceAfterCents() != null ? c.reduceAfterCents() : c.dueCents();
         long paid = sumActiveRepay(caseId);
         if (paid < target) {
-            jdbc.update(
-                    "UPDATE \"case\" SET status = 'IN_PROGRESS', closed_at = NULL, updated_at = now() WHERE id = ?",
+            int n = jdbc.update(
+                    "UPDATE \"case\" SET status = 'IN_PROGRESS', closed_at = NULL, updated_at = now()"
+                            + " WHERE id = ? AND status = 'SETTLED'",
                     caseId);
-            insertActivity(caseId, "STATUS", null, "回款冲正后回退结清(IN_PROGRESS)", "case", caseId, null);
+            if (n > 0) insertActivity(caseId, "STATUS", null, "回款冲正后回退结清(IN_PROGRESS)", "case", caseId, null);
         }
     }
 

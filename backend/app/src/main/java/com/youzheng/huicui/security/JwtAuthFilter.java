@@ -28,7 +28,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     public JwtAuthFilter(JwtService jwt) { this.jwt = jwt; }
 
     private boolean isPublic(String path) {
-        return path.startsWith("/auth/") || path.startsWith("/pay/") || path.endsWith("/verify");
+        // 精确放行 public 端点：登录、业主账单、存证验真。
+        // 不用 endsWith("/verify") 兜底整个命名空间——否则未来任何 /verify 结尾端点都被静默免鉴权(审计 H-1)。
+        return path.startsWith("/auth/")
+                || path.startsWith("/pay/")
+                || path.matches("/evidence/[^/]+/verify");
     }
 
     @Override

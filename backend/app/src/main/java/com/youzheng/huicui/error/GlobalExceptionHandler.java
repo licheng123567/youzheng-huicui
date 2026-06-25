@@ -1,6 +1,8 @@
 package com.youzheng.huicui.error;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -13,6 +15,8 @@ import java.util.Map;
 /** 统一错误响应：契约 Error{code,message,traceId,details[]} + 状态码映射。 */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     // 契约 Error{code,message,traceId?,details?[]}：省略 null（details 为非空数组类型，不可序列化 null）。
     @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -48,7 +52,9 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> handleOther(Exception ex) {
-        // 兜底：不泄露内部细节，仅 traceId 可追
+        // 兜底：对客户端不泄露内部细节(仅 traceId+异常类名)，但服务端必须记完整堆栈——
+        // 否则真实 bug(NPE/约束冲突/SQL 错)被伪装成 422 业务校验，线上无法定位(审计 M-1)。
+        log.error("未预期异常落兜底(traceId={})，对外返 422：", MDC.get("traceId"), ex);
         return build(BizError.VALIDATION_422, "请求无法处理: " + ex.getClass().getSimpleName(), null);
     }
 }
