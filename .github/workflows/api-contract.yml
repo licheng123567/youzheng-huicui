@@ -34,26 +34,9 @@ jobs:
           git show "origin/${{ github.base_ref }}:$SPEC" > /tmp/base.yaml 2>/dev/null || { echo "base 无契约，跳过"; exit 0; }
           docker run --rm -v /tmp:/tmp -v "$PWD:/repo" tufin/oasdiff breaking /tmp/base.yaml "/repo/$SPEC" --fail-on ERR
 
-  contract-test:                       # Gate1：后端必须符合契约（命门）。需后端可达。
-    runs-on: ubuntu-latest
-    continue-on-error: true            # 【地基期】后端未起→放开，仅信息。每完成一里程碑模块，把该模块 path 纳入 gate1-strict 硬校验；全部实现后删本 job、gate1-strict 去过滤=整体硬红线。
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
-      - name: schemathesis 打后端（断言响应符合契约）
-        env: { TARGET: "${{ vars.API_BASE_URL || 'http://localhost:8080/v1' }}" }
-        run: |
-          pip install schemathesis
-          # 注：schemathesis v4 语法（--url 取代 --base-url；--max-examples 取代 --hypothesis-max-examples；默认 checks 已含响应schema/状态码/鉴权）
-          schemathesis run "$SPEC" --url "$TARGET" --max-examples 20 || {
-            echo "::error::后端响应违反契约（Gate1 命门）"; exit 1; }
-
-  gate1-strict:                        # Gate1 硬红线·按里程碑逐模块收紧：只打"已实现模块"的 path，违约即挂。
-    runs-on: ubuntu-latest               # 每完成一个里程碑，往 DONE_PATHS 加该模块 path 正则；全部完成后删过滤 + 删 contract-test/continue-on-error。
+  gate1:                               # Gate1 整体硬红线（命门）：schemathesis 打全部 117 端点，违约即挂。
+    runs-on: ubuntu-latest               # 全契约已实现 → 去模块过滤、去 continue-on-error。后端响应违反契约 = 红。
     env:
-      # 已转硬红线的模块。M1-M10 核心 + 组织成员(orgs/members/监管/审计/权限矩阵) + AI护城河(话术库/作战手册/ai-config)。
-      DONE_PATHS: "^/(auth|me)$|^/auth/|^/me$|^/(projects|batches|cases)(/\\{id\\})?$|^/sea$|^/batches/\\{id\\}/(dispatch|redispatch|open-rate)$|^/cases/\\{id\\}/(accept|reject|claim|assign|release|return|open-for-claim|close)$|^/cases/\\{id\\}/(follow-ups|promises|tickets|contacts|pay-links|reductions|repay-lines|recordings)$|^/cases/\\{id\\}/recordings/latest$|^/recordings(/\\{id\\}(/ai-review|/reprocess|/parse)?)?$|^/tickets(/\\{id\\}/handle)?$|^/contacts/\\{id\\}$|^/pay-links/\\{id\\}/(resend|void)$|^/repay-lines/\\{id\\}/reverse$|^/reductions/\\{id\\}/approve$|^/recon/rollup$|^/batches/\\{id\\}/repay-lines$|^/payment-requests(/\\{id\\}(/revoke|/complete|/send)?)?$|^/co-commissions$|^/co-commissions/\\{collectorId\\}/batches/\\{batchId\\}/rate$|^/co-pay-docs(/\\{id\\}(/confirm-pay)?)?$|^/me/settlement$|^/risks$|^/risks/\\{id\\}/(dispose|escalate|review)$|^/dispose-tasks$|^/cases/\\{id\\}/evidence$|^/evidence$|^/evidence/\\{id\\}/verify$|^/cases/\\{id\\}/legal-docs$|^/legal-docs/\\{id\\}/deliver$|^/reports/(operation|export)$|^/pay/\\{token\\}$|^/orgs$|^/orgs/\\{id\\}/owner$|^/members$|^/members/\\{id\\}$|^/members/\\{id\\}/(disable|enable|reset-password|supervision-actions)$|^/members/supervision$|^/audit-log$|^/permission-matrix$|^/script-lib$|^/script-lib/\\{id\\}/variant/promote$|^/ai-config$|^/batches/\\{id\\}/playbook$|^/projects/\\{id\\}/playbook$"
       # 要害 check 集（保留有意义的、排除噪声的）：
       #   保留 not_a_server_error(无5xx) / response_schema_conformance(响应schema) / content_type / response_headers / ignored_auth(鉴权强制)
       #   排除 status_code_conformance+unsupported_method = 传输层(畸形头 Tomcat 400 / 未文档化方法 405)，业务契约未枚举
@@ -61,15 +44,14 @@ jobs:
       CHECKS: "not_a_server_error,response_schema_conformance,content_type_conformance,response_headers_conformance,ignored_auth"
       # -m positive(只生成 schema-合法数据,测后端honor契约) + 确定性 = 稳定不 flaky。
       #   action 端点的 {id} 路径参数若被负向 fuzz 塞控制字符→畸形 URL→Tomcat 连接器 400 HTML→schemathesis JSON 反序列化失败(传输层 artifact,非契约缺陷)；
-      #   故硬门用 positive 模式(契约 honor)。负向健壮性由横切层统一错误处理 + not_a_server_error 覆盖；完整负向 fuzz 在非阻断 contract-test job 作信息。
+      #   故硬门用 positive 模式(契约 honor)。负向健壮性由横切层统一错误处理 + not_a_server_error 覆盖。
       # 排 stateful 相位：契约无 OpenAPI links→schemathesis 状态链靠启发式推断,产 sequencing artifact(端点单独均合规)；Examples/Coverage/Fuzzing 已覆盖契约一致性。
       GEN_FLAGS: "-m positive --generation-deterministic --phases examples,coverage,fuzzing"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - name: schemathesis 硬校验已完成模块（带鉴权：M2 等受保护端点需登录取 token 才能打到 200）
-        if: ${{ env.DONE_PATHS != '' }}
+      - name: schemathesis 硬校验全部 117 端点（带鉴权：受保护端点需登录取 token 才能打到 200）
         env:
           TARGET: "${{ vars.API_BASE_URL || 'http://localhost:8080/v1' }}"
           TEST_USER: "${{ vars.API_TEST_USER || 'admin' }}"
@@ -81,8 +63,8 @@ jobs:
             | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))")
           [ -z "$TOKEN" ] && { echo "::error::无法登录取 token，Gate1 无法测受保护端点"; exit 1; }
           schemathesis run "$SPEC" --url "$TARGET" -H "Authorization: Bearer $TOKEN" \
-            --include-path-regex "$DONE_PATHS" -c "$CHECKS" $GEN_FLAGS --max-examples 25 || {
-            echo "::error::已完成模块响应违反契约（Gate1 硬红线）"; exit 1; }
+            -c "$CHECKS" $GEN_FLAGS --max-examples 25 || {
+            echo "::error::后端响应违反契约（Gate1 整体硬红线）"; exit 1; }
 
   mock-smoke:                          # 辅助：Prism 起 mock，确保契约可被 mock（前端可对 mock 开发）
     runs-on: ubuntu-latest
