@@ -59,11 +59,16 @@ async function submitAct() {
   if (res.error) { ElMessage.error('提交失败：' + ((res.error as any)?.message ?? '')); return }
   ElMessage.success(dlg.value.title + '成功'); dlg.value.open = false; loadAll()
 }
-// AI 建议采纳联动：按 actionRef 打开对应动作对话框 + 带 sourceSuggestionId
+// AI 建议采纳联动：按 actionRef 打开对应动作对话框 + 带 sourceSuggestionId。
+// 同时校验对应动作权限(不绕过具体动作授权)。
+const ADOPT_MAP: any = {
+  PROMISE: ['promise', '登记承诺', 'case.promise'], TICKET: ['ticket', '转工单', 'case.ticket'],
+  PAYLINK: ['paylink', '发缴费链接', 'case.paylink'], FOLLOWUP: ['follow', '写跟进', 'case.follow'],
+}
 function adopt(card: any) {
-  const map: any = { PROMISE: ['promise', '登记承诺'], TICKET: ['ticket', '转工单'], PAYLINK: ['paylink', '发缴费链接'], FOLLOWUP: ['follow', '写跟进'] }
-  const m = map[card.actionRef]
+  const m = ADOPT_MAP[card.actionRef]
   if (!m) { ElMessage.info('该建议无联动动作'); return }
+  if (!auth.has(m[2])) { ElMessage.warning('无权限执行该动作：' + m[2]); return }
   openAct(m[0], m[1] + '（采纳 AI 建议）', card.id)
 }
 onMounted(loadAll)
@@ -78,7 +83,7 @@ onMounted(loadAll)
       <el-button v-if="auth.has('case.promise')" @click="openAct('promise','登记承诺')">登记承诺</el-button>
       <el-button v-if="auth.has('case.ticket')" @click="openAct('ticket','转工单')">转工单</el-button>
       <el-button v-if="auth.has('case.paylink')" @click="openAct('paylink','发缴费链接')">发缴费链接</el-button>
-      <el-button @click="getLatest">获取最新通话录音</el-button>
+      <el-button v-if="auth.has('case.call')" @click="getLatest">获取最新通话录音</el-button>
       <el-button v-if="auth.has('case.close')" type="danger" plain @click="openAct('close','结案')">结案（撤案/坏账）</el-button>
     </el-card>
 

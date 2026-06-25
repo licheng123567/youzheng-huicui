@@ -67,8 +67,9 @@ onMounted(() => { side.value = sides.value[0] as any; load() })
       <el-table-column label="操作" width="180">
         <template #default="{ row }">
           <template v-if="row.status==='PENDING'">
-            <el-button size="small" type="primary" @click="openComplete(row)">{{ side==='IN'?'确认收款':'支付完成' }}</el-button>
-            <el-button size="small" @click="revoke(row)">{{ side==='IN'?'撤销':'撤回' }}</el-button>
+            <!-- 完成=平台付款(payreq.complete)；撤销/撤回=生成方(payreq.create)。服务端兜底,前端按权限隐藏。 -->
+            <el-button v-if="auth.has('payreq.complete')" size="small" type="primary" @click="openComplete(row)">{{ side==='IN'?'确认收款':'支付完成' }}</el-button>
+            <el-button v-if="auth.has('payreq.create')" size="small" @click="revoke(row)">{{ side==='IN'?'撤销':'撤回' }}</el-button>
           </template>
           <span v-else style="color:#909399">—</span>
         </template>

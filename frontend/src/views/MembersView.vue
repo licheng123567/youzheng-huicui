@@ -79,7 +79,7 @@ onMounted(load)
         <el-form-item label="账号"><el-input v-model="cForm.username" /></el-form-item>
         <el-form-item label="姓名"><el-input v-model="cForm.name" /></el-form-item>
         <el-form-item label="手机"><el-input v-model="cForm.phone" /></el-form-item>
-        <el-form-item label="角色"><el-select v-model="cForm.role"><el-option v-for="r in ['PC','CO','PL','VL']" :key="r" :label="r" :value="r" /></el-select></el-form-item>
+        <el-form-item label="角色"><el-select v-model="cForm.role"><el-option v-for="r in ['SA','SE','PL','PC','VL','CO']" :key="r" :label="r" :value="r" /></el-select></el-form-item>
       </el-form>
       <template #footer><el-button @click="cDlg=false">取消</el-button><el-button type="primary" @click="createMember">创建</el-button></template>
     </el-dialog>

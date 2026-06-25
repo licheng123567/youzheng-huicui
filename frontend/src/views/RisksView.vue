@@ -56,10 +56,8 @@ onMounted(load)
       <el-table-column label="复核" width="120"><template #default="{row}"><el-tag v-if="row.reviewed" size="small" type="success">{{ row.reviewed }}</el-tag><span v-else style="color:#909399">待复核</span></template></el-table-column>
       <el-table-column label="操作" width="220">
         <template #default="{ row }">
-          <template v-if="auth.has('qc.dispose')">
-            <el-button size="small" @click="dispose(row)">处置</el-button>
-            <el-button size="small" @click="escalate(row)">上报</el-button>
-          </template>
+          <el-button v-if="auth.has('qc.dispose')" size="small" @click="dispose(row)">处置</el-button>
+          <el-button v-if="auth.has('qc.escalate')" size="small" @click="escalate(row)">上报</el-button>
           <el-button v-if="auth.has('qc.review')" size="small" type="primary" @click="openReview(row)">复核</el-button>
         </template>
       </el-table-column>

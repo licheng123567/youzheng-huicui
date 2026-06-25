@@ -28,7 +28,7 @@ onMounted(async () => {
       <el-descriptions-item label="物业公司">{{ p.propCompany ?? '—' }}</el-descriptions-item>
       <el-descriptions-item label="合同类型">{{ p.contractType ?? '—' }}</el-descriptions-item>
       <el-descriptions-item label="收佣比例">
-        {{ p.commInRate != null ? p.commInRate + '%' : '— 服务商视角字段级不可见（资金双线隔离）' }}
+        {{ p.commInRate != null ? (p.commInRate * 100).toFixed(2) + '%' : '— 服务商视角字段级不可见（资金双线隔离）' }}
       </el-descriptions-item>
       <el-descriptions-item label="状态">{{ p.status }}</el-descriptions-item>
     </el-descriptions>
