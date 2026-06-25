@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 有证慧催 · API 契约（全模块·已冻结）
-  version: 1.0.2
+  version: 1.0.3
   contact: { name: 契约 Owner（架构师）, email: api-owner@youzheng.example }
   description: |
     从高保真原型 + PRD(BR/US) + 报告14口径抽取的全模块契约（单一事实源 SSOT）。**v1.0 已冻结（2026-06-24）**：经 codex×2 + 人工×2 共四轮独立审计、openapi-generator Spring 桩 mvn compile、Flyway 真库迁移三重验证，0 阻断/0 高。破坏性变更须升 major + 双 approve。
@@ -1668,7 +1668,7 @@ components:
       type: object
       properties: { page: { type: integer }, size: { type: integer }, total: { type: integer } }
     Money: { type: integer, description: '金额·分(amount_cents)。基数口径=减免后实收·不含税 BR-M9-01b', example: 120000 }
-    Rate: { type: number, description: '比率·百分比', example: 8.0 }
+    Rate: { type: number, minimum: 0, maximum: 1, description: '比率·分数(0-1，如 0.30=30%)。v1.0.3 统一为分数：DB/后端/前端一致，展示层 ×100 显示', example: 0.08 }
 
     # ---------- 枚举(单一事实源, 见 ERD 枚举字典) ----------
     OrgTypeEnum: { type: string, enum: [PLATFORM, PROPERTY, PROVIDER] }

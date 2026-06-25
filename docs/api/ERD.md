@@ -7,7 +7,7 @@
 
 ## 0. 设计约定
 - 主键统一 `id`（雪花/UUID，契约里为 `string`）；时间统一 `timestamptz`（ISO8601）。
-- 金额统一 `amount_cents`（bigint，分）避免浮点；展示层格式化。比率 `rate`（decimal(5,2)，百分比，如 8.00）。
+- 金额统一 `amount_cents`（bigint，分）避免浮点；展示层格式化。比率 `rate`（numeric，**分数 0-1，如 0.30=30%**，v1.0.3 统一；DB 实存分数，展示层 ×100）。
 - 多租户隔离三维：`org_id`（归属组织）+ 数据范围（SE 的 area/property/provider）；**所有查询强制按当前主体 scope 过滤**（见 BR-M1-05/14）。
 - 软删除 + 审计：`created_at/updated_at/created_by`；关键动作写 `audit_log`。
 

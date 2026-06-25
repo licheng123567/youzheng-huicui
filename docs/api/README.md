@@ -91,7 +91,7 @@ flyway -url=jdbc:postgresql://localhost:5432/huicui -user=... -locations=filesys
 - **版本化**：破坏性变更升 major；非破坏新增（加可选字段/新端点）走评审即可。
 
 ## 约定（写在契约里、必须遵守）
-- 金额 `amount_cents`(分, integer)，**不含税基数口径**（BR-M9-01b）；比率 `rate`(百分比, number)；时间 ISO8601。
+- 金额 `amount_cents`(分, integer)，**不含税基数口径**（BR-M9-01b）；**比率 `rate`(分数 0-1, number, 如 0.30=30%, v1.0.3 统一；展示层 ×100)**；时间 ISO8601。
 - 状态/类型一律**枚举码**（见 ERD 枚举字典，中文仅展示名）。
 - 列表默认分页（page/size）+ 服务端按 `x-data-scope` 强制裁剪（own-org / range / platform / public），**非仅前端隐藏**。
 - 动作型端点用 `/资源/{id}/动作`（如 `/cases/{id}/close`）；状态机非法流转返回 **409**；校验失败返回 **422 + details[]**。
