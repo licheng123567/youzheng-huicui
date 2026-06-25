@@ -206,7 +206,12 @@ if (evId) {
 }
 const rep = await getJson('/reports/operation', sa)
 check('GET /reports/operation(SA·KPI+rows) → 200', rep.status === 200 && Array.isArray(rep.body?.kpis), (rep.body?.kpis?.length ?? 0) + ' KPI')
-check('POST /reports/export(report.export) → 2xx', [200, 202].includes((await post('/reports/export', sa, { kind: 'operation' })).status))
+check('POST /reports/export(report.export) → 2xx', [200, 202].includes((await post('/reports/export', sa, { report: 'operation', format: 'xlsx' })).status))
+// 维度钻取: project/batch/month 各返 kpis+rows
+for (const dim of ['project', 'batch', 'month']) {
+  const rd = await getJson(`/reports/operation?dimension=${dim}`, sa)
+  check(`报表钻取 dimension=${dim} → kpis+rows`, rd.status === 200 && Array.isArray(rd.body?.kpis) && Array.isArray(rd.body?.rows), (rd.body?.rows?.length ?? 0) + ' 行')
+}
 // M7 业主账单 public(无 token)
 const s3id = s3?.id
 const payR = await fetch(`${B}/pay/demo-paylink-${s3id}`)
