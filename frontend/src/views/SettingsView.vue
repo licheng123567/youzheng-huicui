@@ -28,7 +28,13 @@ async function saveRotation() {
 }
 const fmt = (v: any) => v == null ? '—' : JSON.stringify(v)
 const domainOf = (x: any) => x.timers ?? x.rotation ?? x.markCodes ?? x.closeReasons ?? x.sms
-onMounted(load)
+// 权限矩阵 + AI 配置（平台）
+const matrix = ref<any[]>([]); const aiConfig = ref<any>(null)
+async function loadMore() {
+  matrix.value = ((await api.GET('/permission-matrix', {})).data as any) ?? []
+  aiConfig.value = (await api.GET('/ai-config', {})).data
+}
+onMounted(() => { load(); loadMore() })
 </script>
 
 <template>
@@ -41,7 +47,21 @@ onMounted(load)
       <el-table-column label="配置内容"><template #default="{row}"><code style="font-size:12px">{{ fmt(domainOf(row)) }}</code></template></el-table-column>
     </el-table>
     <el-alert type="info" :closable="false" style="margin-top:10px"
-      title="域：TIMERS(计时器) / ROTATION(轮转·持有上限) / MARK_CODES(标记码) / CLOSE_REASONS(结案原因) / SMS。AI 配置见独立「AI配置」（不在此）。" />
+      title="域：TIMERS(计时器) / ROTATION(轮转·持有上限) / MARK_CODES(标记码) / CLOSE_REASONS(结案原因) / SMS。" />
+
+    <el-divider content-position="left">权限矩阵（GET /permission-matrix · 功能×角色×权限码×数据范围 BR-M1-04c）</el-divider>
+    <el-table :data="matrix" border size="small" max-height="280">
+      <el-table-column prop="feature" label="功能/模块" /><el-table-column prop="role" label="角色" width="80" />
+      <el-table-column prop="permission" label="权限码" /><el-table-column prop="dataScope" label="数据范围" />
+    </el-table>
+
+    <el-divider content-position="left">AI 配置（GET /ai-config · 话术飞轮 LLM/ASR/Prompt）</el-divider>
+    <el-descriptions v-if="aiConfig" :column="2" border size="small">
+      <el-descriptions-item label="LLM"><code>{{ fmt(aiConfig.llm) }}</code></el-descriptions-item>
+      <el-descriptions-item label="ASR"><code>{{ fmt(aiConfig.asr) }}</code></el-descriptions-item>
+      <el-descriptions-item label="Prompts"><code style="font-size:11px">{{ fmt(aiConfig.prompts) }}</code></el-descriptions-item>
+      <el-descriptions-item label="飞轮"><code>{{ fmt(aiConfig.flywheel) }}</code></el-descriptions-item>
+    </el-descriptions>
 
     <el-dialog v-model="dlg" title="编辑轮转配置 ROTATION（PUT /settings·写新版本）" width="400px">
       <el-form label-width="120px">

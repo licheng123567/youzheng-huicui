@@ -8,12 +8,32 @@ import { useAuth } from '../stores/auth'
 const auth = useAuth()
 const members = ref<any[]>([])
 const sup = ref<any[]>([])
+const orgs = ref<any[]>([])
+const isPlatform = () => auth.has('org.manage')
 
 async function load() {
   const m = await api.GET('/members', { params: { query: { page: 1, size: 50 } } as any })
   members.value = (m.data as any)?.items ?? []
   const s = await api.GET('/members/supervision', { params: { query: { page: 1, size: 30 } } as any })
   sup.value = (s.data as any)?.items ?? []
+  if (isPlatform()) orgs.value = ((await api.GET('/orgs', { params: { query: { page: 1, size: 50 } } as any })).data as any)?.items ?? []
+}
+
+// 组织管理（平台·org.manage）：新建组织+绑负责人 / 改绑负责人
+const oDlg = ref(false); const oForm = ref<any>({ type: 'PROPERTY', name: '', ownerAccount: '', ownerPhone: '' })
+async function createOrg() {
+  const { error } = await api.POST('/orgs', { body: { ...oForm.value } as any })
+  if (error) { ElMessage.error('建组织失败：' + ((error as any)?.message ?? '')); return }
+  ElMessage.success('已建组织+绑负责人（初始随机口令，请重置告知）'); oDlg.value = false; load()
+}
+async function rebindOwner(o: any) {
+  try {
+    const { ElMessageBox } = await import('element-plus')
+    const { value: newPhone } = await ElMessageBox.prompt('新负责人手机（改绑+可选重置交接 US-M1-09）', '改绑负责人 ' + o.name, { inputValidator: (v: string) => /^\d{6,}$/.test(v) || '请输入有效号码' })
+    const { error } = await api.PATCH('/orgs/{id}/owner', { params: { path: { id: String(o.id) } }, body: { newPhone, resetPassword: true } as any })
+    if (error) { ElMessage.error('改绑失败：' + ((error as any)?.message ?? '')); return }
+    ElMessage.success('已改绑负责人'); load()
+  } catch { /* 取消 */ }
 }
 
 // 建成员
@@ -73,6 +93,25 @@ onMounted(load)
       <el-table-column prop="memberName" label="成员" /><el-table-column prop="action" label="动作" width="100" />
       <el-table-column prop="note" label="说明" /><el-table-column prop="tm" label="时间" />
     </el-table>
+
+    <template v-if="isPlatform()">
+      <el-divider content-position="left">组织管理（GET /orgs · 平台 org.manage）<el-button size="small" text type="primary" @click="oDlg=true">+ 新建组织</el-button></el-divider>
+      <el-table :data="orgs" border size="small">
+        <el-table-column prop="name" label="组织" /><el-table-column prop="type" label="类型" width="100" />
+        <el-table-column prop="status" label="状态" width="90" /><el-table-column prop="ownerAccountId" label="负责人账号" />
+        <el-table-column label="操作" width="110"><template #default="{row}"><el-button size="small" @click="rebindOwner(row)">改绑负责人</el-button></template></el-table-column>
+      </el-table>
+    </template>
+
+    <el-dialog v-model="oDlg" title="新建组织+绑负责人（POST /orgs · org.manage）" width="440px">
+      <el-form label-width="100px">
+        <el-form-item label="类型"><el-select v-model="oForm.type"><el-option label="物业" value="PROPERTY" /><el-option label="服务商" value="PROVIDER" /></el-select></el-form-item>
+        <el-form-item label="组织名"><el-input v-model="oForm.name" /></el-form-item>
+        <el-form-item label="负责人账号"><el-input v-model="oForm.ownerAccount" /></el-form-item>
+        <el-form-item label="负责人手机"><el-input v-model="oForm.ownerPhone" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="oDlg=false">取消</el-button><el-button type="primary" @click="createOrg">创建</el-button></template>
+    </el-dialog>
 
     <el-dialog v-model="cDlg" title="新增成员（POST /members · 本组织）" width="420px">
       <el-form label-width="80px">

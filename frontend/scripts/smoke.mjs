@@ -244,6 +244,12 @@ if (memId) {
   check('PL 停用成员 → 2xx', [200, 201, 204].includes((await post(`/members/${memId}/disable`, pl, {})).status))
 }
 check('VL 改翠湖成员 → 403(跨组织 BR-M1-04a)', memId ? (await post(`/members/${memId}/disable`, vl, {})).status === 403 : true)
+// P4: 权限矩阵 / AI 配置 / 组织管理
+check('GET /permission-matrix(SA) → 200 非空', (await getJson('/permission-matrix', sa)).body?.length >= 1)
+check('GET /ai-config(SA) → 200', (await getJson('/ai-config', sa)).status === 200)
+const newOrg = await post('/orgs', sa, { type: 'PROVIDER', name: '测试服务商P4', ownerAccount: 'p4_vl', ownerPhone: '13900003333' })
+check('SA 新建组织+绑负责人 → 201', [200, 201].includes(newOrg.status), 'HTTP ' + newOrg.status)
+if (newOrg.body?.id) check('SA 改绑组织负责人 → 2xx', [200, 201, 204].includes((await fetch(`${B}/orgs/${newOrg.body.id}/owner`, { method: 'PATCH', headers: { Authorization: `Bearer ${sa}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ newPhone: '13900004444', resetPassword: true }) })).status))
 
 console.log(fail === 0 ? '\n🎉 全 117 端点·全模块端到端全过 — 契约优先全链路贯通' : `\n⚠ ${fail} 项失败`)
 process.exit(fail === 0 ? 0 : 1)
