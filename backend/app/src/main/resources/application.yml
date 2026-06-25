@@ -1,0 +1,22 @@
+# 有证慧催 后端 · 最小可运行配置（地基期）
+server:
+  port: 9091                    # 本机 8080/8090 被其它 java 服务占用，用空闲端口
+  servlet:
+    context-path: /v1          # 对齐契约 servers 的 /v1 basePath
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5455/huicui   # 本机已有 homebrew postgres 占 5432，容器映射到 5455
+    username: postgres
+    password: test
+    driver-class-name: org.postgresql.Driver
+  flyway:
+    enabled: true
+    # V1/V2 核心迁移在 backend/db/migration（相对运行目录 backend/app 即 ../db/migration）；
+    # V900 dev 种子在 classpath，仅地基/dev 演示用（生产 profile 应排除）。
+    locations: filesystem:../db/migration,classpath:db/migration
+    baseline-on-migrate: false
+
+logging:
+  level:
+    org.flywaydb: info

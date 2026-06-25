@@ -45,8 +45,8 @@ jobs:
         env: { TARGET: "${{ vars.API_BASE_URL || 'http://localhost:8080/v1' }}" }
         run: |
           pip install schemathesis
-          # 注：契约用 OpenAPI 3.1.0；--checks all 校验状态码/响应 schema/错误结构是否符合契约
-          schemathesis run "$SPEC" --base-url "$TARGET" --checks all --hypothesis-max-examples=20 || {
+          # 注：schemathesis v4 语法（--url 取代 --base-url；--max-examples 取代 --hypothesis-max-examples；默认 checks 已含响应schema/状态码/鉴权）
+          schemathesis run "$SPEC" --url "$TARGET" --max-examples 20 || {
             echo "::error::后端响应违反契约（Gate1 命门）"; exit 1; }
 
   gate1-strict:                        # Gate1 硬红线·按里程碑逐模块收紧：只打"已实现模块"的 path，违约即挂。
@@ -63,8 +63,9 @@ jobs:
         env: { TARGET: "${{ vars.API_BASE_URL || 'http://localhost:8080/v1' }}" }
         run: |
           pip install schemathesis
-          schemathesis run "$SPEC" --base-url "$TARGET" --checks all \
-            --include-path-regex "$DONE_PATHS" --hypothesis-max-examples=30 || {
+          # v4：按已完成模块 path 正则收紧（DONE_PATHS 形如 '^/auth|^/me'）
+          schemathesis run "$SPEC" --url "$TARGET" --max-examples 30 \
+            --include-path-regex "$DONE_PATHS" || {
             echo "::error::已完成模块响应违反契约（Gate1 硬红线）"; exit 1; }
 
   mock-smoke:                          # 辅助：Prism 起 mock，确保契约可被 mock（前端可对 mock 开发）
