@@ -61,15 +61,23 @@ jobs:
         with: { distribution: temurin, java-version: "21", cache: maven }
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
+      - name: 预构建后端（冷 CI 先下依赖+编译，避免 boot 等待掺入下载耗时）
+        working-directory: backend/app
+        run: mvn -q -DskipTests compile
       - name: 起 Spring 后端（连 CI 的 PG 服务，跑迁移+种子）
         working-directory: backend/app
         run: |
           nohup mvn -q spring-boot:run > /tmp/app.log 2>&1 &
-          for i in $(seq 1 60); do
-            [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9091/v1/me)" = "401" ] && { echo "后端就绪"; break; }
-            grep -qE "APPLICATION FAILED|Migration.*failed" /tmp/app.log && { echo "::error::后端启动失败"; tail -40 /tmp/app.log; exit 1; }
+          ready=0
+          for i in $(seq 1 90); do   # 450s 上限：冷启动含迁移+种子；预构建后通常 <60s
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9091/v1/me)" = "401" ]; then
+              ready=1; echo "后端就绪（$((i*5))s）"; break
+            fi
+            grep -qE "APPLICATION FAILED|Migration.*failed|BUILD FAILURE" /tmp/app.log && { echo "::error::后端启动失败"; tail -50 /tmp/app.log; exit 1; }
             sleep 5
           done
+          # 显式超时失败（否则 schemathesis 会打到未就绪后端、登录失败误导排查）
+          [ "$ready" = 1 ] || { echo "::error::后端 450s 内未就绪"; tail -50 /tmp/app.log; exit 1; }
       - name: schemathesis 硬校验全部 117 端点（带鉴权：受保护端点需登录取 token 才能打到 200）
         env:
           TARGET: "http://localhost:9091/v1"
