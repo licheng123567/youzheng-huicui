@@ -34,6 +34,25 @@ public class DevSeeder implements CommandLineRunner {
         ensureProject(cuihu, "翠湖物业", "翠湖二期", "B区", "0.2800");
         Long yang = ensureProperty("阳光物业", "yang_pl", "阳光负责人", "13900000002", hash);
         ensureProject(yang, "阳光物业", "阳光花园", "C区", "0.3200");
+
+        // 3) 批次 + 案件（供前端 M2 批次/案件视图演示，并让 schemathesis 测 getBatch/getCase 的 200）
+        Long proj = jdbc.query("SELECT id FROM project WHERE name = '翠湖一期'", rs -> rs.next() ? rs.getLong(1) : null);
+        if (proj != null) {
+            Long batch = jdbc.query("SELECT id FROM batch WHERE no = 'B-CH-2026-01'", rs -> rs.next() ? rs.getLong(1) : null);
+            if (batch == null) {
+                // 平台视角需双线均含→pay_out_rate 必须非空（契约 Batch 必填 payOutRate）
+                batch = jdbc.queryForObject("INSERT INTO batch(project_id, no, comm_in_rate, comm_in_inherited, pay_out_rate, status) " +
+                        "VALUES (?, 'B-CH-2026-01', 0.3000, TRUE, 0.2000, 'IN_PROGRESS') RETURNING id", Long.class, proj);
+                ensureCase(batch, proj, "翠湖一期", "C-1001", "张三", "1-101", 360000L);
+                ensureCase(batch, proj, "翠湖一期", "C-1002", "李四", "2-202", 480000L);
+                ensureCase(batch, proj, "翠湖一期", "C-1003", "王五", "3-303", 120000L);
+            }
+        }
+    }
+
+    private void ensureCase(Long batchId, Long projectId, String projectName, String acctNo, String owner, String room, long dueCents) {
+        jdbc.update("INSERT INTO \"case\"(batch_id, project_id, project_name, acct_no, owner_name, room, due_cents, status) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'IN_PROGRESS')", batchId, projectId, projectName, acctNo, owner, room, dueCents);
     }
 
     private Long ensureProperty(String orgName, String username, String name, String phone, String hash) {

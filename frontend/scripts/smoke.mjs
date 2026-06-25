@@ -34,5 +34,20 @@ const names = (projPl.body?.items || []).map((i) => i.name)
 check('翠湖 PL 仅见 2 项目（own-org 隔离）', projPl.body?.items?.length === 2, projPl.body?.scopeApplied)
 check('翠湖 PL 看不到阳光物业项目', !names.includes('阳光花园'), names.join(','))
 
-console.log(fail === 0 ? '\n🎉 行走骨架端到端全过' : `\n⚠ ${fail} 项失败`)
+// M2 真端点（前端 projects/batches/cases 视图消费的数据流）
+const projs = await getJson('/projects?page=1&size=20', sa)
+check('GET /projects 返回 3 项目(SA)', projs.body?.items?.length === 3 && projs.body?.meta?.total === 3)
+const pd = await getJson(`/projects/${projs.body.items[0].id}`, sa)
+check('GET /projects/{id} 含 viewRole', !!pd.body?.viewRole, pd.body?.viewRole)
+const bs = await getJson('/batches?page=1&size=20', sa)
+check('GET /batches 返回 1 批次, 平台视角双线均含', bs.body?.items?.length === 1 && bs.body.items[0].payOutRate != null, bs.body?.items?.[0]?.code)
+const cs = await getJson('/cases?page=1&size=20', sa)
+check('GET /cases 返回 3 案件', cs.body?.items?.length === 3)
+const cd = await getJson(`/cases/${cs.body.items[0].id}`, sa)
+check('GET /cases/{id} 聚合 CaseDetail(case+contacts)', !!cd.body?.case && Array.isArray(cd.body?.contacts), cd.body?.case?.ownerName)
+// 资金双线：翠湖 PL 看批次应无 payOutRate（物业视角）
+const bsPl = await getJson('/batches?page=1&size=20', pl)
+check('翠湖 PL 看批次: 物业视角无 payOutRate(资金双线)', bsPl.body?.items?.[0]?.payOutRate == null && bsPl.body?.items?.[0]?.commInRate != null, 'viewRole=' + bsPl.body?.items?.[0]?.viewRole)
+
+console.log(fail === 0 ? '\n🎉 M2 纵向切片端到端全过' : `\n⚠ ${fail} 项失败`)
 process.exit(fail === 0 ? 0 : 1)

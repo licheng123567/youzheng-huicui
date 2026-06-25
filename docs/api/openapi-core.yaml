@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 有证慧催 · API 契约（全模块·已冻结）
-  version: 1.0.1
+  version: 1.0.2
   contact: { name: 契约 Owner（架构师）, email: api-owner@youzheng.example }
   description: |
     从高保真原型 + PRD(BR/US) + 报告14口径抽取的全模块契约（单一事实源 SSOT）。**v1.0 已冻结（2026-06-24）**：经 codex×2 + 人工×2 共四轮独立审计、openapi-generator Spring 桩 mvn compile、Flyway 真库迁移三重验证，0 阻断/0 高。破坏性变更须升 major + 双 approve。
@@ -1842,10 +1842,11 @@ components:
         playbookMode: { type: string, enum: [INHERIT, CUSTOM], description: 'INHERIT=继承项目；CUSTOM=批次自定义(BR-M2-18b)' }
     Batch:
       description: '平台全视角(双线均含)。物业用 BatchForProperty、服务商用 BatchForProvider'
+      unevaluatedProperties: false   # v1.0.2: 三向 oneOf 互斥(3.1 unevaluatedProperties 透视 allOf)
       allOf:
         - { $ref: '#/components/schemas/BatchBase' }
         - type: object
-          required: [viewRole]
+          required: [viewRole, commInRate, payOutRate]   # 平台双线均含→与窄变体互斥
           properties:
             viewRole: { type: string, description: '角色判别(discriminator)=PLATFORM' }
             commInRate: { $ref: '#/components/schemas/Rate', description: '生效收佣比例(批次覆盖否则继承项目 D5)' }
@@ -1853,17 +1854,19 @@ components:
             payOutRate: { $ref: '#/components/schemas/Rate', description: '生效付佣比例' }
     BatchForProperty:
       description: '物业视角：**含 commInRate、字段级不含 payOutRate**(资金双线 BR-M9-11)'
+      unevaluatedProperties: false   # v1.0.2: 不含 payOutRate→与平台/服务商视角互斥
       allOf:
         - { $ref: '#/components/schemas/BatchBase' }
         - type: object
-          required: [viewRole]
+          required: [viewRole, commInRate]
           properties: { viewRole: { type: string, description: '角色判别(discriminator)=PROPERTY' }, commInRate: { $ref: '#/components/schemas/Rate' }, commInInherited: { type: boolean } }
     BatchForProvider:
       description: '服务商视角：**含 payOutRate、字段级不含 commInRate**(资金双线 BR-M9-11)'
+      unevaluatedProperties: false   # v1.0.2: 不含 commInRate→与平台/物业视角互斥
       allOf:
         - { $ref: '#/components/schemas/BatchBase' }
         - type: object
-          required: [viewRole]
+          required: [viewRole, payOutRate]
           properties: { viewRole: { type: string, description: '角色判别(discriminator)=PROVIDER' }, payOutRate: { $ref: '#/components/schemas/Rate' } }
     BatchView: { oneOf: [ { $ref: '#/components/schemas/Batch' }, { $ref: '#/components/schemas/BatchForProperty' }, { $ref: '#/components/schemas/BatchForProvider' } ], discriminator: { propertyName: viewRole, mapping: { PLATFORM: '#/components/schemas/Batch', PROPERTY: '#/components/schemas/BatchForProperty', PROVIDER: '#/components/schemas/BatchForProvider' } }, description: '服务端按角色返回:平台=Batch/物业=BatchForProperty/服务商=BatchForProvider' }
     BatchPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/BatchView' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }

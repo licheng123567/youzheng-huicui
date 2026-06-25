@@ -27,7 +27,9 @@ function logout() {
       <el-aside width="180px" style="background:#f5f7fa">
         <el-menu :default-active="$route.path" router>
           <el-menu-item index="/dashboard">当前主体</el-menu-item>
-          <el-menu-item index="/projects">项目（数据范围演示）</el-menu-item>
+          <el-menu-item index="/projects">项目</el-menu-item>
+          <el-menu-item index="/batches">批次</el-menu-item>
+          <el-menu-item index="/cases">案件</el-menu-item>
         </el-menu>
       </el-aside>
       <el-main>

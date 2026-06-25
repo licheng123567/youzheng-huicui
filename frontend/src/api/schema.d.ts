@@ -2255,10 +2255,10 @@ export interface components {
             /** @description 角色判别(discriminator)=PLATFORM */
             viewRole: string;
             /** @description 生效收佣比例(批次覆盖否则继承项目 D5) */
-            commInRate?: components["schemas"]["Rate"];
+            commInRate: components["schemas"]["Rate"];
             commInInherited?: boolean;
             /** @description 生效付佣比例 */
-            payOutRate?: components["schemas"]["Rate"];
+            payOutRate: components["schemas"]["Rate"];
         } & {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -2270,7 +2270,7 @@ export interface components {
         BatchForProperty: components["schemas"]["BatchBase"] & {
             /** @description 角色判别(discriminator)=PROPERTY */
             viewRole: string;
-            commInRate?: components["schemas"]["Rate"];
+            commInRate: components["schemas"]["Rate"];
             commInInherited?: boolean;
         } & {
             /**
@@ -2283,7 +2283,7 @@ export interface components {
         BatchForProvider: components["schemas"]["BatchBase"] & {
             /** @description 角色判别(discriminator)=PROVIDER */
             viewRole: string;
-            payOutRate?: components["schemas"]["Rate"];
+            payOutRate: components["schemas"]["Rate"];
         } & {
             /**
              * @description discriminator enum property added by openapi-typescript
