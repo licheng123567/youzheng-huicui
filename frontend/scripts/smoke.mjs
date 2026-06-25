@@ -130,5 +130,18 @@ check('CO 我的结算 GET /me/settlement → 200', co2.status === 200)
 const recon = await getJson('/recon/rollup?side=OUT&page=1&size=10', vl)
 check('VL 对账汇总 GET /recon/rollup?side=OUT → 200', recon.status === 200)
 
-console.log(fail === 0 ? '\n🎉 M9 结算端到端全过 — 核心闭环(M1-M4-M9)前后端贯通' : `\n⚠ ${fail} 项失败`)
+// M5 质检
+const risks = await getJson('/risks?page=1&size=30', sa)
+check('GET /risks 全量检测列表(SA)', (risks.body?.items?.length ?? 0) >= 1, '共 ' + risks.body?.meta?.total)
+const undone = (risks.body?.items || []).find((r) => !r.reviewed) || risks.body?.items?.[0]
+if (undone) {
+  check('VL 处置催收员风险(归属) → 200', (await post(`/risks/${undone.id}/dispose`, vl, { action: 'mark', note: '已整改' })).status === 200)
+  check('SA 平台复核 → 200', (await post(`/risks/${undone.id}/review`, sa, { verdict: 'CONFIRMED', note: '属实' })).status === 200)
+  check('物业 PL 复核 → 403(只平台复核 BR-M5-07c)', (await post(`/risks/${undone.id}/review`, pl, { verdict: 'CONFIRMED' })).status === 403)
+}
+const dtSa = await getJson('/dispose-tasks', sa)
+const dtVl = await getJson('/dispose-tasks', vl)
+check('处置任务跟踪仅平台(SA 200 / VL 403 BR-M5-07b)', dtSa.status === 200 && dtVl.status === 403, `SA ${dtSa.status}/VL ${dtVl.status}`)
+
+console.log(fail === 0 ? '\n🎉 M5 质检端到端全过 — 主干模块 M1-M5+M9 后端全绿' : `\n⚠ ${fail} 项失败`)
 process.exit(fail === 0 ? 0 : 1)
