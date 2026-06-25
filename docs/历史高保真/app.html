@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>有证慧催 · 催收员 App 原型</title>
+<link rel="stylesheet" href="assets/ds-admin.css"/>
+<script src="vendor/vue.global.prod.js"></script>
+<style>
+  body{margin:0;background:#e9eef3;display:flex;justify-content:center;gap:28px;flex-wrap:wrap;padding:20px;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;}
+  .phone{width:390px;height:820px;background:#f5f7fa;border-radius:38px;border:11px solid #0b1220;overflow:hidden;position:relative;box-shadow:0 14px 44px rgba(0,0,0,.28);}
+  .sb{height:30px;background:#13245b;color:#fff;font-size:12px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;}
+  .ab{height:48px;background:linear-gradient(90deg,#13245b,#2563EB);color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 14px;font-weight:600;font-size:15px;}
+  .ab .rp{font-size:11px;background:rgba(255,255,255,.16);border:1px dashed rgba(255,255,255,.6);border-radius:10px;padding:2px 7px;color:#fff;}
+  .body{position:absolute;top:78px;bottom:56px;left:0;right:0;overflow:auto;padding:12px;}
+  .tabbar{position:absolute;bottom:0;left:0;right:0;height:56px;background:#fff;border-top:1px solid #e5e7eb;display:flex;}
+  .tabbar .t{flex:1;text-align:center;font-size:11px;color:#9aa3af;padding-top:8px;cursor:pointer;}
+  .tabbar .t.on{color:var(--primary);}
+  .tabbar .t .i{font-size:18px;display:block;line-height:1.1;}
+  .mc{background:#fff;border-radius:12px;padding:13px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.05);}
+  .due{color:var(--danger);font-weight:700;}
+  .todoh{display:flex;gap:8px;overflow-x:auto;margin-bottom:10px;padding-bottom:2px;}
+  .todoh .c{min-width:92px;background:#fff;border-radius:10px;padding:10px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.05);}
+  .todoh .n{font-size:21px;font-weight:700;} .todoh .l{font-size:11px;color:#9aa3af;margin-top:2px;}
+  .badge{font-size:11px;padding:2px 8px;border-radius:10px;}
+  .b-or{background:#fff7ed;color:#c2620a;} .b-gr{background:#f0fdf4;color:#15803d;} .b-bl{background:#eff6ff;color:#2563eb;} .b-gy{background:#f3f4f6;color:#6b7280;} .b-rd{background:#fef2f2;color:#dc2626;}
+  .sec{font-size:13px;font-weight:600;color:#374151;margin:14px 2px 8px;}
+  .row{display:flex;justify-content:space-between;align-items:center;}
+  .mbtn{display:block;width:100%;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:600;cursor:pointer;}
+  .mbtn.pri{background:var(--primary);color:#fff;} .mbtn.gho{background:#fff;color:var(--primary);border:1px solid var(--primary);}
+  .mini{font-size:12px;color:#9aa3af;}
+  .info3{display:flex;background:#f8fafc;border:1px solid #eef1f5;border-radius:10px;}
+  .info3 div{flex:1;text-align:center;padding:10px 4px;border-right:1px solid #eef1f5;} .info3 div:last-child{border:none;}
+  .info3 .v{font-size:16px;font-weight:700;} .info3 .k{font-size:11px;color:#9aa3af;margin-top:2px;}
+  .tl{padding-left:16px;} .tl .e{position:relative;margin-bottom:14px;font-size:13px;}
+  .tl .e::before{content:"";position:absolute;left:-16px;top:4px;width:9px;height:9px;border-radius:50%;background:var(--primary);}
+  .tl .e .tm{font-size:11px;color:#9aa3af;}
+  /* 沉浸式全屏覆盖 */
+  .ov{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;}
+  .ov.dial{background:linear-gradient(160deg,#13245b,#1d4ed8);color:#fff;align-items:center;justify-content:center;text-align:center;padding:24px;}
+  .ov .av-lg{width:84px;height:84px;border-radius:50%;background:rgba(255,255,255,.16);display:flex;align-items:center;justify-content:center;font-size:30px;margin-bottom:14px;}
+  .ov .nm-lg{font-size:22px;font-weight:700;} .ov .glass{background:rgba(255,255,255,.12);border-radius:12px;padding:12px 18px;margin-top:14px;}
+  .ring{width:64px;height:64px;border-radius:50%;border:3px solid rgba(255,255,255,.3);border-top-color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;margin:22px auto;animation:spin 1s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .ov.incall{background:#0f172a;color:#fff;}
+  .incall .top{padding:16px;text-align:center;} .incall .timer{color:#34d399;font-size:20px;font-variant-numeric:tabular-nums;}
+  .risk-strip{background:#7c2d12;color:#fed7aa;font-size:12px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;}
+  .tr-prev{flex:1;overflow:auto;padding:14px;}
+  .tr-prev .b{background:rgba(255,255,255,.08);border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:13px;}
+  .tr-prev .b .who{font-size:10px;color:#94a3b8;margin-bottom:2px;}
+  .ai-pop{margin:10px 14px;background:#fff;color:#111827;border-left:4px solid var(--primary);border-radius:8px;padding:10px 12px;}
+  .ai-pop .t{font-size:13px;font-weight:600;margin-bottom:3px;} .ai-pop .x{font-size:12px;color:#4b5563;line-height:1.5;}
+  .ai-pop .cta{display:flex;gap:8px;margin-top:8px;}
+  .ai-pop .cta button{flex:1;border:none;border-radius:6px;padding:7px;font-size:12px;cursor:pointer;}
+  .ctrl{display:flex;justify-content:space-around;padding:16px 10px 22px;background:#1e293b;}
+  .ctrl .c{text-align:center;color:#cbd5e1;font-size:11px;cursor:pointer;}
+  .ctrl .c .r{width:52px;height:52px;border-radius:50%;background:#334155;display:flex;align-items:center;justify-content:center;font-size:20px;margin:0 auto 4px;}
+  .ctrl .c.hang .r{background:#dc2626;}
+  .ov.after{background:#f5f7fa;} .after .hd{background:#fff;padding:14px;border-bottom:1px solid #eef1f5;}
+  .tagpick{display:flex;flex-wrap:wrap;gap:8px;}
+  .tagpick .p{border:1px solid #d1d5db;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;background:#fff;}
+  .tagpick .p.on{background:var(--primary);color:#fff;border-color:var(--primary);}
+  .tagpick .p.dg.on{background:var(--danger);border-color:var(--danger);}
+  textarea.ta2{width:100%;border:1px solid #d1d5db;border-radius:8px;padding:10px;font-size:13px;min-height:64px;font-family:inherit;}
+  .toast2{position:absolute;bottom:70px;left:50%;transform:translateX(-50%);background:rgba(17,24,39,.92);color:#fff;font-size:13px;padding:9px 16px;border-radius:20px;z-index:50;}
+  .sign-cam{flex:1;background:#1a1a2e;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#fff;font-size:14px;}
+  .sign-cam .lens{width:120px;height:120px;border-radius:12px;border:2px dashed rgba(255,255,255,.5);display:flex;align-items:center;justify-content:center;font-size:40px;}
+  .sign-shoot{width:64px;height:64px;border-radius:50%;background:#fff;border:none;font-size:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .sign-prev{padding:14px;}
+  .sign-ph{width:100%;height:200px;border-radius:10px;background:linear-gradient(135deg,#c7d2fe,#a5f3fc);display:flex;align-items:center;justify-content:center;font-size:13px;color:#374151;}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="phone">
+    <div class="sb"><span>9:41</span><span>有证慧催 App</span><span>📶 🔋</span></div>
+    <div class="ab">
+      <span>{{ abTitle }}</span>
+      <select class="rp" v-model="role" aria-label="切换演示角色"><option value="CO">演示·催收员</option><option value="PC">演示·协调员</option></select>
+    </div>
+
+    <div class="body">
+      <!-- 工作台（今日看板）-->
+      <template v-if="tab==='home'">
+        <div class="todoh"><div class="c" v-for="t in todos" :key="t.l" role="button" tabindex="0" :aria-label="t.l+' '+t.n+' 项，点击查看'" style="cursor:pointer" @click="jumpTodo(t)" @keydown.enter="jumpTodo(t)"><div class="n" :style="{color:t.c}">{{t.n}}</div><div class="l">{{t.l}}</div></div></div>
+        <div class="sec">今日案件清单（点击直接作业）</div>
+        <div class="mc" v-for="cs in viewCases" :key="cs.id" @click="openCase(cs)">
+          <template v-if="cs._redacted">
+            <div class="row"><b>🔒 已结案（信息已脱敏）</b><span class="badge" :class="cs.bc">{{cs.tag}}</span></div>
+            <div class="row" style="margin-top:6px"><span class="mini">回款 ¥{{cs.recovered}} · 明细不可见</span></div>
+          </template>
+          <template v-else>
+            <div class="row"><b>{{cs.name}} · {{cs.room}}</b><span class="due">¥{{cs.due}}</span></div>
+            <div class="row" style="margin-top:6px"><span class="mini">{{cs.batch}} · 欠{{cs.months}}个月</span><span class="badge" :class="cs.bc">{{cs.tag}}</span></div>
+          </template>
+        </div>
+      </template>
+
+      <!-- 案件列表 -->
+      <template v-if="tab==='cases'">
+        <input class="inp" style="width:100%;margin-bottom:10px" placeholder="🔍 搜索业主 / 房号" aria-label="搜索业主或房号">
+        <div class="todoh" style="margin-bottom:10px">
+          <span class="badge b-bl" style="padding:6px 12px">全部</span><span class="badge b-or" style="padding:6px 12px">跟进中</span><span class="badge b-gr" style="padding:6px 12px">承诺缴费</span><span class="badge b-gy" style="padding:6px 12px">未接通</span>
+        </div>
+        <div class="mc" v-for="cs in viewCases" :key="cs.id" @click="openCase(cs)">
+          <template v-if="cs._redacted">
+            <div class="row"><b>🔒 已结案（信息已脱敏）</b><span class="badge" :class="cs.bc">{{cs.tag}}</span></div>
+            <div class="row" style="margin-top:6px"><span class="mini">回款 ¥{{cs.recovered}} · 明细不可见</span></div>
+          </template>
+          <template v-else>
+            <div class="row"><b>{{cs.name}} · {{cs.room}}</b><span class="due">¥{{cs.due}}</span></div>
+            <div class="row" style="margin-top:6px"><span class="mini">{{cs.batch}} · 承诺 {{cs.promise||'—'}}</span><span class="badge" :class="cs.bc">{{cs.tag}}</span></div>
+          </template>
+        </div>
+        <div class="mini" style="text-align:center;margin-top:6px">号码取自案件主数据，拨打调起原生报号器；通话系统自动录音→后台上传解析（打电话不耗分钟）</div>
+      </template>
+
+      <!-- 通话记录 -->
+      <template v-if="tab==='calls'">
+        <div class="sec">通话记录</div>
+        <div class="mc" v-for="r in callLog" :key="r.t">
+          <div class="row"><b>{{r.name}}</b><span class="badge" :class="r.bc">{{r.res}}</span></div>
+          <div class="mini" style="margin-top:4px">{{r.t}} · {{r.dur}}</div>
+          <div class="mini" style="margin-top:4px;color:#4b5563">AI：{{r.ai}}</div>
+        </div>
+      </template>
+
+      <!-- 我的 -->
+      <template v-if="tab==='me'">
+        <div class="mc"><b>{{ role==='CO'?'安信催收 · 王五（催收员）':'阳光物业 · 钱协调（协调员）' }}</b><div class="mini" style="margin-top:6px">持有案件 {{activeCount}}/50 · 分钟余额 120 ⚠</div><div class="mini" style="margin-top:4px" v-if="role==='CO'">已结案 {{closedStat.count}} 件 · 回款 ¥{{closedStat.recovered}}（明细已脱敏）</div></div>
+        <div class="info3" style="margin-bottom:10px"><div><div class="v">18</div><div class="k">今日通话</div></div><div><div class="v">5</div><div class="k">承诺数</div></div><div><div class="v">4.8</div><div class="k">评分</div></div></div>
+        <div class="mc"><b>机型自检</b><div class="mini" style="margin-top:6px">系统通话录音 ✅ · 目录可读 ✅ · 双向音 ✅</div></div>
+        <div class="mc"><b>离线标注</b><div class="mini" style="margin-top:6px">无网络本地暂存，恢复后自动同步</div></div>
+      </template>
+    </div>
+
+    <div class="tabbar" role="tablist" aria-label="主导航">
+      <div class="t" :class="{on:tab==='home'}" @click="tab='home'" @keydown.enter="tab='home'" role="tab" tabindex="0" :aria-selected="tab==='home'" aria-label="工作台"><span class="i" aria-hidden="true">🏠</span>工作台</div>
+      <div class="t" :class="{on:tab==='cases'}" @click="tab='cases'" @keydown.enter="tab='cases'" role="tab" tabindex="0" :aria-selected="tab==='cases'" aria-label="案件"><span class="i" aria-hidden="true">📋</span>案件</div>
+      <div class="t" :class="{on:tab==='calls'}" @click="tab='calls'" @keydown.enter="tab='calls'" role="tab" tabindex="0" :aria-selected="tab==='calls'" aria-label="通话记录"><span class="i" aria-hidden="true">📞</span>通话记录</div>
+      <div class="t" :class="{on:tab==='me'}" @click="tab='me'" @keydown.enter="tab='me'" role="tab" tabindex="0" :aria-selected="tab==='me'" aria-label="我的"><span class="i" aria-hidden="true">👤</span>我的</div>
+    </div>
+
+    <!-- 案件详情 -->
+    <div class="ov" style="background:#f5f7fa" v-if="ov==='detail'" role="dialog" aria-modal="true" aria-label="案件详情">
+      <div class="ab">
+        <span @click="ov=null" @keydown.enter="ov=null" role="button" tabindex="0" aria-label="返回" style="cursor:pointer">‹ <template v-if="cur._redacted">已结案 · 信息已脱敏</template><template v-else>{{cur.name}} · {{cur.room}}</template></span>
+        <span class="badge" :class="cur.bc" style="color:#fff;background:rgba(255,255,255,.2)">{{cur.tag}}</span>
+      </div>
+      <div class="body" style="top:48px">
+        <!-- 脱敏态：仅显示统计 -->
+        <div class="info3" style="margin-bottom:12px" v-if="cur._redacted">
+          <div><div class="v">{{cur.closedKind}}</div><div class="k">结案类型</div></div>
+          <div><div class="v">¥{{cur.recovered}}</div><div class="k">回款额</div></div>
+          <div><div class="v">{{cur.months}}</div><div class="k">欠费月数</div></div>
+        </div>
+        <!-- 正常态：完整信息 -->
+        <div class="info3" style="margin-bottom:12px" v-else>
+          <div><div class="v due">¥{{cur.due}}</div><div class="k">欠费金额</div></div>
+          <div><div class="v">{{cur.months}}</div><div class="k">欠费月数</div></div>
+          <div><div class="v">06-15</div><div class="k">最近联系</div></div>
+        </div>
+        <button class="mbtn pri" v-if="role==='CO' && !cur._redacted" @click="ov='dial'">📞 拨打并录音</button>
+        <button class="mbtn gho" v-if="role==='PC'" style="margin-top:8px" aria-label="法务送达签收拍照" @click="signImg='';ov='sign'">⚖ 法务送达签收拍照</button>
+        <!-- 全时间段：脱敏时替换为占位 -->
+        <template v-if="!cur._redacted">
+          <div class="sec">全时间段（通话/沟通/工单）</div>
+          <div class="mc"><div class="tl">
+            <div class="e"><span class="tm">06-15 14:22</span> 通话 03:48 · 承诺还款<div class="mini">AI：获口头承诺 6/20</div></div>
+            <div class="e"><span class="tm">06-15 14:25</span> 登记承诺：6/20 ¥{{cur.due}}</div>
+            <div class="e"><span class="tm">06-10 10:01</span> 发送催费单（短信）</div>
+            <div class="e"><span class="tm">06-08</span> 抢单获得</div>
+          </div></div>
+          <div class="sec">作战手册 + AI 策略</div>
+          <div class="mc"><div class="mini" style="line-height:1.8">📕 物业静态：老旧小区，老人户多，宜先共情；分期可谈。<br>🤖 AI 动态：上次提家庭困难→建议先认同再给分期方案，避免施压词。</div></div>
+        </template>
+        <template v-else>
+          <div class="sec">案件已结案</div>
+          <div class="mc"><div class="mini">该案件已结案（{{cur.closedKind}}），业主信息与跟进明细已按合规要求脱敏，仅保留统计：回款 ¥{{cur.recovered}}。</div></div>
+        </template>
+      </div>
+    </div>
+
+    <!-- 拨打请求（沉浸）-->
+    <div class="ov dial" v-if="ov==='dial'" role="dialog" aria-modal="true" aria-label="拨打请求">
+      <div class="av-lg">{{cur.name.charAt(0)}}</div>
+      <div class="nm-lg">{{cur.name}}</div>
+      <div class="mini" style="color:rgba(255,255,255,.7);margin-top:4px">{{cur.room}} · {{cur.phone}}</div>
+      <div class="glass">欠费 ¥{{cur.due}} · {{cur.months}} 个月</div>
+      <div class="ring">15</div>
+      <div class="mini" style="color:rgba(255,255,255,.7)">即将调起原生报号器拨号，通话系统自动录音</div>
+      <button class="mbtn pri" style="background:#16a34a;max-width:240px;margin-top:18px" @click="ov='incall'">立即拨打</button>
+      <button class="mbtn gho" style="background:transparent;color:#fff;border-color:rgba(255,255,255,.6);max-width:240px;margin-top:10px" @click="ov='detail'">稍后处理</button>
+    </div>
+
+    <!-- 通话中（沉浸）-->
+    <div class="ov incall" v-if="ov==='incall'" role="dialog" aria-modal="true" aria-label="通话中">
+      <div class="top"><div class="mini" style="color:#94a3b8">通话中</div><div class="nm-lg">{{cur.name}}</div><div class="timer">03:48</div></div>
+      <div class="risk-strip"><span>⚠️ AI 检测到异议：房屋质量</span><span style="text-decoration:underline" role="button" tabindex="0" aria-label="查看AI异议处理建议">查看建议</span></div>
+      <div class="tr-prev">
+        <div class="b"><div class="who">催收员</div>您好，本月物业费 ¥{{cur.due}} 还未缴…</div>
+        <div class="b"><div class="who">业主</div>这两天周转一下，20号前一定交</div>
+        <div class="b" style="opacity:.5"><div class="who">业主</div>就是这房子质量也…</div>
+      </div>
+      <div class="ai-pop">
+        <div class="t">💡 AI 建议 · 话术推荐</div>
+        <div class="x">先认同其反映的问题并承诺建工单，再把"物业费与维修是两件事"分开引导缴费。</div>
+        <div class="cta"><button style="background:var(--primary);color:#fff" @click="toast2('已采纳')">采纳</button><button style="background:#e5e7eb" @click="toast2('已忽略')">忽略</button></div>
+      </div>
+      <div class="ctrl">
+        <div class="c" role="button" tabindex="0" aria-label="静音"><div class="r" aria-hidden="true">🔇</div>静音</div>
+        <div class="c" role="button" tabindex="0" aria-label="备注"><div class="r" aria-hidden="true">📝</div>备注</div>
+        <div class="c" role="button" tabindex="0" aria-label="发码"><div class="r" aria-hidden="true">🔗</div>发码</div>
+        <div class="c hang" role="button" tabindex="0" aria-label="挂断" @click="ov='after'" @keydown.enter="ov='after'"><div class="r" aria-hidden="true">📵</div>挂断</div>
+      </div>
+    </div>
+
+    <!-- 通话后标注 -->
+    <div class="ov after" v-if="ov==='after'" role="dialog" aria-modal="true" aria-label="通话后标注">
+      <div class="hd"><b>📋 通话小结 — {{cur.name}} · 03:52</b><div class="mini" style="margin-top:4px;background:#eff6ff;color:#1d4ed8;padding:6px 8px;border-radius:6px">AI 分析：推托（0.87）· 家庭困难、月底考虑缴费</div></div>
+      <div class="body" style="top:88px;bottom:0">
+        <div class="sec">通话结果标记</div>
+        <div class="tagpick">
+          <span class="p" :class="{on:mark==='承诺缴费'}" role="button" tabindex="0" :aria-pressed="mark==='承诺缴费'" @click="mark='承诺缴费'" @keydown.enter="mark='承诺缴费'">承诺缴费</span>
+          <span class="p dg" :class="{on:mark==='拒绝缴费'}" role="button" tabindex="0" :aria-pressed="mark==='拒绝缴费'" @click="mark='拒绝缴费'" @keydown.enter="mark='拒绝缴费'">拒绝缴费</span>
+          <span class="p" :class="{on:mark==='需建工单'}" role="button" tabindex="0" :aria-pressed="mark==='需建工单'" @click="mark='需建工单'" @keydown.enter="mark='需建工单'">需建工单</span>
+          <span class="p" :class="{on:mark==='再次跟进'}" role="button" tabindex="0" :aria-pressed="mark==='再次跟进'" @click="mark='再次跟进'" @keydown.enter="mark='再次跟进'">再次跟进</span>
+          <span class="p" :class="{on:mark==='无人接听'}" role="button" tabindex="0" :aria-pressed="mark==='无人接听'" @click="mark='无人接听'" @keydown.enter="mark='无人接听'">无人接听</span>
+        </div>
+        <div v-if="mark==='承诺缴费'" class="mc" style="margin-top:10px"><div class="row"><span>承诺日期</span><input class="inp" type="date" value="2026-06-20" style="min-width:150px" aria-label="承诺缴费日期"></div><div class="mini" style="margin-top:6px">承诺金额 ¥{{cur.due}}</div></div>
+        <div class="sec">跟进备注</div>
+        <textarea class="ta2" placeholder="已预填 AI 摘要：家庭困难，月底考虑缴费…" aria-label="跟进备注"></textarea>
+        <button class="mbtn pri" style="margin-top:12px" @click="ov=null;tab='home';toast2('已保存（接通且有效→重置T_collector）')">保存并进入下一通</button>
+        <button class="mbtn gho" style="margin-top:8px" @click="ov=null">跳过</button>
+      </div>
+    </div>
+
+    <!-- 法务签收拍照 -->
+    <div class="ov" style="background:#f5f7fa" v-if="ov==='sign'" role="dialog" aria-modal="true" aria-label="法务送达签收拍照">
+      <div class="ab">
+        <span role="button" tabindex="0" aria-label="返回" style="cursor:pointer" @click="ov=null;signImg=''" @keydown.enter="ov=null;signImg=''">‹ 法务送达签收拍照</span>
+      </div>
+      <template v-if="!signImg">
+        <div class="sign-cam">
+          <span>对准签收回执单拍照</span>
+          <div class="lens" aria-hidden="true">📷</div>
+          <button class="sign-shoot" role="button" tabindex="0" aria-label="拍照" @click="takeSignPhoto" @keydown.enter="takeSignPhoto">⊙</button>
+        </div>
+      </template>
+      <template v-else>
+        <div class="body" style="top:48px;bottom:0">
+          <div class="sec">预览签收回执</div>
+          <div class="sign-prev">
+            <div class="sign-ph" aria-label="签收回执照片预览">签收回执照片预览（占位）</div>
+          </div>
+          <button class="mbtn pri" style="margin-top:12px" @click="confirmSign">确认上传并发起存证</button>
+          <button class="mbtn gho" style="margin-top:8px" @click="signImg=''">重拍</button>
+        </div>
+      </template>
+    </div>
+
+    <div class="toast2" v-if="tmsg" role="status" aria-live="polite">{{tmsg}}</div>
+  </div>
+
+  <div style="align-self:center;max-width:250px;color:#5a6b7b;font-size:13px;line-height:1.8">
+    <b>App 原型（催收员）</b><br>· 顶部切「催收员/协调员」<br>· 工作台=今日看板，点案件直接作业<br>· 案件→拨打：沉浸式拨号→通话中(实时转写+AI建议+风控)→挂断标注<br>· 全时间段时间线 + 作战手册(静态+AI)<br>· 与 PC 同一套 CRM 理念与设计令牌
+  </div>
+</div>
+
+<script>
+const { createApp, reactive, computed, toRefs } = Vue;
+const app = createApp({
+  setup(){
+    const st = reactive({ role:'CO', tab:'home', ov:null, cur:{}, mark:'承诺缴费', tmsg:'', signImg:'',
+      cases:[
+        {id:1,name:'李四',room:'3-201',due:1200,months:6,batch:'YG…001',tag:'承诺缴费',bc:'b-gr',promise:'6/20',phone:'138****0001',status:'active'},
+        {id:2,name:'王九',room:'2-303',due:2000,months:4,batch:'CH…001',tag:'跟进中',bc:'b-or',promise:'',phone:'137****0003',status:'active'},
+        {id:3,name:'孙七',room:'1-202',due:800,months:3,batch:'YG…002',tag:'未接通',bc:'b-gy',promise:'',phone:'135****0007',status:'active'},
+        {id:4,name:'赵六',room:'4-501',due:0,months:5,batch:'YG…003',tag:'已结清',bc:'b-gr',promise:'',phone:'139****0006',status:'closed',closedKind:'已结清',recovered:3200},
+        {id:5,name:'周八',room:'5-102',due:1500,months:7,batch:'CH…002',tag:'坏账',bc:'b-rd',promise:'',phone:'136****0008',status:'closed',closedKind:'坏账',recovered:0},
+      ],
+      callLog:[
+        {name:'李四',t:'06-15 14:22',dur:'03:48',res:'承诺缴费',bc:'b-gr',ai:'获口头承诺 6/20'},
+        {name:'王九',t:'06-14 09:30',dur:'01:12',res:'再次跟进',bc:'b-or',ai:'情绪一般，要求宽限'},
+        {name:'孙七',t:'06-13 16:05',dur:'00:00',res:'未接通',bc:'b-gy',ai:'—'},
+      ] });
+    const abTitle = computed(()=> ({home:'工作台',cases:'案件',calls:'通话记录',me:'我的'}[st.tab]||'有证慧催'));
+    const todos = computed(()=> st.role==='CO'
+      ? [{l:'承诺到期',n:5,c:'#dc2626',jump:'cases'},{l:'临近释放',n:3,c:'#d97706',jump:'cases'},{l:'新分配',n:8,c:'#2563eb',jump:'cases'}]
+      : [{l:'待签收',n:2,c:'#dc2626',jump:'sign'},{l:'法务待办',n:4,c:'#d97706',jump:'cases'},{l:'回款待标',n:5,c:'#2563eb',jump:'cases'}]);
+    const isClosed=(cs)=> cs && cs.status==='closed';
+    const redactOn=(cs)=> st.role==='CO' && isClosed(cs);
+    const viewCases = computed(()=> st.cases.map(cs=> redactOn(cs)
+      ? { ...cs, name:'已脱敏', room:'—', phone:'—', promise:'', _redacted:true }
+      : { ...cs, _redacted:false }));
+    const closedStat = computed(()=>{ const cl=st.cases.filter(c=>c.status==='closed'); return { count:cl.length, recovered:cl.reduce((s,c)=>s+(c.recovered||0),0) }; });
+    const activeCount = computed(()=> st.cases.filter(c=>c.status!=='closed').length);
+    let tt; const toast2=(m)=>{ st.tmsg=m; clearTimeout(tt); tt=setTimeout(()=>st.tmsg='',1800); };
+    const openCase=(cs)=>{ if(redactOn(cs)){ st.cur={ ...cs, name:'已脱敏', room:'—', phone:'—', _redacted:true }; st.ov='detail'; return; } st.cur={ ...cs, _redacted:false }; st.ov='detail'; };
+    const jumpTodo=(t)=>{ if(t.jump==='sign'){ st.signImg=''; st.cur={...(st.cases[0]||{})}; st.ov='sign'; return; } st.tab='cases'; toast2('已为你筛选「'+t.l+'」相关案件'); };
+    const takeSignPhoto=()=>{ st.signImg='shot:'+Date.now(); };
+    const confirmSign=()=>{ st.ov=null; st.signImg=''; toast2('已上传并可发起存证'); };
+    return {...toRefs(st), abTitle, todos, toast2, openCase, viewCases, closedStat, activeCount, isClosed, redactOn, jumpTodo, takeSignPhoto, confirmSign};
+  }
+});
+app.mount('#app');
+</script>
+</body>
+</html>

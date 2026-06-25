@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>物业费账单 · 业主 H5</title>
+<style>
+  /* ===== 内联 ds 设计令牌副本（不 import 外部 css，不污染 ds-admin.css） ===== */
+  :root{
+    --primary:#2563EB;--primary-d:#1d4ed8;--primary-l:#ecf3ff;
+    --success:#15A35B;--danger:#C92A2A;--info:#909399;
+    --bg:#f0f2f5;--card:#fff;--bd:#ebeef5;--txt:#303133;--sec:#646A73;--ph:#c0c4cc;
+    --muted:#646A73;
+    --h5-bg:#f5f7fa;
+  }
+
+  /* ===== 全局基础 ===== */
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--txt);
+    font-family:-apple-system,"Microsoft YaHei","PingFang SC",sans-serif;
+    font-size:14px;
+    line-height:1.6;
+    display:flex;
+    justify-content:center;
+    padding:20px;
+    gap:24px;
+    flex-wrap:wrap;
+  }
+
+  /* ===== 手机壳容器 ===== */
+  .phone{
+    width:360px;
+    background:var(--h5-bg);
+    border-radius:30px;
+    border:9px solid #111;
+    overflow:hidden;
+    box-shadow:0 12px 40px rgba(0,0,0,.18);
+  }
+
+  /* ===== 头部：品牌主色渐变 ===== */
+  .hd{
+    background:linear-gradient(135deg,var(--primary),var(--primary-d));
+    color:#fff;
+    padding:22px 18px;
+  }
+  .hd .nm{
+    font-size:13px;
+    opacity:.9;
+    line-height:1.7;
+  }
+  .hd .amt{
+    font-size:34px;
+    font-weight:800;
+    margin-top:8px;
+    line-height:1.2;
+  }
+  .hd .amt small{font-size:16px;font-weight:400;}
+
+  /* ===== 内容卡片 ===== */
+  .sec{
+    background:var(--card);
+    margin:12px;
+    border-radius:8px;
+    padding:14px;
+    box-shadow:0 1px 4px rgba(20,40,90,.04);
+  }
+  .sec h4{
+    margin:0 0 10px;
+    font-size:14px;
+    font-weight:600;
+    color:var(--txt);
+  }
+
+  /* ===== 明细行 ===== */
+  .li{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:7px 0;
+    border-bottom:1px solid var(--bd);
+    font-size:14px;
+    line-height:1.6;
+  }
+  .li:last-child{border:none;}
+  .li .r{
+    color:var(--danger);
+    font-weight:600;
+    white-space:nowrap;
+    margin-left:8px;
+  }
+  .li .muted{color:var(--muted);white-space:nowrap;margin-left:8px;}
+  .li .orig{color:var(--ph);text-decoration:line-through;white-space:nowrap;margin-left:8px;}
+  .li .reduce{color:var(--success);font-weight:600;white-space:nowrap;margin-left:8px;}
+
+  /* ===== 收款卡片 ===== */
+  .pay{
+    background:var(--card);
+    margin:12px;
+    border-radius:8px;
+    padding:14px;
+    text-align:center;
+    box-shadow:0 1px 4px rgba(20,40,90,.04);
+  }
+  .pay h4{
+    margin:0 0 2px;
+    font-size:14px;
+    font-weight:600;
+    color:var(--txt);
+  }
+
+  /* ===== 二维码占位 ===== */
+  .qr{
+    width:140px;
+    height:140px;
+    background:repeating-linear-gradient(45deg,#222,#222 6px,#fff 6px,#fff 12px);
+    margin:10px auto;
+    border-radius:8px;
+  }
+
+  /* ===== 按钮 ===== */
+  .btn{
+    display:block;
+    width:100%;
+    padding:12px;
+    border:none;
+    border-radius:24px;
+    background:var(--primary);
+    color:#fff;
+    font-size:15px;
+    margin-top:10px;
+    cursor:pointer;
+    transition:.15s;
+    font-family:inherit;
+    line-height:1.5;
+  }
+  .btn:hover{background:var(--primary-d);}
+  .btn.ghost{
+    background:var(--card);
+    color:var(--primary);
+    border:1px solid var(--primary);
+  }
+  .btn.ghost:hover{background:var(--primary-l);}
+  .btn.soon{
+    background:#f4f4f5;
+    color:var(--ph);
+    border:1px solid var(--bd);
+    cursor:not-allowed;
+    opacity:.65;
+  }
+  .btn.soon:hover{background:#f4f4f5;}
+
+  /* ===== 辅助文字 ===== */
+  .note{
+    text-align:center;
+    color:var(--sec);
+    font-size:12px;
+    margin:8px 12px;
+    line-height:1.7;
+  }
+  .foot{
+    text-align:center;
+    color:var(--sec);
+    font-size:11px;
+    padding:14px;
+    line-height:1.7;
+  }
+
+  /* ===== 旁注说明栏（桌面预览用） ===== */
+  .aside{
+    align-self:center;
+    max-width:240px;
+    color:var(--sec);
+    font-size:13px;
+    line-height:1.7;
+  }
+  .aside b{color:var(--txt);}
+
+  /* ===== 失效态容器 ===== */
+  .expired-box{
+    padding:48px 18px;
+    text-align:center;
+  }
+  .expired-icon{
+    width:64px;
+    height:64px;
+    border-radius:50%;
+    background:var(--primary-l);
+    color:var(--primary);
+    font-size:32px;
+    font-weight:800;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    margin:0 auto 20px;
+  }
+  .expired-title{
+    font-size:17px;
+    font-weight:700;
+    color:var(--txt);
+    margin-bottom:10px;
+  }
+  .expired-desc{
+    font-size:13px;
+    color:var(--sec);
+    line-height:1.8;
+  }
+</style>
+</head>
+<body>
+  <!-- E1: bill-view 默认隐藏，token 校验通过后才显示，内部敏感字段由脚本填充 -->
+  <div id="bill-view" role="main" aria-label="物业费账单" style="display:none">
+    <div class="phone">
+      <div class="hd">
+        <div class="nm" id="v-community"></div>
+        <div class="nm" id="v-owner" style="margin-top:4px"></div>
+        <div class="amt"><small>应缴合计 ¥</small><span id="v-amount"></span></div>
+      </div>
+
+      <div class="sec">
+        <h4>费用明细</h4>
+        <div id="v-reduction-block" style="display:none">
+          <div class="li"><span>原应收</span><span class="orig" id="v-original"></span></div>
+          <div class="li"><span>减免额</span><span class="reduce" id="v-reduction"></span></div>
+          <div class="li"><span>减免后应收</span><span class="r" id="v-payable-after"></span></div>
+        </div>
+        <div class="li"><span id="v-fee-period">物业费</span><span class="r" id="v-fee-amount"></span></div>
+        <div class="li"><span>滞纳金</span><span class="r" id="v-late-amount"></span></div>
+        <div class="li"><span>缴费标准</span><span id="v-rate"></span></div>
+      </div>
+      <!-- BR-M7-06 分期计划：仅分期案件渲染，单笔案件 JS 置 display:none -->
+      <div class="sec" id="v-installment-sec" style="display:none" aria-label="分期计划"><h4 id="v-installment-title">分期计划</h4><div id="v-installment-list"></div></div>
+
+      <div class="pay">
+        <h4>收款方式（线下缴费）</h4>
+        <div class="qr" role="img" aria-label="微信收款二维码"></div>
+        <div class="note">微信扫码 / 对公账户转账</div>
+        <button id="bank-toggle" class="btn ghost" type="button" aria-expanded="false" aria-controls="bank-detail" aria-label="展开或收起对公账户信息">查看对公账户</button>
+        <div id="bank-detail" role="region" aria-label="对公账户信息" style="display:none;background:#f8fafc;border:1px solid var(--bd);border-radius:8px;padding:10px 14px;margin-top:8px;text-align:left;font-size:13px;line-height:2">
+          <div>账户名：阳光物业服务有限公司</div>
+          <div>账　号：6222 **** **** 8888</div>
+          <div>开户行：中国工商银行 XX 支行</div>
+          <div style="color:var(--sec);font-size:12px;margin-top:4px">转账备注请填写：<span id="v-bank-memo"></span></div>
+        </div>
+        <button class="btn soon" type="button" disabled aria-disabled="true" aria-label="在线缴费功能敬请期待，暂不可用">在线缴费（敬请期待）</button>
+      </div>
+
+      <div class="note">本链接有效期 7 天，过期请联系物业重发；可复制转发微信。</div>
+      <div class="foot">有证慧催 · 业主无需登录　|　缴费后由物业核对到账</div>
+    </div>
+  </div>
+
+  <!-- E2: expired-view 默认隐藏，无效/过期 token 时显示，不含任何业主信息 -->
+  <div id="expired-view" role="main" aria-label="链接已失效" style="display:none">
+    <div class="phone">
+      <div class="hd">
+        <div class="nm">物业费账单</div>
+        <div class="nm" style="margin-top:4px;opacity:.7">有证慧催 · 安全缴费平台</div>
+      </div>
+      <div class="expired-box">
+        <div class="expired-icon">!</div>
+        <div class="expired-title">链接已失效或已过期</div>
+        <div class="expired-desc">
+          该缴费链接无效或已超过有效期。<br/>
+          请联系物业管理处重新发送缴费链接。
+        </div>
+      </div>
+      <div class="foot">有证慧催 · 业主无需登录</div>
+    </div>
+  </div>
+
+  <div class="aside">
+    <b>业主 H5 说明</b><br/>· 无登录，短信/微信链接直达<br/>· 本期：展示应缴明细 + 物业收款信息，业主线下缴、协调员标注回款<br/>· 在线缴费（实时到账自动结清）为后期<br/>· 业主不上传凭证、本期无历史记录/收据<br/>· 令牌演示：?token=demo 有效(单笔)；?token=demo-installment 有效(分期3期)；?token=demo-expired 已过期；无 token/错误 token 显示失效页<br/>· 分期案件展示当期/各期到期日金额状态 per BR-M7-06
+  </div>
+
+  <!-- E3: 原生 JS token 门控（IIFE，无全局污染） -->
+  <script>
+  (function () {
+    'use strict';
+
+    /* 演示白名单：key=token值，value=账单数据+过期时间 */
+    var TOKENS = {
+      'demo': {
+        community: '阳光花园 · 物业费账单',
+        owner: '房号 3-201 · 业主 李**',
+        amount: '1,200',
+        originalReceivable: '¥1,350',
+        reductionAmount: '-¥150',
+        feePeriod: '物业费（2025-09 ~ 2026-04，6个月）',
+        feeAmount: '¥1,080',
+        lateAmount: '¥120',
+        rate: '2.5 元/㎡/月',
+        bankMemo: '房号 3-201',
+        installments: null,
+        expiresAt: Date.now() + 7 * 24 * 3600 * 1000
+      },
+      'demo-installment': {
+        community: '阳光花园 · 物业费账单',
+        owner: '房号 5-1102 · 业主 张**',
+        amount: '1,200',
+        originalReceivable: '¥1,350',
+        reductionAmount: '-¥150',
+        feePeriod: '物业费（2025-09 ~ 2026-04，6个月）',
+        feeAmount: '¥1,200',
+        lateAmount: '¥0',
+        rate: '2.5 元/㎡/月',
+        bankMemo: '房号 5-1102',
+        installments: {
+          total: 3,
+          current: 1,
+          plans: [
+            { no: 1, due: '2026-06-20', amount: '¥400', status: '当期' },
+            { no: 2, due: '2026-07-20', amount: '¥400', status: '未到期' },
+            { no: 3, due: '2026-08-20', amount: '¥400', status: '未到期' }
+          ]
+        },
+        expiresAt: Date.now() + 7 * 24 * 3600 * 1000
+      },
+      'demo-expired': {
+        community: '阳光花园 · 物业费账单',
+        owner: '房号 3-201 · 业主 李**',
+        amount: '1,200',
+        originalReceivable: '¥1,350',
+        reductionAmount: '-¥150',
+        feePeriod: '物业费（2025-09 ~ 2026-04，6个月）',
+        feeAmount: '¥1,080',
+        lateAmount: '¥120',
+        rate: '2.5 元/㎡/月',
+        bankMemo: '房号 3-201',
+        installments: null,
+        expiresAt: 0
+      }
+    };
+
+    /* token 解析与校验 */
+    function resolve(token) {
+      if (!token || !TOKENS.hasOwnProperty(token)) {
+        return { status: 'invalid' };
+      }
+      var entry = TOKENS[token];
+      if (Date.now() > entry.expiresAt) {
+        return { status: 'expired' };
+      }
+      return { status: 'valid', data: entry };
+    }
+
+    /* 安全填充：仅用 textContent，防 XSS */
+    function fill(id, text) {
+      var el = document.getElementById(id);
+      if (el) {
+        el.textContent = text;
+      }
+    }
+
+    /* 减免差额渲染：reductionAmount 为空/零时隐藏减免块 */
+    function renderReduction(d) {
+      var block = document.getElementById('v-reduction-block');
+      if (!block) { return; }
+      var has = d && d.reductionAmount && d.reductionAmount !== '' && d.reductionAmount !== '-¥0' && d.reductionAmount !== '¥0';
+      if (!has) { block.style.display = 'none'; return; }
+      fill('v-original', d.originalReceivable);
+      fill('v-reduction', d.reductionAmount);
+      fill('v-payable-after', '¥' + d.amount);
+      block.style.display = '';
+    }
+
+    /* 分期计划渲染：inst 为 null 时隐藏区块 */
+    function renderInstallments(inst) {
+      var sec = document.getElementById('v-installment-sec');
+      if (!sec) { return; }
+      if (!inst) {
+        sec.style.display = 'none';
+        return;
+      }
+      var titleEl = document.getElementById('v-installment-title');
+      if (titleEl) {
+        titleEl.textContent = '分期计划（共' + inst.total + '期，本期第' + inst.current + '期）';
+      }
+      var listEl = document.getElementById('v-installment-list');
+      if (listEl) {
+        while (listEl.firstChild) { listEl.removeChild(listEl.firstChild); }
+        inst.plans.forEach(function (p) {
+          var row = document.createElement('div');
+          row.className = 'li';
+          var left = document.createElement('span');
+          left.textContent = '第' + p.no + '期' + (p.no === inst.current ? '（当期）' : '') + ' ' + p.due;
+          var right = document.createElement('span');
+          right.className = (p.no === inst.current) ? 'r' : 'muted';
+          right.textContent = p.amount + ' · ' + p.status;
+          row.appendChild(left);
+          row.appendChild(right);
+          listEl.appendChild(row);
+        });
+      }
+      sec.style.display = '';
+    }
+
+    /* 对公账户展开/收起，同步 aria-expanded */
+    function toggleBank() {
+      var detail = document.getElementById('bank-detail');
+      var btn = document.getElementById('bank-toggle');
+      if (!detail) { return; }
+      var open = (detail.style.display === 'none' || detail.style.display === '');
+      detail.style.display = open ? 'block' : 'none';
+      if (btn) { btn.setAttribute('aria-expanded', open ? 'true' : 'false'); }
+    }
+
+    /* 视图切换：valid 时填充并显示账单；否则只显示失效视图 */
+    function render() {
+      var params = new URLSearchParams(location.search);
+      var token = params.get('token');
+      var result = resolve(token);
+      var billView = document.getElementById('bill-view');
+      var expiredView = document.getElementById('expired-view');
+
+      if (result.status === 'valid') {
+        var d = result.data;
+        fill('v-community', d.community);
+        fill('v-owner', d.owner);
+        fill('v-amount', d.amount);
+        fill('v-fee-period', d.feePeriod);
+        fill('v-fee-amount', d.feeAmount);
+        fill('v-late-amount', d.lateAmount);
+        fill('v-rate', d.rate);
+        fill('v-bank-memo', d.bankMemo);
+        renderReduction(d);
+        renderInstallments(d.installments);
+        var bankBtn = document.getElementById('bank-toggle');
+        if (bankBtn) { bankBtn.addEventListener('click', toggleBank); }
+        billView.style.display = '';
+        expiredView.style.display = 'none';
+      } else {
+        /* invalid 或 expired：绝不填充任何业主数据，DOM 保持空占位 */
+        billView.style.display = 'none';
+        expiredView.style.display = '';
+      }
+    }
+
+    render();
+  }());
+  </script>
+</body>
+</html>

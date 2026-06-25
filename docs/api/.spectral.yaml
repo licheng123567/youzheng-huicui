@@ -1,0 +1,51 @@
+# 有证慧催 · OpenAPI 契约 lint 规则（Spectral）
+# 用法：npx @stoplight/spectral-cli lint docs/api/openapi-core.yaml --ruleset docs/api/.spectral.yaml
+extends: ["spectral:oas"]
+
+rules:
+  operation-operationId: error        # rc1 收口：codegen/mock/契约测试需稳定 operationId
+  operation-operationId-unique: error # operationId 全局唯一
+  oas3-unused-component: warn          # 未用枚举(预留)仅提示
+  # ---- 关基线（error）：缺了就挂 ----
+  operation-description:
+    description: 每个操作必须有 summary（接口自解释）
+    given: "$.paths[*][get,post,put,patch,delete]"
+    severity: error
+    then: { field: summary, function: truthy }
+
+  operation-needs-permission:
+    description: 写操作(post/put/patch/delete)必须声明 x-permission（鉴权可验证）
+    given: "$.paths[*][post,put,patch,delete]"
+    severity: error
+    then: { field: x-permission, function: truthy }
+
+  operation-needs-data-scope:
+    description: 每个操作必须声明 x-data-scope（数据范围服务端裁剪）
+    given: "$.paths[*][get,post,put,patch,delete]"
+    severity: error
+    then: { field: x-data-scope, function: truthy }
+
+  error-envelope-on-4xx-5xx:
+    description: 4xx/5xx 必须有 content（统一错误结构 Error）
+    given: "$.paths[*][*].responses[?(@property.match(/^(4|5)\\d\\d$/))]"
+    severity: warn
+    then: { field: description, function: truthy }
+
+  enum-codes-uppercase:
+    description: 枚举值用大写码（非中文展示串）
+    given: "$.components.schemas[*].enum[*]"
+    severity: warn
+    then: { function: pattern, functionOptions: { match: "^[A-Z][A-Z0-9_]*$" } }
+
+  # ---- 治理（warn）：提示，不阻断 ----
+  list-should-paginate:
+    description: 列表响应建议用分页包装（含 meta），避免裸数组
+    given: "$.paths[*].get.responses['200'].content['application/json'].schema"
+    severity: info
+    then: { function: defined }
+
+  money-field-is-integer:
+    description: 金额字段建议以 *Cents(分, integer) 命名，避免浮点/字符串
+    given: "$.components.schemas[*].properties[?(@property.match(/[Cc]ents$/))]"
+    severity: info
+    then: { field: type, function: truthy }

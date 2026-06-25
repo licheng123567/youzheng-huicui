@@ -1,0 +1,5 @@
+# API 契约 = 单一事实源，改动须经契约 Owner（架构师）评审
+# 铁律：先改契约、再改代码；破坏性变更须升版本 + 双 approve（前端+后端）
+/docs/api/                 @api-owner @frontend-lead @backend-lead
+/docs/api/openapi-core.yaml @api-owner
+/.github/workflows/api-contract.yml @api-owner

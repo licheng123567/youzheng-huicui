@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<!-- 有证慧催 高保真原型 · 对齐 API 契约 v1.0.0（已冻结 2026-06-24，SSOT=docs/api/openapi-core.yaml）。结算=支付申请单/录音=本机通话case-actor/减免无系统审批/资金双线隔离 -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>有证慧催 · 催收员 App 原型</title>
+<link rel="stylesheet" href="assets/ds-admin.css"/>
+<script src="vendor/vue.global.prod.js"></script>
+<style>
+  body{margin:0;background:#e9eef3;display:flex;justify-content:center;gap:28px;flex-wrap:wrap;padding:20px;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;}
+  .phone{width:390px;height:820px;background:#f5f7fa;border-radius:38px;border:11px solid #0b1220;overflow:hidden;position:relative;box-shadow:0 14px 44px rgba(0,0,0,.28);}
+  .sb{height:30px;background:#13245b;color:#fff;font-size:12px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;}
+  .ab{height:48px;background:linear-gradient(90deg,#13245b,#2563EB);color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 14px;font-weight:600;font-size:15px;}
+  .ab .rp{font-size:11px;background:rgba(255,255,255,.16);border:1px dashed rgba(255,255,255,.6);border-radius:10px;padding:2px 7px;color:#fff;}
+  .body{position:absolute;top:78px;bottom:56px;left:0;right:0;overflow:auto;padding:12px;}
+  .tabbar{position:absolute;bottom:0;left:0;right:0;height:56px;background:#fff;border-top:1px solid #e5e7eb;display:flex;}
+  .tabbar .t{flex:1;text-align:center;font-size:11px;color:#9aa3af;padding-top:8px;cursor:pointer;}
+  .tabbar .t.on{color:var(--primary);}
+  .tabbar .t .i{font-size:18px;display:block;line-height:1.1;}
+  .mc{background:#fff;border-radius:12px;padding:13px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.05);}
+  .due{color:var(--danger);font-weight:700;}
+  .todoh{display:flex;gap:8px;overflow-x:auto;margin-bottom:10px;padding-bottom:2px;}
+  .todoh .c{min-width:92px;background:#fff;border-radius:10px;padding:10px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.05);}
+  .todoh .n{font-size:21px;font-weight:700;} .todoh .l{font-size:11px;color:#9aa3af;margin-top:2px;}
+  .badge{font-size:11px;padding:2px 8px;border-radius:10px;}
+  .b-or{background:#fff7ed;color:#c2620a;} .b-gr{background:#f0fdf4;color:#15803d;} .b-bl{background:#eff6ff;color:#2563eb;} .b-gy{background:#f3f4f6;color:#6b7280;} .b-rd{background:#fef2f2;color:#dc2626;}
+  .sec{font-size:13px;font-weight:600;color:#374151;margin:14px 2px 8px;}
+  .row{display:flex;justify-content:space-between;align-items:center;}
+  .mbtn{display:block;width:100%;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:600;cursor:pointer;}
+  .mbtn.pri{background:var(--primary);color:#fff;} .mbtn.gho{background:#fff;color:var(--primary);border:1px solid var(--primary);}
+  .mini{font-size:12px;color:#9aa3af;}
+  .info3{display:flex;background:#f8fafc;border:1px solid #eef1f5;border-radius:10px;}
+  .info3 div{flex:1;text-align:center;padding:10px 4px;border-right:1px solid #eef1f5;} .info3 div:last-child{border:none;}
+  .info3 .v{font-size:16px;font-weight:700;} .info3 .k{font-size:11px;color:#9aa3af;margin-top:2px;}
+  .tl{padding-left:16px;} .tl .e{position:relative;margin-bottom:14px;font-size:13px;}
+  .tl .e::before{content:"";position:absolute;left:-16px;top:4px;width:9px;height:9px;border-radius:50%;background:var(--primary);}
+  .tl .e .tm{font-size:11px;color:#9aa3af;}
+  /* 沉浸式全屏覆盖 */
+  .ov{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;}
+  .ov.dial{background:linear-gradient(160deg,#13245b,#1d4ed8);color:#fff;align-items:center;justify-content:center;text-align:center;padding:24px;}
+  .ov .av-lg{width:84px;height:84px;border-radius:50%;background:rgba(255,255,255,.16);display:flex;align-items:center;justify-content:center;font-size:30px;margin-bottom:14px;}
+  .ov .nm-lg{font-size:22px;font-weight:700;} .ov .glass{background:rgba(255,255,255,.12);border-radius:12px;padding:12px 18px;margin-top:14px;}
+  .ring{width:64px;height:64px;border-radius:50%;border:3px solid rgba(255,255,255,.3);border-top-color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;margin:22px auto;animation:spin 1s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .ov.incall{background:#0f172a;color:#fff;}
+  .incall .top{padding:16px;text-align:center;} .incall .timer{color:#34d399;font-size:20px;font-variant-numeric:tabular-nums;}
+  .risk-strip{background:#7c2d12;color:#fed7aa;font-size:12px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;}
+  .tr-prev{flex:1;overflow:auto;padding:14px;}
+  .tr-prev .b{background:rgba(255,255,255,.08);border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:13px;}
+  .tr-prev .b .who{font-size:10px;color:#94a3b8;margin-bottom:2px;}
+  .ai-pop{margin:10px 14px;background:#fff;color:#111827;border-left:4px solid var(--primary);border-radius:8px;padding:10px 12px;}
+  .ai-pop .t{font-size:13px;font-weight:600;margin-bottom:3px;} .ai-pop .x{font-size:12px;color:#4b5563;line-height:1.5;}
+  .ai-pop .cta{display:flex;gap:8px;margin-top:8px;}
+  .ai-pop .cta button{flex:1;border:none;border-radius:6px;padding:7px;font-size:12px;cursor:pointer;}
+  .ctrl{display:flex;justify-content:space-around;padding:16px 10px 22px;background:#1e293b;}
+  .ctrl .c{text-align:center;color:#cbd5e1;font-size:11px;cursor:pointer;}
+  .ctrl .c .r{width:52px;height:52px;border-radius:50%;background:#334155;display:flex;align-items:center;justify-content:center;font-size:20px;margin:0 auto 4px;}
+  .ctrl .c.hang .r{background:#dc2626;}
+  .ov.after{background:#f5f7fa;} .after .hd{background:#fff;padding:14px;border-bottom:1px solid #eef1f5;}
+  .tagpick{display:flex;flex-wrap:wrap;gap:8px;}
+  .tagpick .p{border:1px solid #d1d5db;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;background:#fff;}
+  .tagpick .p.on{background:var(--primary);color:#fff;border-color:var(--primary);}
+  .tagpick .p.dg.on{background:var(--danger);border-color:var(--danger);}
+  textarea.ta2{width:100%;border:1px solid #d1d5db;border-radius:8px;padding:10px;font-size:13px;min-height:64px;font-family:inherit;}
+  .toast2{position:absolute;bottom:70px;left:50%;transform:translateX(-50%);background:rgba(17,24,39,.92);color:#fff;font-size:13px;padding:9px 16px;border-radius:20px;z-index:50;}
+  .sign-cam{flex:1;background:#1a1a2e;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#fff;font-size:14px;}
+  .sign-cam .lens{width:120px;height:120px;border-radius:12px;border:2px dashed rgba(255,255,255,.5);display:flex;align-items:center;justify-content:center;font-size:40px;}
+  .sign-shoot{width:64px;height:64px;border-radius:50%;background:#fff;border:none;font-size:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .sign-prev{padding:14px;}
+  .sign-ph{width:100%;height:200px;border-radius:10px;background:linear-gradient(135deg,#c7d2fe,#a5f3fc);display:flex;align-items:center;justify-content:center;font-size:13px;color:#374151;}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="phone">
+    <div class="sb"><span>9:41</span><span>有证慧催 App</span><span>📶 🔋</span></div>
+    <div class="ab">
+      <span>{{ abTitle }}</span>
+      <select class="rp" v-model="role" aria-label="切换演示角色"><option value="CO">演示·催收员</option><option value="PC">演示·协调员</option></select>
+    </div>
+
+    <div class="body">
+      <!-- 工作台（今日看板）-->
+      <template v-if="tab==='home'">
+        <div class="sec" style="margin-top:2px">本日概览</div>
+        <div class="todoh" style="margin-bottom:12px">
+          <div class="c"><div class="n" style="color:#2563eb">{{ today.minutes }}</div><div class="l">通话分钟</div></div>
+          <div class="c"><div class="n" style="color:#13245b">{{ today.calls }}</div><div class="l">通话数量</div></div>
+          <div class="c"><div class="n" style="color:#15803d">¥{{ today.repay }}</div><div class="l">回款金额</div></div>
+          <div class="c"><div class="n" style="color:#dc2626">{{ today.pending }}</div><div class="l">待处理</div></div>
+        </div>
+        <div class="sec">待办</div>
+        <div class="todoh"><div class="c" v-for="t in todos" :key="t.l" role="button" tabindex="0" :aria-label="t.l+' '+t.n+' 项，点击查看'" style="cursor:pointer" @click="jumpTodo(t)" @keydown.enter="jumpTodo(t)"><div class="n" :style="{color:t.c}">{{t.n}}</div><div class="l">{{t.l}}</div></div></div>
+        <div class="sec">今日案件清单（点击直接作业）</div>
+        <div class="mc" v-for="cs in viewCases" :key="cs.id" @click="openCase(cs)">
+          <template v-if="cs._redacted">
+            <div class="row"><b>🔒 已结案（信息已脱敏）</b><span class="badge" :class="cs.bc">{{cs.tag}}</span></div>
+            <div class="row" style="margin-top:6px"><span class="mini">回款 ¥{{cs.recovered}} · 明细不可见</span></div>
+          </template>
+          <template v-else>
+            <div class="row"><b>{{cs.name}} · {{cs.room}}</b><span class="due">¥{{cs.due}}</span></div>
+            <div class="row" style="margin-top:6px"><span class="mini">{{cs.batch}} · 欠{{cs.months}}个月</span><span class="badge" :class="cs.bc">{{cs.tag}}</span></div>
+          </template>
+        </div>
+      </template>
+
+      <!-- 案件列表 -->
+      <template v-if="tab==='cases'">
+        <input class="inp" style="width:100%;margin-bottom:10px" placeholder="🔍 搜索业主 / 房号" aria-label="搜索业主或房号">
+        <div class="todoh" style="margin-bottom:10px">
+          <span class="badge b-bl" style="padding:6px 12px">全部</span><span class="badge b-or" style="padding:6px 12px">跟进中</span><span class="badge b-gr" style="padding:6px 12px">承诺缴费</span><span class="badge b-gy" style="padding:6px 12px">未接通</span>
+        </div>
+        <div class="mc" v-for="cs in viewCases" :key="cs.id" @click="openCase(cs)">
+          <template v-if="cs._redacted">
+            <div class="row"><b>🔒 已结案（信息已脱敏）</b><span class="badge" :class="cs.bc">{{cs.tag}}</span></div>
+            <div class="row" style="margin-top:6px"><span class="mini">回款 ¥{{cs.recovered}} · 明细不可见</span></div>
+          </template>
+          <template v-else>
+            <div class="row"><b>{{cs.name}} · {{cs.room}}</b><span class="due">¥{{cs.due}}</span></div>
+            <div class="row" style="margin-top:6px"><span class="mini">{{cs.batch}} · 承诺 {{cs.promise||'—'}}</span><span class="badge" :class="cs.bc">{{cs.tag}}</span></div>
+          </template>
+        </div>
+        <div class="mini" style="text-align:center;margin-top:6px">号码取自案件主数据，拨打调起原生报号器；通话系统自动录音→后台上传解析（打电话不耗分钟）</div>
+      </template>
+
+      <!-- 通话记录 -->
+      <template v-if="tab==='calls'">
+        <div class="sec">通话记录</div>
+        <div class="mc" v-for="r in callLog" :key="r.t">
+          <div class="row"><b>{{r.name}}</b><span class="badge" :class="r.bc">{{r.res}}</span></div>
+          <div class="mini" style="margin-top:4px">{{r.t}} · {{r.dur}}</div>
+          <div class="mini" style="margin-top:4px;color:#4b5563">AI：{{r.ai}}</div>
+        </div>
+      </template>
+
+      <!-- 我的 -->
+      <template v-if="tab==='me'">
+        <div class="mc"><b>{{ role==='CO'?'安信催收 · 王五（催收员）':'阳光物业 · 钱协调（协调员）' }}</b><div class="mini" style="margin-top:6px">持有案件 {{activeCount}}/50 · 分钟余额 120 ⚠</div><div class="mini" style="margin-top:4px" v-if="role==='CO'">已结案 {{closedStat.count}} 件 · 回款 ¥{{closedStat.recovered}}（明细已脱敏）</div></div>
+        <div class="info3" style="margin-bottom:10px"><div><div class="v">18</div><div class="k">今日通话</div></div><div><div class="v">5</div><div class="k">承诺数</div></div><div><div class="v">4.8</div><div class="k">评分</div></div></div>
+        <div class="mc"><div class="row"><b>录音目录</b><span class="badge" :class="recDirOk?'b-gr':'b-rd'">{{ recDirOk?'可读 ✅':'检测不到 ⚠' }}</span></div>
+          <div class="mini" style="margin-top:6px;word-break:break-all">{{ recDir }}</div>
+          <div class="mini" v-if="!recDirOk" style="margin-top:4px;color:#dc2626">未自动检测到录音目录（机型差异）——请手动选择/修改路径。</div>
+          <button class="mbtn gho" style="margin-top:8px;padding:9px" @click="recDirDraft=recDir;ov='recdir'">修改录音目录</button>
+        </div>
+        <div class="mc"><b>机型自检</b><div class="mini" style="margin-top:6px">系统通话录音 ✅ · 目录可读 {{ recDirOk?'✅':'⚠' }} · 双向音 ✅</div></div>
+        <div class="mc"><b>离线标注</b><div class="mini" style="margin-top:6px">无网络本地暂存，恢复后自动同步</div></div>
+        <div v-if="role==='CO'" class="mc" role="button" tabindex="0" style="cursor:pointer" @click="ov='mysettle'" @keydown.enter="ov='mysettle'"><div class="row"><b>我的结算 / 佣金</b><span class="mini">按批次/周期看提成 · 已结/待结 ›</span></div></div>
+        <div class="mc" role="button" tabindex="0" style="cursor:pointer" @click="ov='account'" @keydown.enter="ov='account'"><div class="row"><b>账号与安全</b><span class="mini">设置密码 · 变更手机号 ›</span></div></div>
+        <button class="mbtn gho" style="margin-top:4px" @click="loggedIn=false;ov=null;tab='home';toast2('已退出登录')">退出登录</button>
+      </template>
+    </div>
+
+    <div class="tabbar" role="tablist" aria-label="主导航">
+      <div class="t" :class="{on:tab==='home'}" @click="tab='home'" @keydown.enter="tab='home'" role="tab" tabindex="0" :aria-selected="tab==='home'" aria-label="工作台"><span class="i" aria-hidden="true">🏠</span>工作台</div>
+      <div class="t" :class="{on:tab==='cases'}" @click="tab='cases'" @keydown.enter="tab='cases'" role="tab" tabindex="0" :aria-selected="tab==='cases'" aria-label="案件"><span class="i" aria-hidden="true">📋</span>案件</div>
+      <div class="t" :class="{on:tab==='calls'}" @click="tab='calls'" @keydown.enter="tab='calls'" role="tab" tabindex="0" :aria-selected="tab==='calls'" aria-label="通话记录"><span class="i" aria-hidden="true">📞</span>通话记录</div>
+      <div class="t" :class="{on:tab==='me'}" @click="tab='me'" @keydown.enter="tab='me'" role="tab" tabindex="0" :aria-selected="tab==='me'" aria-label="我的"><span class="i" aria-hidden="true">👤</span>我的</div>
+    </div>
+
+    <!-- 案件详情 -->
+    <div class="ov" style="background:#f5f7fa" v-if="ov==='detail'" role="dialog" aria-modal="true" aria-label="案件详情">
+      <div class="ab">
+        <span @click="ov=null" @keydown.enter="ov=null" role="button" tabindex="0" aria-label="返回" style="cursor:pointer">‹ <template v-if="cur._redacted">已结案 · 信息已脱敏</template><template v-else>{{cur.name}} · {{cur.room}}</template></span>
+        <span class="badge" :class="cur.bc" style="color:#fff;background:rgba(255,255,255,.2)">{{cur.tag}}</span>
+      </div>
+      <div class="body" style="top:48px">
+        <!-- 脱敏态：仅显示统计 -->
+        <div class="info3" style="margin-bottom:12px" v-if="cur._redacted">
+          <div><div class="v">{{cur.closedKind}}</div><div class="k">结案类型</div></div>
+          <div><div class="v">¥{{cur.recovered}}</div><div class="k">回款额</div></div>
+          <div><div class="v">{{cur.months}}</div><div class="k">欠费月数</div></div>
+        </div>
+        <!-- 正常态：完整信息 -->
+        <div class="info3" style="margin-bottom:12px" v-else>
+          <div><div class="v due">¥{{cur.due}}</div><div class="k">欠费金额</div></div>
+          <div><div class="v">{{cur.months}}</div><div class="k">欠费月数</div></div>
+          <div><div class="v">06-15</div><div class="k">最近联系</div></div>
+        </div>
+        <button class="mbtn pri" v-if="!cur._redacted" @click="ov='callhint'">📞 拨打（本机通话 · 系统录音）</button>
+        <button class="mbtn gho" v-if="!cur._redacted" style="margin-top:8px" @click="startFetch()">🎧 获取最新通话录音</button>
+        <!-- 催收员操作区（与 PC 操作区对齐：手机端也能转工单/发链接/登记承诺/建议法务，BR-M4-03a）-->
+        <template v-if="role==='CO' && !cur._redacted">
+          <div class="sec">操作区</div>
+          <div class="tagpick">
+            <span class="p" role="button" tabindex="0" @click="toast2('已发送缴费链接（短信/可转发微信）')" @keydown.enter="toast2('已发送缴费链接')">🔗 发缴费链接</span>
+            <span class="p" role="button" tabindex="0" @click="tkType='上门核实';ov='makeTicket'" @keydown.enter="ov='makeTicket'">🛠 转工单</span>
+            <span class="p" role="button" tabindex="0" @click="ov='promise'" @keydown.enter="ov='promise'">📅 登记承诺</span>
+            <span class="p" role="button" tabindex="0" @click="toast2('已建议转法务（推物业负责人审批留痕）')" @keydown.enter="toast2('已建议转法务')">⚖ 建议法务</span>
+          </div>
+          <div class="mini" style="margin-top:6px">转工单 = 推物业协调员上门/核实（互推闭环，处理后回执给你）。</div>
+        </template>
+        <button class="mbtn pri" v-if="role==='PC' && !cur._redacted" style="margin-top:8px;background:#15803d" @click="payCh='微信收款码';ov='repay'">💰 标记线下回款</button>
+        <button class="mbtn gho" v-if="role==='PC' && !cur._redacted" style="margin-top:8px" @click="tkRes='已上门核实';ov='ticket'">🛠 处理工单</button>
+        <button class="mbtn gho" v-if="role==='PC'" style="margin-top:8px" aria-label="法务送达签收拍照" @click="signImg='';ov='sign'">⚖ 法务送达签收拍照</button>
+        <!-- 全时间段：脱敏时替换为占位 -->
+        <template v-if="!cur._redacted">
+          <div class="sec">全时间段（通话/沟通/工单）</div>
+          <div class="mc"><div class="tl">
+            <div class="e"><span class="tm">06-15 14:22</span> 通话 03:48 · 承诺还款<div class="mini">AI：获口头承诺 6/20</div></div>
+            <div class="e"><span class="tm">06-15 14:25</span> 登记承诺：6/20 ¥{{cur.due}}</div>
+            <div class="e"><span class="tm">06-10 10:01</span> 发送催费单（短信）</div>
+            <div class="e"><span class="tm">06-08</span> 抢单获得</div>
+          </div></div>
+          <div class="sec">作战手册 + AI 策略</div>
+          <div class="mc"><div class="mini" style="line-height:1.8">📕 物业静态：老旧小区，老人户多，宜先共情；分期可谈。<br>🤖 AI 动态：上次提家庭困难→建议先认同再给分期方案，避免施压词。</div></div>
+        </template>
+        <template v-else>
+          <div class="sec">案件已结案</div>
+          <div class="mc"><div class="mini">该案件已结案（{{cur.closedKind}}），业主信息与跟进明细已按合规要求脱敏，仅保留统计：回款 ¥{{cur.recovered}}。</div></div>
+        </template>
+      </div>
+    </div>
+
+    <!-- 拨打提示（本机通话 · 系统录音；平台不主动拨号、不感知拨打时机）-->
+    <div class="ov dial" v-if="ov==='callhint'" role="dialog" aria-modal="true" aria-label="本机拨号">
+      <div class="av-lg">{{cur.name.charAt(0)}}</div>
+      <div class="nm-lg">{{cur.name}}</div>
+      <div class="mini" style="color:rgba(255,255,255,.7);margin-top:4px">{{cur.room}} · {{cur.phone}}</div>
+      <div class="glass">欠费 ¥{{cur.due}} · {{cur.months}} 个月</div>
+      <div class="glass" style="margin-top:10px;font-size:12px;line-height:1.7;text-align:left">将<b>跳起本机拨号器</b>由你拨打，通话在本机进行、由<b>系统录音</b>。平台不主动拨号、不做通话中提示。<b>通话结束后 App 自动检测录音并即时上传解析</b>；若机型不支持/无录音文件，则需<b>手动上传</b>。可点「获取最新通话录音」查看是否有录音上来及解析状态。</div>
+      <button class="mbtn pri" style="background:#16a34a;max-width:240px;margin-top:18px" @click="ov='detail';toast2('已跳起本机拨号器（演示）')">跳起拨号器拨打</button>
+      <button class="mbtn gho" style="background:transparent;color:#fff;border-color:rgba(255,255,255,.6);max-width:240px;margin-top:10px" @click="ov='detail';startFetch()">通话已结束 → 查最近一通录音</button>
+      <button class="mbtn gho" style="background:transparent;color:rgba(255,255,255,.7);border:none;max-width:240px;margin-top:6px" @click="ov='detail'">取消</button>
+    </div>
+
+    <!-- 获取最新通话录音 = 查最近一通的录音/解析状态（检测中 / 已就绪 / 无录音）-->
+    <div class="ov" style="background:#f5f7fa" v-if="ov==='fetch'" role="dialog" aria-modal="true" aria-label="获取最新通话录音">
+      <div class="ab"><span role="button" tabindex="0" style="cursor:pointer" @click="ov='detail'" @keydown.enter="ov='detail'">‹ 最近一通通话录音</span></div>
+      <div class="body" style="top:48px;bottom:0">
+        <template v-if="fetchState==='loading'">
+          <div style="text-align:center;padding:30px 0">
+            <div class="ring" style="border-color:#dbe3ee;border-top-color:var(--primary)">🎧</div>
+            <div class="sec" style="text-align:center">正在检测最近一通的录音与解析状态…</div>
+            <div class="mini">通话结束 App 自动检测系统录音、即时上传解析；通话不耗分钟，解析按分钟计费</div>
+          </div>
+        </template>
+        <template v-else>
+          <div class="mc">
+            <div class="row"><b>✅ 最近一通 · 已自动上传解析</b><span class="badge b-gr">已就绪</span></div>
+            <div class="info3" style="margin-top:10px"><div><div class="v" style="font-size:13px">{{recInfo.tm}}</div><div class="k">时间</div></div><div><div class="v" style="font-size:13px">{{recInfo.dur}}</div><div class="k">时长</div></div><div><div class="v" style="font-size:13px">{{recInfo.phone}}</div><div class="k">号码</div></div></div>
+          </div>
+          <button class="mbtn pri" style="margin-top:8px" @click="ov='review'">查看 AI 复盘</button>
+          <div class="mini" style="text-align:center;margin-top:10px">已生成通话跟进记录（含时长）、重置 T_collector；有余额时自动解析、消耗分钟数。</div>
+        </template>
+        <div class="mc" style="margin-top:14px;background:#fff7ed">
+          <b style="font-size:13px">本次通话没有录音上来？</b>
+          <div class="mini" style="margin:6px 0 8px">机型不支持/未授自动录音/无文件时：可<b>调整录音目录重新检测</b>，或<b>手动选择录音文件上传</b>（同一解析链路）。</div>
+          <button class="mbtn gho" @click="recDirDraft=recDir;ov='recdir'">调整录音目录</button>
+          <button class="mbtn gho" style="margin-top:8px" @click="toast2('已打开手动上传录音文件入口（演示）')">手动上传录音文件</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI 复盘（解析后：对话记录 + 质检风险 + 下一步建议 + 结果标记 + 跟进）-->
+    <div class="ov after" v-if="ov==='review'" role="dialog" aria-modal="true" aria-label="AI 复盘">
+      <div class="hd"><div class="row"><b>🤖 AI 复盘 — {{cur.name}} · {{recInfo.dur}}</b><span role="button" tabindex="0" style="cursor:pointer;color:#9aa3af" @click="ov='detail'" @keydown.enter="ov='detail'">✕</span></div><div class="mini" style="margin-top:4px;background:#eff6ff;color:#1d4ed8;padding:6px 8px;border-radius:6px">解析完成 · 摘要：业主称家庭困难、月底考虑缴费；提及房屋质量异议</div></div>
+      <div class="body" style="top:96px;bottom:0">
+        <div class="sec">① 对话记录</div>
+        <div class="mc"><div class="tr-prev" style="padding:0">
+          <div class="b" style="background:#eff6ff;color:#111827"><div class="who" style="color:#2563eb">{{ role==='CO'?'催收员':'协调员' }}</div>您好，本月物业费 ¥{{cur.due}} 还未缴，方便今天处理吗？</div>
+          <div class="b" style="background:#f3f4f6;color:#111827"><div class="who" style="color:#6b7280">业主</div>这两天周转一下，20 号前一定交；另外这房子质量也有点问题…</div>
+          <div class="b" style="background:#eff6ff;color:#111827"><div class="who" style="color:#2563eb">{{ role==='CO'?'催收员':'协调员' }}</div>质量问题我帮您登记工单跟进，物业费这块我们约 20 号可以吗？</div>
+        </div></div>
+        <div class="sec">② 本通质检风险</div>
+        <div class="mc"><div class="row"><span class="badge b-gy">L1 提示</span><span class="mini">未亮明身份用语偏随意</span></div><div class="mini" style="margin-top:6px">风险仅记录/可上报，处置由所属服务商负责人执行（平台复核）。</div></div>
+        <div class="sec">③ 下一步建议（可采纳联动）</div>
+        <div class="mc" style="border-left:3px solid var(--primary)"><div class="mini" style="line-height:1.7;color:#374151">①先认同房屋质量问题、建工单；②把"物业费与维修是两件事"分开引导；③登记 6/20 承诺并发缴费链接。</div>
+          <div class="tagpick" style="margin-top:10px">
+            <span class="p" role="button" tabindex="0" @click="adopt('登记承诺')" @keydown.enter="adopt('登记承诺')">采纳·登记承诺</span>
+            <span class="p" role="button" tabindex="0" @click="adopt('建工单')" @keydown.enter="adopt('建工单')">采纳·建工单</span>
+            <span class="p" role="button" tabindex="0" @click="adopt('发缴费链接')" @keydown.enter="adopt('发缴费链接')">采纳·发缴费链接</span>
+          </div>
+        </div>
+        <div class="sec">④ 通话结果标记</div>
+        <div class="tagpick">
+          <span class="p" :class="{on:mark==='承诺缴费'}" role="button" tabindex="0" :aria-pressed="mark==='承诺缴费'" @click="mark='承诺缴费'" @keydown.enter="mark='承诺缴费'">承诺缴费</span>
+          <span class="p dg" :class="{on:mark==='拒绝缴费'}" role="button" tabindex="0" :aria-pressed="mark==='拒绝缴费'" @click="mark='拒绝缴费'" @keydown.enter="mark='拒绝缴费'">拒绝缴费</span>
+          <span class="p" :class="{on:mark==='需建工单'}" role="button" tabindex="0" :aria-pressed="mark==='需建工单'" @click="mark='需建工单'" @keydown.enter="mark='需建工单'">需建工单</span>
+          <span class="p" :class="{on:mark==='再次跟进'}" role="button" tabindex="0" :aria-pressed="mark==='再次跟进'" @click="mark='再次跟进'" @keydown.enter="mark='再次跟进'">再次跟进</span>
+          <span class="p" :class="{on:mark==='无人接听'}" role="button" tabindex="0" :aria-pressed="mark==='无人接听'" @click="mark='无人接听'" @keydown.enter="mark='无人接听'">无人接听</span>
+        </div>
+        <div v-if="mark==='承诺缴费'" class="mc" style="margin-top:10px"><div class="row"><span>承诺日期</span><input class="inp" type="date" value="2026-06-20" style="min-width:150px" aria-label="承诺缴费日期"></div><div class="mini" style="margin-top:6px">承诺金额 ¥{{cur.due}}</div></div>
+        <div class="sec">⑤ 跟进备注（手记 · 不改案件状态）</div>
+        <textarea class="ta2" placeholder="已预填 AI 摘要：家庭困难，月底考虑缴费…" aria-label="跟进备注"></textarea>
+        <button class="mbtn pri" style="margin-top:12px" @click="ov=null;tab='home';toast2('已保存复盘与结果标记（接通有效→重置 T_collector）')">保存复盘</button>
+        <button class="mbtn gho" style="margin-top:8px" @click="ov='detail'">返回案件</button>
+      </div>
+    </div>
+
+    <!-- 法务签收拍照 -->
+    <div class="ov" style="background:#f5f7fa" v-if="ov==='sign'" role="dialog" aria-modal="true" aria-label="法务送达签收拍照">
+      <div class="ab">
+        <span role="button" tabindex="0" aria-label="返回" style="cursor:pointer" @click="ov=null;signImg=''" @keydown.enter="ov=null;signImg=''">‹ 法务送达签收拍照</span>
+      </div>
+      <template v-if="!signImg">
+        <div class="sign-cam">
+          <span>对准签收回执单拍照</span>
+          <div class="lens" aria-hidden="true">📷</div>
+          <button class="sign-shoot" role="button" tabindex="0" aria-label="拍照" @click="takeSignPhoto" @keydown.enter="takeSignPhoto">⊙</button>
+        </div>
+      </template>
+      <template v-else>
+        <div class="body" style="top:48px;bottom:0">
+          <div class="sec">预览签收回执</div>
+          <div class="sign-prev">
+            <div class="sign-ph" aria-label="签收回执照片预览">签收回执照片预览（占位）</div>
+          </div>
+          <button class="mbtn pri" style="margin-top:12px" @click="confirmSign">确认上传并发起存证</button>
+          <button class="mbtn gho" style="margin-top:8px" @click="signImg=''">重拍</button>
+        </div>
+      </template>
+    </div>
+
+    <!-- 催收员：转工单（推物业协调员，互推闭环）-->
+    <div class="ov" style="background:#f5f7fa" v-if="ov==='makeTicket'" role="dialog" aria-modal="true" aria-label="转工单">
+      <div class="ab"><span role="button" tabindex="0" style="cursor:pointer" @click="ov='detail'" @keydown.enter="ov='detail'">‹ 转工单 — {{cur.name}}</span></div>
+      <div class="body" style="top:48px;bottom:0">
+        <div class="mc"><div class="mini" style="line-height:1.7">转工单给<b>物业协调员</b>上门/核实（互推闭环）；协调员处理后回执给你，不改案件状态。</div></div>
+        <div class="sec">工单类型</div>
+        <div class="tagpick">
+          <span class="p" :class="{on:tkType==='上门核实'}" role="button" tabindex="0" @click="tkType='上门核实'" @keydown.enter="tkType='上门核实'">上门核实</span>
+          <span class="p" :class="{on:tkType==='质量维修'}" role="button" tabindex="0" @click="tkType='质量维修'" @keydown.enter="tkType='质量维修'">质量维修</span>
+          <span class="p" :class="{on:tkType==='信息核实'}" role="button" tabindex="0" @click="tkType='信息核实'" @keydown.enter="tkType='信息核实'">信息核实</span>
+        </div>
+        <div class="sec">说明</div><textarea class="ta2" placeholder="如：业主称房屋漏水，请上门核实并反馈" aria-label="工单说明"></textarea>
+        <button class="mbtn pri" style="margin-top:12px" @click="ov='detail';toast2('已转工单（'+tkType+'）给协调员 · 互推闭环')">提交工单</button>
+        <button class="mbtn gho" style="margin-top:8px" @click="ov='detail'">取消</button>
+      </div>
+    </div>
+
+    <!-- 催收员：登记承诺 -->
+    <div class="ov" style="background:#f5f7fa" v-if="ov==='promise'" role="dialog" aria-modal="true" aria-label="登记承诺">
+      <div class="ab"><span role="button" tabindex="0" style="cursor:pointer" @click="ov='detail'" @keydown.enter="ov='detail'">‹ 登记承诺 — {{cur.name}}</span></div>
+      <div class="body" style="top:48px;bottom:0">
+        <div class="mc"><div class="mini">登记业主口头承诺；到期前/到期经工作台待办 + App 推送提醒（不发短信省成本）。</div></div>
+        <div class="sec">承诺缴费日期</div><input class="inp" type="date" value="2026-06-20" style="width:100%" aria-label="承诺日期">
+        <div class="sec">承诺金额</div><input class="inp" style="width:100%" :value="'¥'+cur.due" aria-label="承诺金额">
+        <button class="mbtn pri" style="margin-top:12px" @click="ov='detail';mark='承诺缴费';toast2('已登记承诺，到期将提醒')">保存承诺</button>
+        <button class="mbtn gho" style="margin-top:8px" @click="ov='detail'">取消</button>
+      </div>
+    </div>
+
+    <!-- 协调员：标记线下回款（业主线下缴→协调员核实标注→触发结清判定 M8）-->
+    <div class="ov" style="background:#f5f7fa" v-if="ov==='repay'" role="dialog" aria-modal="true" aria-label="标记线下回款">
+      <div class="ab"><span role="button" tabindex="0" style="cursor:pointer" @click="ov='detail'" @keydown.enter="ov='detail'">‹ 标记线下回款 — {{cur.name}}</span></div>
+      <div class="body" style="top:48px;bottom:0">
+        <div class="mc"><div class="mini" style="line-height:1.7">业主据缴费链接展示的<b>物业收款渠道线下缴费</b>，协调员核实后在此标注；标注后回款更新、<b>触发结清判定</b>（M8）。业主不在 H5 上传凭证（BR-M7-03）。</div></div>
+        <div class="sec">回款金额（减免后应收）</div><input class="inp" style="width:100%" :value="'¥'+cur.due" aria-label="回款金额">
+        <div class="sec">缴费日期</div><input class="inp" type="date" value="2026-06-18" style="width:100%" aria-label="缴费日期">
+        <div class="sec">缴费渠道</div>
+        <div class="tagpick">
+          <span class="p" :class="{on:payCh==='微信收款码'}" role="button" tabindex="0" @click="payCh='微信收款码'" @keydown.enter="payCh='微信收款码'">微信收款码</span>
+          <span class="p" :class="{on:payCh==='对公转账'}" role="button" tabindex="0" @click="payCh='对公转账'" @keydown.enter="payCh='对公转账'">对公转账</span>
+          <span class="p" :class="{on:payCh==='现金'}" role="button" tabindex="0" @click="payCh='现金'" @keydown.enter="payCh='现金'">现金</span>
+        </div>
+        <div class="sec">核实备注</div><textarea class="ta2" placeholder="如：业主微信转账截图已核对，金额一致" aria-label="核实备注"></textarea>
+        <button class="mbtn pri" style="margin-top:12px" @click="ov=null;tab='home';toast2('已标注线下回款 ¥'+cur.due+'（'+payCh+'）→ 触发结清判定')">确认标注回款</button>
+        <button class="mbtn gho" style="margin-top:8px" @click="ov='detail'">取消</button>
+      </div>
+    </div>
+
+    <!-- 协调员：工单处理（互推闭环回执）-->
+    <div class="ov" style="background:#f5f7fa" v-if="ov==='ticket'" role="dialog" aria-modal="true" aria-label="处理工单">
+      <div class="ab"><span role="button" tabindex="0" style="cursor:pointer" @click="ov='detail'" @keydown.enter="ov='detail'">‹ 处理工单 — {{cur.name}}</span></div>
+      <div class="body" style="top:48px;bottom:0">
+        <div class="mc"><div class="row"><b>上门核实工单</b><span class="badge b-or">待处理</span></div><div class="mini" style="margin-top:6px">来源：催收员转工单 · {{cur.room}}（互推闭环，处理后回执回催收员）</div></div>
+        <div class="sec">处理结果</div>
+        <div class="tagpick">
+          <span class="p" :class="{on:tkRes==='已上门核实'}" role="button" tabindex="0" @click="tkRes='已上门核实'" @keydown.enter="tkRes='已上门核实'">已上门核实</span>
+          <span class="p" :class="{on:tkRes==='已转维修'}" role="button" tabindex="0" @click="tkRes='已转维修'" @keydown.enter="tkRes='已转维修'">已转维修</span>
+          <span class="p" :class="{on:tkRes==='已完成'}" role="button" tabindex="0" @click="tkRes='已完成'" @keydown.enter="tkRes='已完成'">已完成</span>
+          <span class="p dg" :class="{on:tkRes==='无法处理'}" role="button" tabindex="0" @click="tkRes='无法处理'" @keydown.enter="tkRes='无法处理'">无法处理</span>
+        </div>
+        <div class="sec">处理回执</div><textarea class="ta2" placeholder="处理过程与结果说明…" aria-label="处理回执"></textarea>
+        <button class="mbtn pri" style="margin-top:12px" @click="ov=null;toast2('工单已回执（'+tkRes+'）→ 互推闭环回催收员')">提交回执</button>
+        <button class="mbtn gho" style="margin-top:8px" @click="ov='detail'">取消</button>
+      </div>
+    </div>
+
+    <!-- 录音目录设置（检测不到时可自行修改/选择路径）-->
+    <div class="ov" style="background:#f5f7fa;z-index:90" v-if="ov==='recdir'" role="dialog" aria-modal="true" aria-label="录音目录设置">
+      <div class="ab"><span role="button" tabindex="0" style="cursor:pointer" @click="ov=null" @keydown.enter="ov=null">‹ 录音目录设置</span></div>
+      <div class="body" style="top:48px;bottom:0">
+        <div class="mc"><div class="mini" style="line-height:1.7">不同手机的系统通话录音目录不同。App 默认自动探测，<b>检测不到时可手动修改/选择</b>。保存后 App 按此路径读取并上传录音。</div></div>
+        <div class="sec">录音目录路径</div>
+        <input class="inp" style="width:100%" v-model="recDirDraft" placeholder="/storage/emulated/0/…" aria-label="录音目录路径">
+        <div class="sec">常见机型预设（点击填入）</div>
+        <div class="tagpick">
+          <span class="p" role="button" tabindex="0" @click="recDirDraft='/storage/emulated/0/MIUI/sound_recorder/call_rec'">小米/红米</span>
+          <span class="p" role="button" tabindex="0" @click="recDirDraft='/storage/emulated/0/Sounds/CallRecord'">华为/荣耀</span>
+          <span class="p" role="button" tabindex="0" @click="recDirDraft='/storage/emulated/0/Music/Recordings/Call Recordings'">OPPO/一加</span>
+          <span class="p" role="button" tabindex="0" @click="recDirDraft='/storage/emulated/0/Record/Call'">vivo</span>
+          <span class="p" role="button" tabindex="0" @click="recDirDraft='/storage/emulated/0/Recordings/Call'">通用</span>
+        </div>
+        <button class="mbtn gho" style="margin-top:12px" @click="toast2('重新探测中…（演示）');recDirOk=true">自动重新检测</button>
+        <button class="mbtn pri" style="margin-top:8px" @click="recDir=recDirDraft||recDir;recDirOk=true;ov=null;toast2('录音目录已保存，将按此路径读取上传')">保存目录</button>
+      </div>
+    </div>
+
+    <!-- App 登录界面（未登录时全屏覆盖）-->
+    <div class="ov" style="background:linear-gradient(160deg,#13245b,#1d4ed8);color:#fff;z-index:80" v-if="!loggedIn" role="dialog" aria-modal="true" aria-label="登录">
+      <div style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:28px">
+        <div style="font-size:28px;font-weight:800;text-align:center;letter-spacing:1px">有证<span style="color:#bfdbff">慧催</span></div>
+        <div class="mini" style="color:rgba(255,255,255,.75);text-align:center;margin:6px 0 22px">催收员 / 协调员 · 移动作业端</div>
+        <div style="background:#fff;border-radius:14px;padding:18px;color:#111827">
+          <div class="tagpick" style="margin-bottom:14px">
+            <span class="p" :class="{on:loginMode==='pwd'}" role="button" tabindex="0" @click="loginMode='pwd'" @keydown.enter="loginMode='pwd'">账号密码</span>
+            <span class="p" :class="{on:loginMode==='sms'}" role="button" tabindex="0" @click="loginMode='sms'" @keydown.enter="loginMode='sms'">手机验证码</span>
+          </div>
+          <template v-if="loginMode==='pwd'">
+            <input class="inp" style="width:100%;margin-bottom:10px" placeholder="账号名" aria-label="账号名">
+            <input class="inp" type="password" style="width:100%" placeholder="密码" aria-label="密码">
+            <div class="mini" style="margin-top:8px;text-align:right"><span role="button" tabindex="0" style="color:#2563eb;cursor:pointer" @click="loginMode='sms'">忘记密码？验证码登录</span></div>
+          </template>
+          <template v-else>
+            <input class="inp" style="width:100%;margin-bottom:10px" placeholder="手机号" aria-label="手机号">
+            <div style="display:flex;gap:8px"><input class="inp" style="flex:1" placeholder="6 位验证码" aria-label="验证码"><button class="btn df" type="button" @click="toast2('验证码已发送（演示）')">获取</button></div>
+            <div class="mini" style="margin-top:8px">一个手机号可绑多账号，验证后选择登录（BR-M1-11）。</div>
+          </template>
+          <button class="mbtn pri" style="margin-top:16px" @click="loggedIn=true;tab='home';toast2('登录成功')">登 录</button>
+        </div>
+        <div class="mini" style="color:rgba(255,255,255,.6);text-align:center;margin-top:16px">© 有证慧催 · 移动端原型（演示直接登录）</div>
+      </div>
+    </div>
+
+    <!-- 首次登录：权限检测 + 录音文件检测 + 开通自动录音引导 -->
+    <div class="ov" style="background:#f5f7fa;z-index:70" v-if="loggedIn && !setupDone" role="dialog" aria-modal="true" aria-label="首次设置">
+      <div class="ab"><span>首次设置 · 权限与录音</span></div>
+      <div class="body" style="top:48px;bottom:0">
+        <div class="mc"><div class="mini" style="line-height:1.7">为<b>自动回填通话录音</b>，需开通以下权限并开启系统通话自动录音。平台不主动拨号，通话在本机进行、由系统录音，App 读取录音目录上传解析。</div></div>
+        <div class="sec">① 权限检测</div>
+        <div class="mc"><div class="row"><span>🎙 麦克风 / 通话录音权限</span><span class="badge" :class="perms.mic?'b-gr':'b-rd'" style="cursor:pointer;padding:6px 12px" role="button" tabindex="0" @click="perms.mic=true;toast2('已授权麦克风/通话录音')" @keydown.enter="perms.mic=true">{{ perms.mic?'已授权 ✅':'去授权' }}</span></div></div>
+        <div class="mc"><div class="row"><span>📁 存储 / 文件访问权限</span><span class="badge" :class="perms.storage?'b-gr':'b-rd'" style="cursor:pointer;padding:6px 12px" role="button" tabindex="0" @click="perms.storage=true;toast2('已授权文件访问')" @keydown.enter="perms.storage=true">{{ perms.storage?'已授权 ✅':'去授权' }}</span></div></div>
+        <div class="sec">② 录音文件检测</div>
+        <div class="mc"><div class="row"><span>🎧 录音目录</span><span class="badge" :class="recDirOk?'b-gr':'b-rd'">{{ recDirOk?'已检测 ✅':'未检测到 ⚠' }}</span></div>
+          <div class="mini" style="margin-top:6px;word-break:break-all">{{ recDir }}</div>
+          <div style="display:flex;gap:8px;margin-top:8px"><button class="btn df" style="flex:1" @click="recDirOk=true;toast2('已检测到录音目录')">重新检测</button><button class="btn" style="flex:1;border:1px solid var(--primary);color:var(--primary);background:#fff" @click="recDirDraft=recDir;ov='recdir'">手动修改路径</button></div>
+        </div>
+        <div class="sec">③ 开通系统「通话自动录音」</div>
+        <div class="mc"><div class="mini" style="line-height:1.9">不同机型路径不同：<br>· <b>小米/红米</b>：设置→系统应用→电话→通话录音→自动录音<br>· <b>华为/荣耀</b>：电话→设置→自动录音<br>· <b>OPPO/一加/vivo</b>：电话→设置→通话录音→自动录音<br>开启后通话自动生成录音文件，App 读取目录上传解析。</div>
+          <div class="row" style="margin-top:10px"><span>是否已开启自动录音？</span><span class="badge" :class="perms.autorec?'b-gr':'b-rd'" style="cursor:pointer;padding:6px 12px" role="button" tabindex="0" @click="perms.autorec=true;toast2('已确认开启自动录音')" @keydown.enter="perms.autorec=true">{{ perms.autorec?'已开启 ✅':'我已开启' }}</span></div>
+        </div>
+        <button class="mbtn pri" style="margin-top:12px" :style="(perms.mic&&perms.storage&&perms.autorec&&recDirOk)?'':'opacity:.6'" @click="setupDone=true;tab='home';toast2('设置完成，开始作业')">完成，进入工作台</button>
+        <button class="mbtn gho" style="margin-top:8px" @click="setupDone=true;tab='home'">稍后设置</button>
+      </div>
+    </div>
+
+    <!-- 催收员：我的结算/佣金自查（只读·服务商内部提成，BR-M9-19a）-->
+    <div class="ov" style="background:#f5f7fa" v-if="ov==='mysettle'" role="dialog" aria-modal="true" aria-label="我的结算">
+      <div class="ab"><span role="button" tabindex="0" style="cursor:pointer" @click="ov=null" @keydown.enter="ov=null">‹ 我的结算 / 佣金</span></div>
+      <div class="body" style="top:48px;bottom:0">
+        <div class="mc"><div class="mini" style="line-height:1.7">服务商内部个人提成（<b>只读</b>）：比例设定与是否已支付由服务商操作，平台不参与、非平台付佣对账。结案后按合规收敛为统计口径。</div></div>
+        <div class="info3" style="margin-bottom:10px"><div><div class="v">¥6,720</div><div class="k">累计提成</div></div><div><div class="v" style="color:#15803d">¥5,180</div><div class="k">已结</div></div><div><div class="v" style="color:#dc2626">¥1,540</div><div class="k">待结</div></div></div>
+        <div class="sec">按批次明细</div>
+        <div class="mc" v-for="r in mySettle" :key="r.batch">
+          <div class="row"><b>{{ r.batch }}</b><span class="badge" :class="r.status==='已结'?'b-gr':'b-or'">{{ r.status }}</span></div>
+          <div class="row" style="margin-top:6px"><span class="mini">回款 ¥{{ r.repay }} · 比例 {{ r.rate }}%</span><span class="due" style="color:#13245b">提成 ¥{{ r.comm }}</span></div>
+        </div>
+        <button class="mbtn gho" style="margin-top:8px" @click="toast2('已导出我的结算明细（演示）')">导出明细</button>
+      </div>
+    </div>
+
+    <!-- 账号与安全（所有人可设密码 / 改手机）-->
+    <div class="ov" style="background:#f5f7fa" v-if="ov==='account'" role="dialog" aria-modal="true" aria-label="账号与安全">
+      <div class="ab"><span role="button" tabindex="0" style="cursor:pointer" @click="ov=null" @keydown.enter="ov=null">‹ 账号与安全</span></div>
+      <div class="body" style="top:48px;bottom:0">
+        <div class="sec">设置 / 修改密码</div>
+        <input class="inp" type="password" style="width:100%;margin-bottom:8px" placeholder="原密码（首次设置可留空）" aria-label="原密码">
+        <input class="inp" type="password" style="width:100%;margin-bottom:8px" placeholder="新密码" aria-label="新密码">
+        <input class="inp" type="password" style="width:100%" placeholder="确认新密码" aria-label="确认新密码">
+        <button class="mbtn pri" style="margin-top:10px" @click="toast2('密码已更新')">保存密码</button>
+        <div class="sec" style="margin-top:18px">变更手机号</div>
+        <input class="inp" style="width:100%;margin-bottom:8px" placeholder="新手机号" aria-label="新手机号">
+        <div style="display:flex;gap:8px"><input class="inp" style="flex:1" placeholder="验证码" aria-label="验证码"><button class="btn df" type="button" @click="toast2('验证码已发送至新手机')">获取</button></div>
+        <div class="mini" style="margin:8px 0">变更后用新手机号登录；账号标识不变（换人靠改绑+重置交接同一账号 BR-M1-09）。</div>
+        <button class="mbtn pri" style="margin-top:4px" @click="toast2('手机号已变更')">确认变更</button>
+      </div>
+    </div>
+
+    <div class="toast2" v-if="tmsg" role="status" aria-live="polite">{{tmsg}}</div>
+  </div>
+
+  <div style="align-self:center;max-width:250px;color:#5a6b7b;font-size:13px;line-height:1.8">
+    <b>App 原型（催收员 / 协调员）</b><br>· 顶部切「催收员/协调员」<br>· 工作台=今日看板，点案件直接作业<br>· 案件→拨打：<b>跳起本机拨号器·系统录音</b>（平台不主动拨号、不感知拨打时机、无通话中实时提示）<br>· 通话后→<b>获取最新通话录音</b>（拉取中/已就绪显示时间·时长·号码）→ 解析 → <b>AI 复盘</b>（对话记录+质检风险+下一步建议采纳+结果标记+跟进）<br>· 拉不到→Web 手动上传救济<br>· 通话前看作战手册(静态+AI动态)；PC 另有法务送达签收拍照<br>· 与后台同一套 CRM 理念与设计令牌（BR-M4-01a/01b、M5 AI 复盘）
+  </div>
+</div>
+
+<script>
+const { createApp, reactive, computed, toRefs } = Vue;
+const app = createApp({
+  setup(){
+    const st = reactive({ role:'CO', tab:'home', ov:null, cur:{}, mark:'承诺缴费', tmsg:'', signImg:'', fetchState:'loading', recInfo:{tm:'',dur:'',phone:''}, recDir:'/storage/emulated/0/MIUI/sound_recorder/call_rec', recDirOk:true, recDirDraft:'', payCh:'微信收款码', tkRes:'已上门核实', tkType:'上门核实', loggedIn:false, loginMode:'pwd', setupDone:false, perms:{mic:false,storage:false,autorec:false},
+      cases:[
+        {id:1,name:'李四',room:'3-201',due:1200,months:6,batch:'YG…001',tag:'承诺缴费',bc:'b-gr',promise:'6/20',phone:'138****0001',status:'active'},
+        {id:2,name:'王九',room:'2-303',due:2000,months:4,batch:'CH…001',tag:'跟进中',bc:'b-or',promise:'',phone:'137****0003',status:'active'},
+        {id:3,name:'孙七',room:'1-202',due:800,months:3,batch:'YG…002',tag:'未接通',bc:'b-gy',promise:'',phone:'135****0007',status:'active'},
+        {id:4,name:'赵六',room:'4-501',due:0,months:5,batch:'YG…003',tag:'已结清',bc:'b-gr',promise:'',phone:'139****0006',status:'closed',closedKind:'已结清',recovered:3200},
+        {id:5,name:'周八',room:'5-102',due:1500,months:7,batch:'CH…002',tag:'坏账',bc:'b-rd',promise:'',phone:'136****0008',status:'closed',closedKind:'坏账',recovered:0},
+      ],
+      mySettle:[
+        {batch:'YG-20260601-001',repay:'4,480',rate:8,comm:'358',status:'已结'},
+        {batch:'CH-20260601-001',repay:'1,400',rate:7,comm:'98',status:'待结'},
+        {batch:'YG-20260601-002',repay:'10,800',rate:8,comm:'864',status:'待结'},
+      ],
+      callLog:[
+        {name:'李四',t:'06-15 14:22',dur:'03:48',res:'承诺缴费',bc:'b-gr',ai:'获口头承诺 6/20'},
+        {name:'王九',t:'06-14 09:30',dur:'01:12',res:'再次跟进',bc:'b-or',ai:'情绪一般，要求宽限'},
+        {name:'孙七',t:'06-13 16:05',dur:'00:00',res:'未接通',bc:'b-gy',ai:'—'},
+      ] });
+    const abTitle = computed(()=> ({home:'工作台',cases:'案件',calls:'通话记录',me:'我的'}[st.tab]||'有证慧催'));
+    const today = computed(()=> st.role==='CO'
+      ? {minutes:42,calls:8,repay:'3,400',pending:5}
+      : {minutes:18,calls:4,repay:'2,100',pending:7});
+    const todos = computed(()=> st.role==='CO'
+      ? [{l:'承诺到期',n:5,c:'#dc2626',jump:'cases'},{l:'临近释放',n:3,c:'#d97706',jump:'cases'},{l:'新分配',n:8,c:'#2563eb',jump:'cases'}]
+      : [{l:'待签收',n:2,c:'#dc2626',jump:'sign'},{l:'法务待办',n:4,c:'#d97706',jump:'cases'},{l:'回款待标',n:5,c:'#2563eb',jump:'cases'}]);
+    const isClosed=(cs)=> cs && cs.status==='closed';
+    const redactOn=(cs)=> st.role==='CO' && isClosed(cs);
+    const viewCases = computed(()=> st.cases.map(cs=> redactOn(cs)
+      ? { ...cs, name:'已脱敏', room:'—', phone:'—', promise:'', _redacted:true }
+      : { ...cs, _redacted:false }));
+    const closedStat = computed(()=>{ const cl=st.cases.filter(c=>c.status==='closed'); return { count:cl.length, recovered:cl.reduce((s,c)=>s+(c.recovered||0),0) }; });
+    const activeCount = computed(()=> st.cases.filter(c=>c.status!=='closed').length);
+    let tt; const toast2=(m)=>{ st.tmsg=m; clearTimeout(tt); tt=setTimeout(()=>st.tmsg='',1800); };
+    const openCase=(cs)=>{ if(redactOn(cs)){ st.cur={ ...cs, name:'已脱敏', room:'—', phone:'—', _redacted:true }; st.ov='detail'; return; } st.cur={ ...cs, _redacted:false }; st.ov='detail'; };
+    const jumpTodo=(t)=>{ if(t.jump==='sign'){ st.signImg=''; st.cur={...(st.cases[0]||{})}; st.ov='sign'; return; } st.tab='cases'; toast2('已为你筛选「'+t.l+'」相关案件'); };
+    const takeSignPhoto=()=>{ st.signImg='shot:'+Date.now(); };
+    const confirmSign=()=>{ st.ov=null; st.signImg=''; toast2('已上传并可发起存证'); };
+    let ft; const startFetch=()=>{ st.ov='fetch'; st.fetchState='loading'; clearTimeout(ft); ft=setTimeout(()=>{ st.fetchState='ready'; st.recInfo={tm:'06-15 14:22',dur:'03:48',phone:st.cur.phone||'138****0001'}; },1600); };
+    const adopt=(x)=>{ if(x==='登记承诺') st.mark='承诺缴费'; if(x==='建工单') st.mark='需建工单'; toast2('已采纳并联动：'+x); };
+    return {...toRefs(st), abTitle, today, todos, toast2, openCase, viewCases, closedStat, activeCount, isClosed, redactOn, jumpTodo, takeSignPhoto, confirmSign, startFetch, adopt};
+  }
+});
+app.mount('#app');
+</script>
+</body>
+</html>
