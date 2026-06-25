@@ -34,8 +34,16 @@ jobs:
           git show "origin/${{ github.base_ref }}:$SPEC" > /tmp/base.yaml 2>/dev/null || { echo "base 无契约，跳过"; exit 0; }
           docker run --rm -v /tmp:/tmp -v "$PWD:/repo" tufin/oasdiff breaking /tmp/base.yaml "/repo/$SPEC" --fail-on ERR
 
-  gate1:                               # Gate1 整体硬红线（命门）：schemathesis 打全部 117 端点，违约即挂。
+  gate1:                               # Gate1 整体硬红线（命门）：CI 自起 PG+后端，schemathesis 打全部 117 端点，违约即挂。
     runs-on: ubuntu-latest               # 全契约已实现 → 去模块过滤、去 continue-on-error。后端响应违反契约 = 红。
+    services:
+      postgres:                          # pgvector(含 vector 扩展，embedding 列需要)；映射 5455:5432 对齐 application.yml 默认。
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_DB: huicui, POSTGRES_PASSWORD: test, POSTGRES_USER: postgres }
+        ports: ["5455:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 30
     env:
       # 要害 check 集（保留有意义的、排除噪声的）：
       #   保留 not_a_server_error(无5xx) / response_schema_conformance(响应schema) / content_type / response_headers / ignored_auth(鉴权强制)
@@ -49,19 +57,30 @@ jobs:
       GEN_FLAGS: "-m positive --generation-deterministic --phases examples,coverage,fuzzing"
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21", cache: maven }
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
+      - name: 起 Spring 后端（连 CI 的 PG 服务，跑迁移+种子）
+        working-directory: backend/app
+        run: |
+          nohup mvn -q spring-boot:run > /tmp/app.log 2>&1 &
+          for i in $(seq 1 60); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9091/v1/me)" = "401" ] && { echo "后端就绪"; break; }
+            grep -qE "APPLICATION FAILED|Migration.*failed" /tmp/app.log && { echo "::error::后端启动失败"; tail -40 /tmp/app.log; exit 1; }
+            sleep 5
+          done
       - name: schemathesis 硬校验全部 117 端点（带鉴权：受保护端点需登录取 token 才能打到 200）
         env:
-          TARGET: "${{ vars.API_BASE_URL || 'http://localhost:8080/v1' }}"
-          TEST_USER: "${{ vars.API_TEST_USER || 'admin' }}"
-          TEST_PASS: "${{ secrets.API_TEST_PASS || 'Admin@123' }}"
+          TARGET: "http://localhost:9091/v1"
+          TEST_USER: "admin"
+          TEST_PASS: "Admin@123"
         run: |
           pip install schemathesis
           TOKEN=$(curl -s -X POST "$TARGET/auth/login" -H 'Content-Type: application/json' \
             -d "{\"mode\":\"password\",\"username\":\"$TEST_USER\",\"password\":\"$TEST_PASS\"}" \
             | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))")
-          [ -z "$TOKEN" ] && { echo "::error::无法登录取 token，Gate1 无法测受保护端点"; exit 1; }
+          [ -z "$TOKEN" ] && { echo "::error::无法登录取 token，Gate1 无法测受保护端点"; tail -30 /tmp/app.log; exit 1; }
           schemathesis run "$SPEC" --url "$TARGET" -H "Authorization: Bearer $TOKEN" \
             -c "$CHECKS" $GEN_FLAGS --max-examples 25 || {
             echo "::error::后端响应违反契约（Gate1 整体硬红线）"; exit 1; }
