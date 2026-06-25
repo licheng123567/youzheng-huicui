@@ -18,6 +18,12 @@ import org.springframework.stereotype.Component;
  * 录音(READY)/AI复盘/承诺(分期)/联系人/工单（+缴费链接/减免/回款明细 与 翠湖物业 PC 协调员），
  * 使 M4 GET 端点（latest/recordings/{id}/listRecordings/ai-review/promises/contacts/tickets）种子返 200。
  * 见 {@link #seedM4Collection}。全部幂等（先 SELECT count 判存在）。
+ *
+ * M9 扩充：复用 M2 演示批次 B-CH-2026-01（pay_out_rate=0.20）与三案件 C-1001/1002/1003，
+ * 种 结算·支付申请单数据——三笔未结回款明细（settled=FALSE）、jx_co1 本批 co_commission(rate=0.15)、
+ * 1 张 PENDING 付佣单(side=OUT, comm_rate=0.20) + 1 张 PAID 单(+PAYMENT 凭证) + 1 张 PENDING_PAY 催收员佣金单，
+ * 供 M9 list/get/revoke/send/complete/co-commissions/co-pay-docs 端点有目标 id。
+ * 见 {@link #seedM9Settlement}，物理隔离 M2/M3/M4 种子。
  */
 @Component
 public class DevSeeder implements CommandLineRunner {
@@ -69,6 +75,10 @@ public class DevSeeder implements CommandLineRunner {
                 ensureCase(batch, proj, "翠湖一期", "C-1003", "王五", "3-303", 120000L);
             }
             seedM3States(proj, provider, co1);
+            // M9 结算·支付申请单种子（复用 M2 演示批次 B-CH-2026-01 与三案件 C-1001/1002/1003）
+            if (batch != null) {
+                seedM9Settlement(batch, proj, provider, co1);
+            }
         }
     }
 
@@ -244,6 +254,151 @@ public class DevSeeder implements CommandLineRunner {
                             + "VALUES (?, 'CALL', ?, '通话录音上传', 'call_recording', ?, 'CALL')",
                     caseS3Id, coHolder, recId);
         }
+    }
+
+    // ── M9 结算·支付申请单种子（资金双线 OUT·催收员佣金）──────────────────────
+    //
+    // 复用 M2 演示批次 B-CH-2026-01（comm_in_rate=0.30 / pay_out_rate=0.20，已设防倒挂可校验）
+    // 与三案件 C-1001/1002/1003。全部幂等（先 SELECT count 判存在再插）。物理隔离 M2/M3/M4 种子。
+    //
+    // 种：
+    //   1) 未结回款明细 repay_line（settled=FALSE, payment_request_id=NULL, reversed=FALSE）：
+    //      C-1001 一笔 360000、C-1002 一笔 480000、C-1003 一笔 120000（对齐 due_cents），
+    //      marked_by=协调员（cuihu_pc），供 listBatchRepayLines/createPaymentRequest 有可勾选目标。
+    //   2) co_commission：catch coHolder(jx_co1) 在本批 rate=0.15（≤ pay_out_rate 0.20·合法不倒挂）。
+    //      （触发 BIZ_PAYOUT_INVERT 走 PUT rate=0.25 端点动态触发，不种非法数据。）
+    //   3) PENDING 支付申请单（side=OUT, generated_by=jx_vl, comm_rate=0.20 固化 pay_out_rate），
+    //      勾选 C-1001 的明细→lines JSONB 快照 [{lineId,caseId,ownerName,room,repayCents,commCents}]，
+    //      base_cents=360000、comm_cents=360000×0.20=72000、status=PENDING、version=1，
+    //      并 UPDATE 该 repay_line.payment_request_id=新单 id（settled 保持 FALSE，PENDING 占位锁定）。
+    //   4) 一张已 PAID 单 + voucher（type=PAYMENT 对应 OUT 线）：勾选 C-1003 明细，展示终态，
+    //      该 repay_line.settled=TRUE、payment_request_id=该 PAID 单。
+    //   5) co_pay_doc（PENDING_PAY, collector=jx_co1, line_ids=[C-1002 明细], amount=480000×0.15=72000）
+    //      + co_pay_doc_line 关联行，供 confirm-pay 端点有目标 id。
+
+    /**
+     * @param batchId     M2 演示批次 id（B-CH-2026-01，pay_out_rate=0.20）
+     * @param projId      批次所属项目 id（翠湖一期）
+     * @param providerOrg 承接服务商 org id（捷信催收）
+     * @param coHolder    催收员 account id（jx_co1）
+     */
+    private void seedM9Settlement(Long batchId, Long projId, Long providerOrg, Long coHolder) {
+        // 资金口径：pay_out_rate=0.20（OUT 线固化比率）；催收员内部 rate=0.15。
+        final java.math.BigDecimal payOutRate = new java.math.BigDecimal("0.2000");
+        final java.math.BigDecimal coRate = new java.math.BigDecimal("0.1500");
+
+        // OUT 付佣单可见性按 batch.provider_id(承接服务商)裁剪 → 本批须挂承接服务商，否则服务商看不到自己的付佣单。
+        jdbc.update("UPDATE batch SET provider_id = ? WHERE id = ? AND provider_id IS NULL", providerOrg, batchId);
+
+        // 协调员（marked_by）。M4 已为 S3 案件种过 cuihu_pc，幂等返回既有账号。
+        Long pc = ensureCoordinator(projId, "cuihu_pc", "翠湖协调员", "13900000006");
+        if (pc == null) return;
+
+        // 三案件 id（M2 演示批次下 C-1001/1002/1003）
+        Long c1 = caseIdByAcct(batchId, "C-1001");
+        Long c2 = caseIdByAcct(batchId, "C-1002");
+        Long c3 = caseIdByAcct(batchId, "C-1003");
+        if (c1 == null || c2 == null || c3 == null) return;
+
+        // 1) 未结回款明细各一笔（幂等键：同案在本批已有任一明细则跳过）
+        Long line1 = ensureRepayLine(c1, batchId, 360000L, pc); // 入 PENDING 单
+        Long line2 = ensureRepayLine(c2, batchId, 480000L, pc); // 入 co_pay_doc
+        Long line3 = ensureRepayLine(c3, batchId, 120000L, pc); // 入 PAID 单
+        if (line1 == null || line2 == null || line3 == null) return;
+
+        // 2) 催收员佣金比例 0.15（≤ 0.20 合法）。幂等：uq_co_comm_coll_batch。
+        Integer ccExists = jdbc.queryForObject(
+                "SELECT count(*) FROM co_commission WHERE collector_id = ? AND batch_id = ?",
+                Integer.class, coHolder, batchId);
+        if (ccExists == null || ccExists == 0) {
+            jdbc.update("INSERT INTO co_commission(collector_id, batch_id, rate) VALUES (?, ?, ?::numeric)",
+                    coHolder, batchId, coRate.toPlainString());
+        }
+
+        // OUT 线生成方=服务商负责人（jx_vl）。绝不接受前端传入，此处种子等价服务端派生。
+        Long vlAcct = jdbc.query("SELECT id FROM account WHERE username = 'jx_vl'",
+                rs -> rs.next() ? rs.getLong(1) : null);
+        if (vlAcct == null) return;
+
+        // 3) PENDING 支付申请单（side=OUT），勾选 line1（C-1001 / 360000）
+        String prPendingNo = "PR-OUT-" + batchId + "-1";
+        Long prPending = jdbc.query("SELECT id FROM payment_request WHERE no = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, prPendingNo);
+        if (prPending == null) {
+            long comm1 = com.youzheng.huicui.common.Commission.lineCommissionCents(360000L, payOutRate); // 72000
+            String lines1 = "[{\"lineId\":" + line1 + ",\"caseId\":" + c1
+                    + ",\"ownerName\":\"张三\",\"room\":\"1-101\",\"repayCents\":360000,\"commCents\":" + comm1 + "}]";
+            prPending = jdbc.queryForObject(
+                    "INSERT INTO payment_request(no, side, batch_id, generated_by, comm_rate, lines, "
+                            + "base_cents, comm_cents, status, version) "
+                            + "VALUES (?, 'OUT', ?, ?, ?::numeric, ?::jsonb, 360000, ?, 'PENDING', 1) RETURNING id",
+                    Long.class, prPendingNo, batchId, vlAcct, payOutRate.toPlainString(), lines1, comm1);
+            // 占位锁定：settled 保持 FALSE，仅写 payment_request_id（PAID 才置 settled=TRUE）
+            jdbc.update("UPDATE repay_line SET payment_request_id = ? WHERE id = ? AND payment_request_id IS NULL",
+                    prPending, line1);
+            jdbc.update("INSERT INTO activity(case_id, type, actor_id, content, ref_type, ref_id) "
+                            + "VALUES (?, 'OPLOG', ?, '生成付佣支付申请单(PENDING)', 'payment_request', ?)",
+                    c1, vlAcct, prPending);
+        }
+
+        // 4) 已 PAID 支付申请单（side=OUT）+ voucher（type=PAYMENT），勾选 line3（C-1003 / 120000）
+        String prPaidNo = "PR-OUT-" + batchId + "-2";
+        Long prPaid = jdbc.query("SELECT id FROM payment_request WHERE no = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, prPaidNo);
+        if (prPaid == null) {
+            long comm3 = com.youzheng.huicui.common.Commission.lineCommissionCents(120000L, payOutRate); // 24000
+            String lines3 = "[{\"lineId\":" + line3 + ",\"caseId\":" + c3
+                    + ",\"ownerName\":\"王五\",\"room\":\"3-303\",\"repayCents\":120000,\"commCents\":" + comm3 + "}]";
+            prPaid = jdbc.queryForObject(
+                    "INSERT INTO payment_request(no, side, batch_id, generated_by, comm_rate, lines, "
+                            + "base_cents, comm_cents, status, completed_by, completed_at, version) "
+                            + "VALUES (?, 'OUT', ?, ?, ?::numeric, ?::jsonb, 120000, ?, 'PAID', ?, now(), 2) RETURNING id",
+                    Long.class, prPaidNo, batchId, vlAcct, payOutRate.toPlainString(), lines3, comm3, vlAcct);
+            // 锁定明细：PAID → settled=TRUE + 绑定单
+            jdbc.update("UPDATE repay_line SET payment_request_id = ?, settled = TRUE WHERE id = ?", prPaid, line3);
+            // 凭证（OUT 线=PAYMENT 支付凭证）。uq_voucher_payment_request 每单一张，幂等。
+            jdbc.update("INSERT INTO voucher(payment_request_id, type, file_url, uploaded_by) "
+                            + "VALUES (?, 'PAYMENT', ?, ?)",
+                    prPaid, "https://example.com/placeholder-voucher.pdf", vlAcct);
+            jdbc.update("INSERT INTO activity(case_id, type, actor_id, content, ref_type, ref_id) "
+                            + "VALUES (?, 'OPLOG', ?, '完成付佣支付申请单(PAID·留痕凭证)', 'payment_request', ?)",
+                    c3, vlAcct, prPaid);
+        }
+
+        // 5) co_pay_doc（PENDING_PAY）：催收员内部结算占位，勾选 line2（C-1002 / 480000）
+        //    amount = 480000 × 0.15 = 72000。内部已结以 co_pay_doc.status=SETTLED 判定，不污染平台 settled。
+        Integer cpdExists = jdbc.queryForObject(
+                "SELECT count(*) FROM co_pay_doc WHERE collector_id = ? AND status = 'PENDING_PAY' "
+                        + "AND line_ids @> ?::jsonb", Integer.class, coHolder, "[" + line2 + "]");
+        if (cpdExists == null || cpdExists == 0) {
+            long coAmount = com.youzheng.huicui.common.Commission.lineCommissionCents(480000L, coRate); // 72000
+            Long cpd = jdbc.queryForObject(
+                    "INSERT INTO co_pay_doc(collector_id, line_ids, count, amount_cents, status) "
+                            + "VALUES (?, ?::jsonb, 1, ?, 'PENDING_PAY') RETURNING id",
+                    Long.class, coHolder, "[" + line2 + "]", coAmount);
+            jdbc.update("INSERT INTO co_pay_doc_line(co_pay_doc_id, repay_line_id) VALUES (?, ?)", cpd, line2);
+        }
+    }
+
+    /** 取 M2 演示批次下某户号案件 id。 */
+    private Long caseIdByAcct(Long batchId, String acctNo) {
+        return jdbc.query("SELECT id FROM \"case\" WHERE batch_id = ? AND acct_no = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, batchId, acctNo);
+    }
+
+    /**
+     * 未结回款明细幂等：同案在本批已有任一明细则返回既有 id（避免重复种）。
+     * 新种：settled=FALSE, payment_request_id=NULL（默认）, reversed=FALSE（默认）, channel=WECHAT_QR。
+     */
+    private Long ensureRepayLine(Long caseId, Long batchId, long amountCents, Long markedBy) {
+        Long existing = jdbc.query(
+                "SELECT id FROM repay_line WHERE case_id = ? AND batch_id = ? ORDER BY id LIMIT 1",
+                rs -> rs.next() ? rs.getLong(1) : null, caseId, batchId);
+        if (existing != null) return existing;
+        return jdbc.queryForObject(
+                "INSERT INTO repay_line(case_id, batch_id, amount_cents, channel, paid_at, marked_by, settled) "
+                        + "VALUES (?, ?, ?, 'WECHAT_QR', now()::date, ?, FALSE) RETURNING id",
+                Long.class, caseId, batchId, amountCents, markedBy);
     }
 
     /** 物业协调员账号（role_template=PC，非负责人）。绑到指定项目的物业组织下。返回 account.id。 */

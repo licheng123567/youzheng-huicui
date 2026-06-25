@@ -76,12 +76,12 @@ public class AuthController {
         return switch (role) {
             // 平台：派单/再派/开放抢单/作废 + 结算/质检/主数据
             case "SA", "SE" -> Set.of("proj.edit", "batch.import", "case.dispatch", "case.void",
-                    "payreq.complete", "qc.review", "qc.escalate", "member.manage", "report.export");
+                    "payreq.create", "payreq.complete", "qc.review", "qc.escalate", "member.manage", "report.export");
             // 物业负责人/协调员
             case "PL", "PC" -> Set.of("proj.edit", "reduce.policy.edit", "case.follow", "case.paylink",
                     "case.repay.mark", "case.reduce", "evidence.create", "legal.create");
             // 服务商负责人：承接/拒接/分配/退案
-            case "VL" -> Set.of("case.accept", "case.assign", "case.return", "cocomm.manage");
+            case "VL" -> Set.of("case.accept", "case.assign", "case.return", "cocomm.manage", "payreq.create");
             // 催收员：抢单/释放/跟进/通话/承诺/工单/缴费链接/标回款
             case "CO" -> Set.of("case.claim", "case.release", "case.follow", "case.call",
                     "case.promise", "case.ticket", "case.paylink", "case.repay.mark", "cocomm.self.view");
