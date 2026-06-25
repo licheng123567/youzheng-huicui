@@ -2,3 +2,7 @@ node_modules/
 dist/
 *.local
 .vite/
+# vue-tsc/tsc 误 emit 的构建产物（仅类型检查，不入库）
+src/**/*.js
+src/**/*.vue.js
+*.tsbuildinfo
