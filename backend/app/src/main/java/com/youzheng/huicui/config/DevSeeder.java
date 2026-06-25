@@ -24,6 +24,13 @@ import org.springframework.stereotype.Component;
  * 1 张 PENDING 付佣单(side=OUT, comm_rate=0.20) + 1 张 PAID 单(+PAYMENT 凭证) + 1 张 PENDING_PAY 催收员佣金单，
  * 供 M9 list/get/revoke/send/complete/co-commissions/co-pay-docs 端点有目标 id。
  * 见 {@link #seedM9Settlement}，物理隔离 M2/M3/M4 种子。
+ *
+ * M6/M7 扩充：给 S3 私海案件（M3-S3-01）种 存证 evidence 2 条（RECORDING+DELIVERY，ISSUED，
+ * 形成 id 升序派生哈希链·不落库不改 schema，供 GET /evidence 与 verify 返 200）、
+ * 法律文书 legal_doc 1 条（LAWYER_LETTER/SIGNED，关联第 2 条存证，供 GET /cases/{id}/legal-docs 与 deliver）；
+ * M7 缴费复用 M4 已种 pay_link（token=demo-paylink-{caseS3Id}），仅补 case.reduce_after_cents/arrearags_periods
+ * 与 project.pay_info 使 OwnerBill 字段非空；M10 报表走聚合查询无需专门种子。
+ * 见 {@link #seedM6Evidence} / {@link #seedM7Bill}。全部幂等，物理隔离。
  */
 @Component
 public class DevSeeder implements CommandLineRunner {
@@ -258,6 +265,111 @@ public class DevSeeder implements CommandLineRunner {
 
         // 7) M5 质检风险 + 处置任务（违规人=jx_co1 催收员、责任组织=捷信服务商）
         seedM5Qc(caseS3Id, projId, recId, coHolder, providerOrg);
+
+        // 8) M6 存证（evidence 2 条·哈希链派生不落库）+ 法律文书（legal_doc 1 条）
+        seedM6Evidence(caseS3Id, projId, recId);
+
+        // 9) M7 业主缴费视图字段：减免后应收 / 欠费周期 / 项目收款 JSON（pay_link 已于 6a 种，无需新种）
+        seedM7Bill(caseS3Id, projId);
+    }
+
+    // ── M6 存证/法律文书种子（私海案件 M3-S3-01，供 GET /evidence·verify·legal-docs·deliver 返 200）──
+    //
+    // 表（V2__peripheral_and_audit.sql 冻结列）：
+    //   evidence(org_id=物业组织, case_id, scene, ref_ids JSONB, status, cert_no, cert_url, issued_at, note, created_by)
+    //   legal_doc(case_id, type, template_id, status, pdf_url, delivered_at, signed_photo_url, evidence_id, note, created_by)
+    // 哈希链：evidence 表无 hash/prev_hash 列（schema 冻结）——哈希为派生值
+    //   SHA-256(id|case_id|scene|cert_no|issued_at)，verify 端点读时实时计算并与前一条（id 升序前驱）
+    //   派生哈希链接，不落库不改 schema。
+    // 全部幂等：先 SELECT count(*) WHERE case_id=? 为 0 才插。
+
+    /**
+     * @param caseS3Id 私海案件 id（M3-S3-01）
+     * @param projId   案件所属项目 id（翠湖一期）——派生物业 org（evidence.org_id 三方隔离）
+     * @param recId    关联录音 id（第 1 条 RECORDING 存证 ref_ids=[recId]）
+     */
+    private void seedM6Evidence(Long caseS3Id, Long projId, Long recId) {
+        // 物业组织（evidence.org_id）：案件项目所属物业组织（翠湖物业）。
+        Long propertyOrg = jdbc.query("SELECT org_id FROM project WHERE id = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, projId);
+        if (propertyOrg == null) return;
+        // 物业侧创建人（cuihu_pc 协调员，M4 已种）。
+        Long cuihuPc = jdbc.query("SELECT id FROM account WHERE username = 'cuihu_pc'",
+                rs -> rs.next() ? rs.getLong(1) : null);
+        if (cuihuPc == null) return;
+
+        // 1) evidence 2 条形成哈希链（按 id 升序前驱链接，派生哈希实时计算）。
+        //    幂等：本案已有任一存证则整体跳过。
+        Integer evidExists = jdbc.queryForObject(
+                "SELECT count(*) FROM evidence WHERE case_id = ?", Integer.class, caseS3Id);
+        if (evidExists != null && evidExists == 0) {
+            // 第 1 条：录音场景，ref_ids=[recId]，已出证。
+            String ref1 = recId != null ? "[" + recId + "]" : "[]";
+            jdbc.update(
+                    "INSERT INTO evidence(org_id, case_id, scene, ref_ids, status, cert_no, cert_url, issued_at, created_by) "
+                            + "VALUES (?, ?, 'RECORDING', ?::jsonb, 'ISSUED', ?, ?, now(), ?)",
+                    propertyOrg, caseS3Id, ref1,
+                    "YZ-EVID-" + caseS3Id + "-1",
+                    "https://example.com/cert-" + caseS3Id + "-1.pdf",
+                    cuihuPc);
+            // 第 2 条：送达场景，已出证（供 legal_doc.evidence_id 关联）。
+            jdbc.update(
+                    "INSERT INTO evidence(org_id, case_id, scene, status, cert_no, cert_url, issued_at, created_by) "
+                            + "VALUES (?, ?, 'DELIVERY', 'ISSUED', ?, ?, now(), ?)",
+                    propertyOrg, caseS3Id,
+                    "YZ-EVID-" + caseS3Id + "-2",
+                    "https://example.com/cert-" + caseS3Id + "-2.pdf",
+                    cuihuPc);
+        }
+
+        // 2) legal_doc 1 条（律师函·已签收，关联第 2 条 DELIVERY 存证）。
+        //    幂等：本案已有任一法律文书则跳过。
+        Integer ldExists = jdbc.queryForObject(
+                "SELECT count(*) FROM legal_doc WHERE case_id = ?", Integer.class, caseS3Id);
+        if (ldExists != null && ldExists == 0) {
+            Long evid2 = jdbc.query(
+                    "SELECT id FROM evidence WHERE case_id = ? AND scene = 'DELIVERY' ORDER BY id LIMIT 1",
+                    rs -> rs.next() ? rs.getLong(1) : null, caseS3Id);
+            jdbc.update(
+                    "INSERT INTO legal_doc(case_id, type, status, pdf_url, delivered_at, signed_photo_url, evidence_id, created_by) "
+                            + "VALUES (?, 'LAWYER_LETTER', 'SIGNED', ?, now() - interval '1 day', ?, ?, ?)",
+                    caseS3Id,
+                    "https://example.com/legal-" + caseS3Id + ".pdf",
+                    "https://example.com/sign-" + caseS3Id + ".jpg",
+                    evid2, cuihuPc);
+        }
+    }
+
+    // ── M7 业主缴费视图字段补种（私海案件 M3-S3-01）──────────────────────────────
+    //
+    // M7 缴费链接复用 M4 已种 pay_link（token='demo-paylink-{caseS3Id}'，ACTIVE，amount_cents=260000，
+    // channel=WECHAT_COPY），无需新种——验证 GET /pay/demo-paylink-{caseS3Id} 返 200。
+    // 此处仅补使 OwnerBill 字段非空：
+    //   case.reduce_after_cents=234000（due 260000 − 减免 26000）、arrearags_periods=["2025-01","2025-02"]；
+    //   project.pay_info（收款渠道 JSON {wechatQr,bankAccount}）若 V900 未种则补。
+    // 幂等：仅在字段为 NULL/空 时 UPDATE。
+
+    /**
+     * @param caseS3Id 私海案件 id（M3-S3-01）
+     * @param projId   案件所属项目 id（翠湖一期）
+     */
+    private void seedM7Bill(Long caseS3Id, Long projId) {
+        // 减免后应收（due 260000 − 减免 26000 = 234000）。幂等：仅当 NULL 时写。
+        jdbc.update(
+                "UPDATE \"case\" SET reduce_after_cents = 234000 WHERE id = ? AND reduce_after_cents IS NULL",
+                caseS3Id);
+        // 欠费周期（arrearags_periods 默认 '[]'，空时补两期）。
+        jdbc.update(
+                "UPDATE \"case\" SET arrearags_periods = '[\"2025-01\",\"2025-02\"]'::jsonb "
+                        + "WHERE id = ? AND (arrearags_periods IS NULL OR arrearags_periods = '[]'::jsonb)",
+                caseS3Id);
+        // 项目收款渠道 JSON（pay_info TEXT 存 JSON 串）。幂等：仅当 NULL/空 时写。
+        jdbc.update(
+                "UPDATE project SET pay_info = ? "
+                        + "WHERE id = ? AND (pay_info IS NULL OR pay_info = '')",
+                "{\"wechatQr\":\"https://example.com/wechat-qr.png\","
+                        + "\"bankAccount\":\"6222 0000 0000 0000（翠湖物业·演示）\"}",
+                projId);
     }
 
     // ── M5 质检/风控种子（私海案件 M3-S3-01 的录音挂风险，供组织侧读/处置/复核 + 平台监管视图）──
