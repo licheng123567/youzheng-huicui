@@ -185,6 +185,10 @@ check('GET /sms-records(SA range)', (await getJson('/sms-records', sa)).status =
 // 批次导入(PL own-org, batch.import)
 const imp = await post('/batches/import', sa, { projectId: '1', commInRate: 0.3, rows: [{ acctNo: 'IMP-001', ownerName: '导入业主', phone: '13900002222', room: '9-901', dueCents: 500000, arrearPeriod: '2025-01' }] })
 check('批次导入 → 2xx(创建批次+案件)', [200, 201].includes(imp.status), 'HTTP ' + imp.status)
+const impBatchId = imp.body?.id || imp.body?.batchId
+if (impBatchId) {
+  check('SA 作废导入批次 → 2xx(留痕)', [200, 201, 204].includes((await post(`/batches/${impBatchId}/void`, sa, { reason: 'E2E 作废' })).status))
+}
 
 console.log(fail === 0 ? '\n🎉 全 117 端点·全模块端到端全过 — 契约优先全链路贯通' : `\n⚠ ${fail} 项失败`)
 process.exit(fail === 0 ? 0 : 1)
