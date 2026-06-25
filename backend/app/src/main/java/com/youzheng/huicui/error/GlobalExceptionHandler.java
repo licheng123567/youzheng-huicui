@@ -20,7 +20,12 @@ public class GlobalExceptionHandler {
 
     private ResponseEntity<ApiError> build(BizError e, String message, List<Map<String, Object>> details) {
         String traceId = MDC.get("traceId");
-        return ResponseEntity.status(e.httpStatus).body(new ApiError(e.code, message, traceId, details));
+        return ResponseEntity.status(e.httpStatus).body(new ApiError(e.code, sanitize(message), traceId, details));
+    }
+
+    /** 净化错误消息：剥离未配对代理与控制字符——避免回显未净化的用户输入(如非法 unicode 路径 id)产出非法 JSON。 */
+    private static String sanitize(String s) {
+        return s == null ? null : s.replaceAll("[\\x00-\\x1F\\x7F\\uD800-\\uDFFF]", "");
     }
 
     @ExceptionHandler(ApiException.class)

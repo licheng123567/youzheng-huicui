@@ -7,6 +7,11 @@ server:
 spring:
   jackson:
     default-property-inclusion: non_null   # 省略 null 字段：契约多数字段非 nullable，可选字段缺省即合规（统一出口）
+  web:
+    resources:
+      add-mappings: false                  # 无静态资源，404 走 /error → JsonErrorController（JSON 而非 HTML）
+  mvc:
+    throw-exception-if-no-handler-found: true
   datasource:
     url: jdbc:postgresql://localhost:5455/huicui   # 本机已有 homebrew postgres 占 5432，容器映射到 5455
     username: postgres

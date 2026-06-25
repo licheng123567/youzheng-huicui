@@ -8,7 +8,13 @@ public enum BizError {
     STATE_409(409, "STATE_409"),
     VALIDATION_422(422, "VALIDATION_422"),
     BIZ_WRONG_SETTLE_SIDE(403, "BIZ_WRONG_SETTLE_SIDE"),
-    BIZ_NO_VOUCHER(422, "BIZ_NO_VOUCHER");
+    BIZ_NO_VOUCHER(422, "BIZ_NO_VOUCHER"),
+    // ── M3 派单/抢单状态机 ──
+    BIZ_ALREADY_CLAIMED(409, "BIZ_ALREADY_CLAIMED"),     // 抢单并发：已被他人占用
+    BIZ_HOLD_CAP(409, "BIZ_HOLD_CAP"),                   // 催收员私海持有上限 CFG-HOLDCAP
+    BIZ_OPEN_RATE_REQUIRED(409, "BIZ_OPEN_RATE_REQUIRED"), // 开放抢单前批次 open_rate 未设 BR-M9-18
+    BIZ_CAP_EXCEEDED(409, "BIZ_CAP_EXCEEDED"),           // 服务商持有余量不足 BR-M3-23(CFG-HOLDCAP)
+    BIZ_PAYOUT_INVERT(422, "BIZ_PAYOUT_INVERT");         // 防倒挂：付佣比例 > 收佣比例
 
     public final int httpStatus;
     public final String code;

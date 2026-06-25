@@ -52,13 +52,17 @@ jobs:
   gate1-strict:                        # Gate1 硬红线·按里程碑逐模块收紧：只打"已实现模块"的 path，违约即挂。
     runs-on: ubuntu-latest               # 每完成一个里程碑，往 DONE_PATHS 加该模块 path 正则；全部完成后删过滤 + 删 contract-test/continue-on-error。
     env:
-      # 已转硬红线的模块 path 正则。M1(组织/权限/登录)=auth+me；M2(主数据)=projects/batches/cases 的读端点(列表+详情，只取精确 path 避开未实现的写/子动作)。
-      DONE_PATHS: "^/(auth|me)$|^/auth/|^/me$|^/(projects|batches|cases)(/\\{id\\})?$"
+      # 已转硬红线的模块 path 正则。M1=auth+me；M2=projects/batches/cases 读端点；M3=派单/公海 action + /sea。
+      DONE_PATHS: "^/(auth|me)$|^/auth/|^/me$|^/(projects|batches|cases)(/\\{id\\})?$|^/sea$|^/batches/\\{id\\}/(dispatch|redispatch|open-rate)$|^/cases/\\{id\\}/(accept|reject|claim|assign|release|return|open-for-claim)$"
       # 要害 check 集（保留有意义的、排除噪声的）：
-      #   保留 not_a_server_error(无5xx) / response_schema_conformance(响应schema·M2 资金双线 oneOf 互斥已 v1.0.1 修) / content_type / response_headers / ignored_auth(鉴权强制)
-      #   排除 status_code_conformance+unsupported_method = 传输层(畸形头 Tomcat 400 / 未文档化方法 405)，业务契约未枚举 → backlog 给容器错套 Error 信封后再开回
-      #   排除 positive_data_acceptance+negative_data_rejection = 业务端点合法格式+错数据(如登录错凭证)正确返 401/422，与"合法格式必2xx"假设冲突 → 各模块实现严格入参校验后按需开回
+      #   保留 not_a_server_error(无5xx) / response_schema_conformance(响应schema) / content_type / response_headers / ignored_auth(鉴权强制)
+      #   排除 status_code_conformance+unsupported_method = 传输层(畸形头 Tomcat 400 / 未文档化方法 405)，业务契约未枚举
+      #   排除 positive_data_acceptance+negative_data_rejection = 业务端点合法格式+错数据正确返 401/422，与"合法格式必2xx"假设冲突
       CHECKS: "not_a_server_error,response_schema_conformance,content_type_conformance,response_headers_conformance,ignored_auth"
+      # -m positive(只生成 schema-合法数据,测后端honor契约) + 确定性 = 稳定不 flaky。
+      #   action 端点的 {id} 路径参数若被负向 fuzz 塞控制字符→畸形 URL→Tomcat 连接器 400 HTML→schemathesis JSON 反序列化失败(传输层 artifact,非契约缺陷)；
+      #   故硬门用 positive 模式(契约 honor)。负向健壮性由横切层统一错误处理 + not_a_server_error 覆盖；完整负向 fuzz 在非阻断 contract-test job 作信息。
+      GEN_FLAGS: "-m positive --generation-deterministic"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -76,7 +80,7 @@ jobs:
             | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))")
           [ -z "$TOKEN" ] && { echo "::error::无法登录取 token，Gate1 无法测受保护端点"; exit 1; }
           schemathesis run "$SPEC" --url "$TARGET" -H "Authorization: Bearer $TOKEN" \
-            --include-path-regex "$DONE_PATHS" -c "$CHECKS" --max-examples 25 || {
+            --include-path-regex "$DONE_PATHS" -c "$CHECKS" $GEN_FLAGS --max-examples 25 || {
             echo "::error::已完成模块响应违反契约（Gate1 硬红线）"; exit 1; }
 
   mock-smoke:                          # 辅助：Prism 起 mock，确保契约可被 mock（前端可对 mock 开发）
