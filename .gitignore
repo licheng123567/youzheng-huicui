@@ -18,3 +18,4 @@ dist/
 # 临时
 _verify.sh
 /tmp/
+.hypothesis/
