@@ -24,13 +24,21 @@ async function load() {
 }
 
 // 通用 action：POST /cases/{id}/{verb}，成功刷新，失败按 Error 信封提示(409 已被抢 / 403 无权限)。
-async function act(id: string, path: any, verb: string) {
+async function act(id: string, path: any, verb: string, body?: any) {
   acting.value = id + verb
-  const { error } = await api.POST(path, { params: { path: { id } } } as any)
+  const { error } = await api.POST(path, { params: { path: { id } }, ...(body ? { body } : {}) } as any)
   acting.value = ''
   if (error) { ElMessage.error(`${verb}失败：${(error as any)?.message ?? '冲突或无权限'}`); return }
   ElMessage.success(`${verb}成功`)
   load()
+}
+// VL 指派：把本商承接的案件分给某催收员（POST /cases/{id}/assign）
+const adlg = ref(false); const aForm = ref<any>({ id: '', collectorId: '' })
+function openAssign(id: string) { aForm.value = { id, collectorId: '' }; adlg.value = true }
+async function submitAssign() {
+  if (!aForm.value.collectorId) { ElMessage.warning('请填催收员 id'); return }
+  await act(aForm.value.id, '/cases/{id}/assign', '指派', { collectorId: String(aForm.value.collectorId) })
+  adlg.value = false
 }
 onMounted(load)
 </script>
@@ -68,9 +76,16 @@ onMounted(load)
           <!-- SA：开放抢单（平台公海案件→开放池） -->
           <el-button v-if="auth.has('case.dispatch') && row.pool==='PLATFORM_SEA'" size="small"
             :loading="acting===row.id+'开放抢单'" @click="act(row.id,'/cases/{id}/open-for-claim','开放抢单')">开放抢单</el-button>
+          <!-- VL：指派给催收员（本商承接的公海案件） -->
+          <el-button v-if="auth.has('case.assign') && row.pool==='PROVIDER_SEA'" size="small"
+            @click="openAssign(row.id)">指派</el-button>
         </template>
       </el-table-column>
     </el-table>
+    <el-dialog v-model="adlg" title="指派催收员（POST /cases/{id}/assign）" width="400px">
+      <el-form label-width="90px"><el-form-item label="催收员 id"><el-input v-model="aForm.collectorId" placeholder="如 5(jx_co1)" /></el-form-item></el-form>
+      <template #footer><el-button @click="adlg=false">取消</el-button><el-button type="primary" @click="submitAssign">指派</el-button></template>
+    </el-dialog>
     <el-alert type="info" :closable="false" style="margin-top:12px"
       title="按角色登录看不同动作：CO(jx_co1) 见抢单 / VL(jx_vl) 见承接拒接 / SA(admin) 见开放抢单。服务端 x-permission+状态机双重校验。" />
   </el-card>

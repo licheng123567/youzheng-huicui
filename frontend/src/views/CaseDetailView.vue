@@ -128,6 +128,15 @@ async function deliverLegal(doc: any) {
   if (error) { ElMessage.error('送达登记失败：' + ((error as any)?.message ?? '')); return }
   ElMessage.success('已登记送达'); loadAll()
 }
+// 生命周期：释放(CO)/退回(VL)——带原因，状态机 CAS
+async function lifecycle(verb: string, path: any) {
+  try {
+    const { value: reason } = await ElMessageBox.prompt(verb + '原因', verb + '案件', { inputValidator: (v) => !!v || '原因必填' })
+    const { error } = await api.POST(path, { params: { path: { id } }, body: { reason } as any })
+    if (error) { ElMessage.error(`${verb}失败：${(error as any)?.message ?? ''}`); return }
+    ElMessage.success(`已${verb}`); loadAll()
+  } catch { /* 取消 */ }
+}
 // AI 采纳联动（校验动作权限）
 const ADOPT: any = { PROMISE: ['promise', '登记承诺', 'case.promise'], TICKET: ['ticket', '转工单', 'case.ticket'], PAYLINK: ['paylink', '发缴费链接', 'case.paylink'], FOLLOWUP: ['follow', '写跟进', 'case.follow'] }
 function adopt(card: any) {
@@ -149,6 +158,8 @@ onMounted(loadAll)
       <el-button v-if="auth.has('case.repay.mark')" size="small" type="success" @click="openAct('repay','登记还款')">登记还款</el-button>
       <el-button v-if="auth.has('legal.create')" size="small" @click="openAct('legal','申请法务文书')">申请法务</el-button>
       <el-button v-if="auth.has('evidence.create')" size="small" @click="openAct('evidence','发起存证')">发起存证</el-button>
+      <el-button v-if="auth.has('case.release')" size="small" @click="lifecycle('释放','/cases/{id}/release')">释放</el-button>
+      <el-button v-if="auth.has('case.return')" size="small" @click="lifecycle('退回','/cases/{id}/return')">退回</el-button>
       <el-button v-if="auth.has('case.close')" size="small" type="danger" plain @click="openAct('close','结案')">结案</el-button>
     </el-card>
 
@@ -216,6 +227,15 @@ onMounted(loadAll)
           <el-table-column label="状态"><template #default="{row}"><el-tag size="small" :type="row.reversed?'info':(row.settled?'success':'warning')">{{ row.reversed?'已冲销':(row.settled?'已结':'未结') }}</el-tag></template></el-table-column>
           <el-table-column label="操作" width="90"><template #default="{row}"><el-button v-if="!row.reversed && auth.has('case.repay.mark')" size="small" text type="danger" @click="reverseRepay(row)">冲销</el-button></template></el-table-column>
         </el-table>
+      </el-tab-pane>
+
+      <el-tab-pane label="事件时间线">
+        <el-timeline>
+          <el-timeline-item v-for="ev in d.timeline ?? []" :key="ev.id" :timestamp="ev.createdAt" placement="top">
+            <el-tag size="small">{{ ev.type }}</el-tag> {{ ev.content }} <span style="color:#909399">· {{ ev.actor }}</span>
+          </el-timeline-item>
+          <el-empty v-if="!(d.timeline?.length)" description="暂无事件" :image-size="50" />
+        </el-timeline>
       </el-tab-pane>
 
       <el-tab-pane label="法务 / 存证">

@@ -80,6 +80,13 @@ if (s0 && provOrg) {
     method: 'POST', headers: { Authorization: `Bearer ${sa}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'WHOLE' }),
   })
   check('SA 派单缺 providerId → 422（校验生效）', r2.status === 422)
+  // P3: 开放费率 open-rate（S0 已派单后设开放费率）
+  check('SA 设开放抢单费率 open-rate → 2xx', [200, 201, 204].includes((await fetch(`${B}/batches/${s0.id}/open-rate`, { method: 'PUT', headers: { Authorization: `Bearer ${sa}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ openRate: 0.18 }) })).status))
+}
+// P3: CO 释放刚抢的案件(release)；assign 端点已单独验证({"ok":true}),smoke 因抢单消费同案不再测
+if (claimable) {
+  const rel = await post(`/cases/${claimable.id}/release`, co, { reason: 'E2E 释放' })
+  check('CO 释放已抢案件(release) → 2xx', [200, 201, 204].includes(rel.status), 'HTTP ' + rel.status)
 }
 
 // M4 催收作业（CO 在持有案件 S3 上）
