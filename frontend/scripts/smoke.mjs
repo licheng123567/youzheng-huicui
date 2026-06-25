@@ -129,6 +129,23 @@ const co2 = await getJson('/me/settlement', co)
 check('CO 我的结算 GET /me/settlement → 200', co2.status === 200)
 const recon = await getJson('/recon/rollup?side=OUT&page=1&size=10', vl)
 check('VL 对账汇总 GET /recon/rollup?side=OUT → 200', recon.status === 200)
+// P1 生成链：找有未结回款明细的批次 → 勾选生成付佣单 → 发送 → 详情
+const b2 = (bsSa.body?.items || []).find((b) => b.code === 'B-CH-2026-01')
+if (b2) {
+  const rl = await getJson(`/batches/${b2.id}/repay-lines?page=1&size=100`, sa)
+  const freeLines = (rl.body?.items || []).filter((l) => !l.settled && !l.paymentRequestId)
+  check('GET /batches/{id}/repay-lines 有未结明细可组单', freeLines.length >= 1, freeLines.length + ' 笔')
+  if (freeLines.length) {
+    const gen = await post('/payment-requests', vl, { side: 'OUT', batchId: String(b2.id), lineIds: freeLines.slice(0, 1).map((l) => String(l.id)) })
+    check('VL 勾选明细生成付佣单 → 2xx', [200, 201].includes(gen.status), 'HTTP ' + gen.status)
+    const newPrId = gen.body?.id
+    if (newPrId) {
+      check('VL 发送付佣单 → 2xx', [200, 201, 204].includes((await post(`/payment-requests/${newPrId}/send`, vl, {})).status))
+      check('GET 付佣单详情(含 lines) → 200', (await getJson(`/payment-requests/${newPrId}`, vl)).body?.code != null)
+    }
+  }
+}
+check('VL 内催佣金名册 GET /co-commissions → 200', (await getJson('/co-commissions?page=1&size=20', vl)).status === 200)
 
 // M5 质检
 const risks = await getJson('/risks?page=1&size=30', sa)
