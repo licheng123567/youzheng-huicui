@@ -82,5 +82,29 @@ if (s0 && provOrg) {
   check('SA 派单缺 providerId → 422（校验生效）', r2.status === 422)
 }
 
-console.log(fail === 0 ? '\n🎉 M3 纵向切片端到端全过' : `\n⚠ ${fail} 项失败`)
+// M4 催收作业（CO 在持有案件 S3 上）
+async function post(path, token, body) {
+  const r = await fetch(`${B}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+  return { status: r.status, body: r.ok ? await r.json().catch(() => ({})) : null }
+}
+const allCases = await getJson('/cases?page=1&size=50', sa)
+const s3 = (allCases.body?.items || []).find((c) => c.acctNo === 'M3-S3-01')
+if (s3) {
+  const lat = await getJson(`/cases/${s3.id}/recordings/latest`, co)
+  check('CO 获取最新通话录音(hasRecording)', lat.body?.hasRecording === true, '状态 ' + lat.body?.recording?.status)
+  const recId = lat.body?.recording?.id
+  if (recId) {
+    const rev = await getJson(`/recordings/${recId}/ai-review`, co)
+    check('GET AI 复盘(summary+suggestions)', !!rev.body?.summary && Array.isArray(rev.body?.suggestions), (rev.body?.suggestions?.length ?? 0) + ' 条建议')
+  }
+  check('CO 写跟进 → 201', (await post(`/cases/${s3.id}/follow-ups`, co, { content: 'E2E 跟进', method: 'CALL' })).status === 201)
+  check('CO 登记承诺 → 201', (await post(`/cases/${s3.id}/promises`, co, { date: '2026-08-01', amountCents: 100000 })).status === 201)
+  check('CO 发缴费链接 → 2xx', [200, 201].includes((await post(`/cases/${s3.id}/pay-links`, co, { channel: 'SMS' })).status))
+  const pr = await getJson(`/cases/${s3.id}/promises?page=1&size=20`, co)
+  check('GET 承诺列表增长(≥2)', (pr.body?.items?.length ?? 0) >= 2, '共 ' + pr.body?.meta?.total)
+} else {
+  check('找到 S3 案件', false)
+}
+
+console.log(fail === 0 ? '\n🎉 M4 催收作业端到端全过' : `\n⚠ ${fail} 项失败`)
 process.exit(fail === 0 ? 0 : 1)
