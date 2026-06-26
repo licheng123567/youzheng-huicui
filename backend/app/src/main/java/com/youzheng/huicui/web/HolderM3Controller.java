@@ -49,7 +49,7 @@ public class HolderM3Controller {
 
     // CFG-TC / CFG-T2 缺省（settings TIMERS 未配时兜底；与种子 7d 一致量级）。
     private static final long DEFAULT_TC_SECONDS = 7L * 24 * 3600;   // 催收员无跟进释放时限
-    private static final long DEFAULT_T2_SECONDS = 3L * 24 * 3600;   // 服务商公海滞留时限
+    private static final long DEFAULT_T2_SECONDS = 7L * 24 * 3600;   // 服务商公海滞留时限（CFG-T2 定稿 7 天）
 
     // ── [1] assignCase  S2(PROVIDER_SEA,PROVIDER_SEA) → S3(IN_PROGRESS,PRIVATE) ──
     @PostMapping("/cases/{id}/assign")

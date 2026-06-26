@@ -74,6 +74,8 @@ public class DevSeeder implements CommandLineRunner {
 
         // 4) ROTATION 配置（CFG-HOLDCAP）：holdCap=50
         ensureRotationSettings(50);
+        // 4b) TIMERS 配置（CFG-T1/T2/TC/MAXCYCLE + 预警提前量·已定稿值）
+        ensureTimersSettings();
 
         // 5) 批次 + 案件（M2 读视图演示 + M3 五稳态联调；schemathesis 各前置态 200）
         Long proj = jdbc.query("SELECT id FROM project WHERE name = '翠湖一期'", rs -> rs.next() ? rs.getLong(1) : null);
@@ -854,6 +856,18 @@ public class DevSeeder implements CommandLineRunner {
     }
 
     /** ROTATION 配置（CFG-HOLDCAP）：rotation jsonb 含 holdCap。updated_by 取任一 SA 账号。 */
+    /** TIMERS 配置（已定稿）：T1=48h / T2=7天 / TC=7天 / MAXCYCLE=90天 + 预警提前量 6h/24h/24h/7天。幂等。 */
+    private void ensureTimersSettings() {
+        Integer exists = jdbc.queryForObject("SELECT count(*) FROM settings WHERE domain = 'TIMERS'", Integer.class);
+        if (exists != null && exists > 0) return;
+        Long sa = jdbc.query("SELECT id FROM account WHERE role_template = 'SA' ORDER BY id LIMIT 1",
+                rs -> rs.next() ? rs.getLong(1) : null);
+        if (sa == null) return;
+        String timers = "{\"t1Seconds\":172800,\"t2Seconds\":604800,\"tcSeconds\":604800,\"maxCycleSeconds\":7776000,"
+                + "\"t1WarnSeconds\":21600,\"t2WarnSeconds\":86400,\"tcWarnSeconds\":86400,\"maxCycleWarnSeconds\":604800}";
+        jdbc.update("INSERT INTO settings(domain, version, timers, updated_by) VALUES ('TIMERS', 1, ?::jsonb, ?)", timers, sa);
+    }
+
     private void ensureRotationSettings(int holdCap) {
         Integer exists = jdbc.queryForObject(
                 "SELECT count(*) FROM settings WHERE domain = 'ROTATION'", Integer.class);
