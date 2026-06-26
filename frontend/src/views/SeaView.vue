@@ -61,6 +61,77 @@ async function submitAssign() {
   await act(aForm.value.id, '/cases/{id}/assign', '指派', { collectorId: String(aForm.value.collectorId) })
   adlg.value = false
 }
+// SA/SE 单案再派(POST /cases/{id}/redispatch · US-M3-02)：平台公海案件改派目标服务商 org。
+// 门控 case.dispatch；409 BIZ_REDISPATCH_GUARD=不可再派回原退回服务商/已停用。
+const rdlg = ref(false)
+const redispatchForm = ref<{ id: string; providerId: string | undefined }>({ id: '', providerId: undefined })
+const providers = ref<any[]>([]) // 目标可选服务商 org（type=PROVIDER）
+async function loadProviders() {
+  const { data } = await api.GET('/orgs', { params: { query: { page: 1, size: 50 } } as any })
+  providers.value = ((data as any)?.items ?? []).filter((o: any) => o.type === 'PROVIDER')
+}
+function openRedispatch(id: string) {
+  redispatchForm.value = { id, providerId: undefined }
+  rdlg.value = true
+  if (!providers.value.length) loadProviders()
+}
+async function submitRedispatch() {
+  if (!redispatchForm.value.providerId) { ElMessage.warning('请选择目标服务商'); return }
+  acting.value = redispatchForm.value.id + '再派'
+  const { error } = await api.POST('/cases/{id}/redispatch', {
+    params: { path: { id: redispatchForm.value.id } },
+    body: { providerId: String(redispatchForm.value.providerId) },
+  } as any)
+  acting.value = ''
+  if (error) {
+    const e = error as any
+    ElMessage.error(e?.code === 'BIZ_REDISPATCH_GUARD' ? '不可再派回原退回服务商（或目标已停用）' : `再派失败：${e?.message ?? '冲突或无权限'}`)
+    return
+  }
+  ElMessage.success('再派成功'); rdlg.value = false; load()
+}
+
+// SA/SE/VL 批量分配(POST /cases/assign-batch · BR-M3-25)：多选案件→指派给某催收员，evenSplit 可均摊。
+// 门控 case.assign；返回 {assigned[],rejected[]}（rejected 含超额/不可分原因）。
+const selectedCaseIds = ref<string[]>([])
+const bdlg = ref(false)
+const batchForm = ref<{ collectorId: string | undefined; evenSplit: boolean }>({ collectorId: undefined, evenSplit: false })
+const batchResult = ref<{ assigned: string[]; rejected: { caseId?: string; reason?: string }[] } | null>(null)
+function onSelectionChange(rows: any[]) { selectedCaseIds.value = rows.map((r) => r.id) }
+function openBatchAssign() {
+  if (!selectedCaseIds.value.length) { ElMessage.warning('请先勾选案件'); return }
+  batchForm.value = { collectorId: undefined, evenSplit: false }
+  batchResult.value = null
+  bdlg.value = true
+}
+async function submitBatchAssign() {
+  if (!batchForm.value.collectorId) { ElMessage.warning('请填催收员 id'); return }
+  acting.value = 'batch'
+  const { data, error } = await api.POST('/cases/assign-batch', {
+    body: { caseIds: selectedCaseIds.value, collectorId: String(batchForm.value.collectorId), evenSplit: batchForm.value.evenSplit },
+  } as any)
+  acting.value = ''
+  if (error) { ElMessage.error(`批量分配失败：${(error as any)?.message ?? '无权限'}`); return }
+  batchResult.value = { assigned: (data as any)?.assigned ?? [], rejected: (data as any)?.rejected ?? [] }
+  ElMessage.success(`已分配 ${batchResult.value.assigned.length} 件，被拒 ${batchResult.value.rejected.length} 件`)
+  load()
+}
+
+// VL 释放记录(GET /providers/{id}/release-records · BR-M3-27)：本商释放历史（own-org 可见）。
+const reldlg = ref(false)
+const releaseRecords = ref<any[]>([])
+const releaseLoading = ref(false)
+async function openReleaseRecords() {
+  reldlg.value = true
+  releaseRecords.value = []
+  const orgId = auth.me?.org?.id
+  if (!orgId) return
+  releaseLoading.value = true
+  const { data } = await api.GET('/providers/{id}/release-records', { params: { path: { id: String(orgId) }, query: { page: 1, size: 50 } } } as any)
+  releaseLoading.value = false
+  releaseRecords.value = (data as any)?.items ?? []
+}
+
 // 公海事件日志(GET /sea/events · BR-M3-22 · 轮询)
 const events = ref<any[]>([])
 const EV_LABEL: Record<string, string> = { ENTER: '入池', CLAIM: '抢单', RELEASE: '释放', RETURN: '退回', REDISPATCH: '再派', OPEN: '开放', ASSIGN: '指派' }
@@ -78,7 +149,14 @@ onMounted(() => { load(); loadEvents() })
       <el-radio-button label="provider">服务商公海</el-radio-button>
       <el-radio-button label="open">开放抢单池</el-radio-button>
     </el-radio-group>
-    <el-table v-loading="loading" :data="items" border>
+    <!-- 工具栏：批量分配(case.assign) / 释放记录(own-org · VL) -->
+    <div style="margin-bottom:12px;display:flex;gap:8px">
+      <el-button v-if="auth.has('case.assign')" size="small" type="primary" plain :disabled="!selectedCaseIds.length"
+        @click="openBatchAssign">批量分配（已选 {{ selectedCaseIds.length }}）</el-button>
+      <el-button v-if="auth.has('case.assign')" size="small" plain @click="openReleaseRecords">释放记录</el-button>
+    </div>
+    <el-table v-loading="loading" :data="items" border @selection-change="onSelectionChange">
+      <el-table-column v-if="auth.has('case.assign')" type="selection" width="44" />
       <el-table-column prop="ownerName" label="业主" width="90" />
       <el-table-column prop="room" label="房号" width="80" />
       <el-table-column prop="projectName" label="项目" />
@@ -108,6 +186,9 @@ onMounted(() => { load(); loadEvents() })
           <!-- SA：开放抢单（平台公海案件→开放池） -->
           <el-button v-if="auth.has('case.dispatch') && row.pool==='PLATFORM_SEA'" size="small"
             :loading="acting===row.id+'开放抢单'" @click="act(row.id,'/cases/{id}/open-for-claim','开放抢单')">开放抢单</el-button>
+          <!-- SA/SE：单案再派（平台公海案件→改派目标服务商 US-M3-02） -->
+          <el-button v-if="auth.has('case.dispatch') && row.pool==='PLATFORM_SEA'" size="small"
+            :loading="acting===row.id+'再派'" @click="openRedispatch(row.id)">再派</el-button>
           <!-- VL：指派给催收员（本商承接的公海案件） -->
           <el-button v-if="auth.has('case.assign') && row.pool==='PROVIDER_SEA'" size="small"
             @click="openAssign(row.id)">指派</el-button>
@@ -136,6 +217,50 @@ onMounted(() => { load(); loadEvents() })
       <el-form label-width="90px" style="margin-top:10px"><el-form-item label="催收员 id"><el-input v-model="aForm.collectorId" placeholder="点上表行或手填" /></el-form-item></el-form>
       <template #footer><el-button @click="adlg=false">取消</el-button><el-button type="primary" @click="submitAssign">指派</el-button></template>
     </el-dialog>
+
+    <!-- SA/SE 单案再派（POST /cases/{id}/redispatch · US-M3-02 · 门控 case.dispatch） -->
+    <el-dialog v-model="rdlg" title="单案再派（POST /cases/{id}/redispatch · 改派目标服务商）" width="440px">
+      <el-alert type="info" :closable="false" style="margin-bottom:10px"
+        title="将平台公海案件改派至目标服务商；不可再派回原退回服务商（409 BIZ_REDISPATCH_GUARD）。" />
+      <el-form label-width="90px">
+        <el-form-item label="目标服务商">
+          <el-select v-model="redispatchForm.providerId" placeholder="选择服务商 org" style="width:100%">
+            <el-option v-for="p in providers" :key="p.id" :label="p.name" :value="p.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer><el-button @click="rdlg=false">取消</el-button><el-button type="primary" :loading="acting===redispatchForm.id+'再派'" @click="submitRedispatch">再派</el-button></template>
+    </el-dialog>
+
+    <!-- 批量分配（POST /cases/assign-batch · BR-M3-25 · 门控 case.assign） -->
+    <el-dialog v-model="bdlg" title="批量分配（POST /cases/assign-batch · 不整批回滚）" width="520px">
+      <div style="color:#909399;font-size:12px;margin-bottom:8px">已选 {{ selectedCaseIds.length }} 件，指派给同一催收员；超持有上限的将被拒（BR-M3-06）。</div>
+      <el-form label-width="100px">
+        <el-form-item label="催收员 id"><el-input v-model="batchForm.collectorId" placeholder="催收员 id" /></el-form-item>
+        <el-form-item label="按余量均摊"><el-switch v-model="batchForm.evenSplit" /><span style="color:#909399;font-size:12px;margin-left:8px">evenSplit（BR-M3-25）</span></el-form-item>
+      </el-form>
+      <template v-if="batchResult">
+        <el-divider content-position="left">分配结果</el-divider>
+        <el-tag type="success" size="small">成功 {{ batchResult.assigned.length }}</el-tag>
+        <el-tag type="danger" size="small" style="margin-left:8px">被拒 {{ batchResult.rejected.length }}</el-tag>
+        <el-table v-if="batchResult.rejected.length" :data="batchResult.rejected" border size="small" style="margin-top:8px">
+          <el-table-column prop="caseId" label="案件" width="160" />
+          <el-table-column prop="reason" label="拒绝原因" />
+        </el-table>
+      </template>
+      <template #footer><el-button @click="bdlg=false">关闭</el-button><el-button type="primary" :loading="acting==='batch'" @click="submitBatchAssign">分配</el-button></template>
+    </el-dialog>
+
+    <!-- 释放记录（GET /providers/{id}/release-records · BR-M3-27 · own-org 可见） -->
+    <el-drawer v-model="reldlg" title="本商释放记录（GET /providers/{id}/release-records）" size="520px">
+      <el-table v-loading="releaseLoading" :data="releaseRecords" border size="small">
+        <el-table-column label="类型" width="80"><template #default="{ row }"><el-tag size="small" :type="row.kind==='AUTO'?'warning':'info'">{{ row.kind==='AUTO'?'自动回流':'主动释放' }}</el-tag></template></el-table-column>
+        <el-table-column prop="caseId" label="案件" width="150" />
+        <el-table-column prop="collectorName" label="催收员" width="100" />
+        <el-table-column label="时间"><template #default="{ row }">{{ row.at ? String(row.at).slice(0,16).replace('T',' ') : '—' }}</template></el-table-column>
+      </el-table>
+      <el-empty v-if="!releaseLoading && !releaseRecords.length" description="暂无释放记录" :image-size="60" />
+    </el-drawer>
     <el-alert type="info" :closable="false" style="margin-top:12px"
       title="按角色登录看不同动作：CO(jx_co1) 见抢单 / VL(jx_vl) 见承接拒接 / SA(admin) 见开放抢单。服务端 x-permission+状态机双重校验。" />
   </el-card>

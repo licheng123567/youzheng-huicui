@@ -36,7 +36,19 @@ onMounted(async () => {
     <template v-if="review">
       <el-divider content-position="left">AI 复盘</el-divider>
       <p><b>小结：</b>{{ review.summary }}</p>
-      <p v-if="review.risks?.length"><b>风险：</b><el-tag v-for="r in review.risks" :key="r.desc" type="danger" size="small" style="margin:2px">{{ r.level }} {{ r.desc }}</el-tag></p>
+      <!-- M-02: 说话人分离对话气泡(review.dialogue) -->
+      <template v-if="review.dialogue?.length">
+        <div style="max-height:320px;overflow:auto;background:#f5f7fa;padding:8px;border-radius:4px;margin:6px 0">
+          <div v-for="(turn,ti) in review.dialogue" :key="ti" style="display:flex;margin:4px 0" :style="{ justifyContent: turn.speaker==='AGENT' || turn.speaker==='催收员' ? 'flex-end' : 'flex-start' }">
+            <div :style="{ maxWidth:'72%', background: turn.speaker==='AGENT' || turn.speaker==='催收员' ? '#d9ecff' : '#fff', border:'1px solid #e4e7ed', borderRadius:'6px', padding:'6px 10px' }">
+              <div style="font-size:12px;color:#909399">{{ turn.speaker }}</div>
+              <div style="font-size:13px;white-space:pre-wrap">{{ turn.text }}</div>
+            </div>
+          </div>
+        </div>
+      </template>
+      <!-- M-02: 风险标签追加 segmentTs 片段定位 -->
+      <p v-if="review.risks?.length"><b>风险：</b><el-tag v-for="(r,ri) in review.risks" :key="ri" type="danger" size="small" style="margin:2px">{{ r.level }} {{ r.desc }}<span v-if="r.segmentTs"> @{{ r.segmentTs }}</span></el-tag></p>
       <el-card v-for="s in review.suggestions ?? []" :key="s.id" shadow="never" style="margin:6px 0"><b>{{ s.title }}</b> <el-tag size="small">{{ s.type }}</el-tag><div style="color:#606266;font-size:13px">{{ s.body }}</div></el-card>
     </template>
   </el-card>

@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.security.SecureRandom;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -375,11 +376,17 @@ public class MemberM1Controller {
                 r.name(), r.phone(), r.role(), r.status(), r.isOwner(), manageable);
     }
 
-    /** 停用释放：对该成员持有的私海案件逐件 CAS 转回服务商公海（承诺/待办随案保留 BR-M4-10）。 */
+    /**
+     * 停用释放：对该成员持有的私海案件逐件 CAS 按 origin_pool 释放（承诺/待办随案保留 BR-M4-10）。
+     * 复用 {@link CaseStateService#resolveReleaseTarget}（与 HolderM3.releaseCase / ExpiryService.expireTC 同口径）：
+     *   origin_pool=OPEN_POOL → 回 S4 开放池 + clearCaseProvider（清空案件级归属）+ 清 t2（重置 T2 计时）；
+     *   否则 → 回 S2 服务商公海 + 保留 provider_id（仍属本商）+ 按 CFG-T2 重置 t2_deadline。
+     */
     private int releasePrivateCases(CurrentSubject s, long memberId) {
         List<Long> heldCaseIds = jdbc.queryForList(
                 "SELECT id FROM \"case\" WHERE holder_id = ? AND pool = 'PRIVATE'",
                 Long.class, memberId);
+        long t2 = t2Seconds();
         int released = 0;
         for (Long caseId : heldCaseIds) {
             CaseSnapshot snap = state.lockCase(caseId);
@@ -387,19 +394,42 @@ public class MemberM1Controller {
                     || snap.holderId() == null || snap.holderId() != memberId) {
                 continue;   // 并发已变更，跳过
             }
-            // 回服务商公海（PROVIDER_SEA）：清 holder、source=RELEASE。期望持有人=被停用成员本人。
-            Transition t = new Transition(
-                    snap.status(), snap.pool(), memberId,
-                    CaseStateService.ST_PROVIDER_SEA, CaseStateService.POOL_PROVIDER_SEA,
-                    null, "RELEASE", null, null, null);
+            // 按 origin_pool 判回 S2/S4：期望持有人=被停用成员本人。回 S2 时 resolveReleaseTarget 内置 t2 重置。
+            Transition t = state.resolveReleaseTarget(snap, memberId, Instant.now().plusSeconds(t2));
             int n = state.transition(caseId, t);
             if (n > 0) {
                 released++;
+                // 案件级归属维护：回开放池(S4) → 离开本商私海跨商开放，清 provider_id=NULL；
+                //   回服务商公海(S2) → 仍属本商，保留 provider_id（与手动 release / 自动 TC 同口径）。
+                if (CaseStateService.POOL_OPEN_POOL.equals(t.toPool())) {
+                    state.clearCaseProvider(caseId);
+                }
                 state.audit(s, "case.release", caseId, "成员停用自动释放私海", snap,
                         state.lockCase(caseId));
             }
         }
         return released;
+    }
+
+    // CFG-T2 缺省（settings TIMERS 未配时兜底；与 HolderM3 / ExpiryService 同口径）。
+    private static final long DEFAULT_T2_SECONDS = 7L * 24 * 3600;
+
+    /** CFG-T2：settings TIMERS.t2Seconds，缺省 DEFAULT_T2_SECONDS（读异常不致 5xx，退兜底）。 */
+    private long t2Seconds() {
+        try {
+            Long v = jdbc.query(
+                    "SELECT timers ->> 't2Seconds' AS v FROM settings WHERE domain = 'TIMERS'"
+                            + " ORDER BY version DESC LIMIT 1",
+                    rs -> {
+                        if (!rs.next()) return null;
+                        String r = rs.getString("v");
+                        if (r == null || r.isBlank()) return null;
+                        try { return Long.valueOf(r.trim()); } catch (NumberFormatException e) { return null; }
+                    });
+            return v == null ? DEFAULT_T2_SECONDS : v;
+        } catch (RuntimeException e) {
+            return DEFAULT_T2_SECONDS;
+        }
     }
 
     // ── helpers：权限子集/JSONB/入参 ──────────────────────────────────────────

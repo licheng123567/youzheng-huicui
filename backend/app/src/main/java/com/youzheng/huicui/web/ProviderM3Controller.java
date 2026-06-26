@@ -116,8 +116,9 @@ public class ProviderM3Controller {
         if (n == 0) {
             throw new ApiException(BizError.STATE_409, "案件状态已变更，拒接失败: " + caseId);
         }
-        // 清批次 provider_id 归属（退回平台，等待重派）。
-        jdbc.update("UPDATE batch SET provider_id = NULL, updated_at = now() WHERE id = ?", before.batchId());
+        // 案件级归属清空：回平台公海，case.provider_id=NULL（不动 batch.provider_id，避免单案拒接污染同批）。
+        // before 快照仍保留退回前 providerId（lockCase 读 c.provider_id）→ redispatch 护栏① 经 before_snap->>'providerId' 推导原退回商。
+        caseState.clearCaseProvider(caseId);
 
         CaseSnapshot after = caseState.lockCase(caseId);
         // proxy_for 记本商为「原退回服务商」，供 redispatch 护栏①与频次统计 BR-M3-24。

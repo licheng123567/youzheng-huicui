@@ -26,15 +26,19 @@ const MENU = [
   { path: '/batches', label: '批次' },                                           // H-01: GET /batches x-data-scope:range 无 x-permission → 所有登录态可见列表；导入/派单按钮在 BatchesView 内按 batch.import/case.dispatch 门控
   { path: '/sea', label: '公海', perms: ['case.claim', 'case.dispatch', 'case.assign', 'case.accept'] },
   { path: '/cases', label: '案件' },
-  { path: '/settlement', label: '结算', perms: ['payreq.create', 'payreq.complete', 'cocomm.self.view', 'cocomm.manage'] },
+  { path: '/settlement', label: '结算' },                                         // N-02: GET 结算读端点 x-data-scope:range 无 x-permission → 全登录态可见(物业/服务商/平台各口径服务端裁剪)；生成/完成付佣等写按钮在 SettlementView 内按 payreq.create/payreq.complete 门控
   { path: '/risks', label: '质检', perms: ['qc.dispose', 'qc.review', 'qc.escalate'] },
   { path: '/reports', label: '报表' },                                            // H-02: GET /reports/operation x-data-scope:range 无 x-permission → 全登录态可见(物业/服务商/平台各口径服务端裁剪)；导出按钮在 ReportsView 内按 report.export 门控
-  { path: '/evidence', label: '存证', perms: ['evidence.create'], platform: true },
+  { path: '/evidence', label: '存证' },                                           // H-01: GET /evidence x-data-scope:range 无 x-permission → 全登录态可见(物业/服务商/平台各口径服务端裁剪，PL/PC 可见本范围)；出证/验真等写按钮在 EvidenceView 内按 evidence.create 门控
   { path: '/billing', label: '计费' },   // usage/recharge-log 无 x-permission·range 读(物业/服务商/平台均可看本范围)；充值按钮内部按 billing.recharge 门控
+  { path: '/call-records', label: '通话记录' },                                   // 读端点 x-data-scope:range 无 x-permission → 全登录态可见本范围
+  { path: '/audit-log', label: '审计日志' },                                      // 读端点 x-data-scope:range 无 x-permission → 全登录态可见本范围
   { path: '/settings', label: '设置', platform: true },                          // H-03: GET /settings x-data-scope:platform 无 x-permission → SA/SE 可进只读；编辑按钮在 SettingsView 内按 settings.manage 禁用
   { path: '/members', label: '成员', perms: ['member.manage'] },
 ]
-const menu = computed(() => MENU.filter((m: any) => (!m.perms && !m.platform) || hasAny(m.perms) || (m.platform && isPlatform.value)))
+// platform 标志的菜单项(如 /settings)只对平台(SA/SE)显示；hasAny 仅在声明了 perms 时参与判定
+// (修：原 hasAny(undefined)=true 会让 platform-only 菜单对所有角色泄漏)。
+const menu = computed(() => MENU.filter((m: any) => (!m.perms && !m.platform) || (m.perms && hasAny(m.perms)) || (m.platform && isPlatform.value)))
 
 function logout() {
   auth.logout()

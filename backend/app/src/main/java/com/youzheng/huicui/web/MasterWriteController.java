@@ -61,7 +61,9 @@ import java.util.Set;
  *   [4] POST /cases/{id}/void                voidCase               | case.void           | @Transactional + audit
  *   [5] PUT  /batches/{id}/coordinators      setBatchCoordinators   | batch.import        | @Transactional + audit
  *   [6] GET  ... reduce-tiers 读在 BatchesM2/ProjectsM2；此处只承载写。
- *   [6']PUT  /batches/{id}/reduce-tiers       putBatchReduceTiers    | reduce.policy.edit  | @Transactional
+ *   [6']PUT  /batches/{id}/reduce-tiers       putBatchReduceTiers    | reduce.policy.edit  | @Transactional（覆盖时写基线 V912）
+ *   [7s]POST /batches/{id}/reduce-tiers:sync  syncBatchReduceTiers   | reduce.policy.edit  | @Transactional（一键同步为项目最新 BR-M2-18b）
+ *   [7p]POST /batches/{id}/playbook:sync      syncBatchPlaybook      | playbook.adopt      | @Transactional + audit（手册一键同步 BR-M2-18b；当前 no-op·DDL 无批次级手册）
  *   [7] PUT  /projects/{id}/reduce-tiers      setProjectReduceTiers  | reduce.policy.edit  | @Transactional
  *   [8] PUT  /projects/{id}/coordinators      setProjectCoordinators | proj.edit           | @Transactional + audit
  * 注：GET /batches/{id}/reduce-tiers 由本类提供（契约该读端点尚未落地，且需 source 推导）。
@@ -140,9 +142,10 @@ public class MasterWriteController {
         // 导入是物业 master-data 动作 → 返物业视角(BatchForProperty,无 payOutRate)：
         //   ① 未派单批次 payOutRate 本就 null,平台视角必填 payOutRate 是非-null Rate,无法满足→违约;
         //   ② 资金双线 BR-M9-11:物业不该见付佣比例。平台要全视图可另查 GET /batches。
+        // 新导入批次未覆盖项目级减免/手册 → reduceDrift/playbookDrift 恒 false（BR-M2-18b）。
         BatchPropertyView batchView = new BatchPropertyView(
                 String.valueOf(batchId), String.valueOf(projectId), batchNo, null, List.of(),
-                "PENDING", "INHERIT", "INHERIT", "PROPERTY", rate, false);
+                "PENDING", "INHERIT", "INHERIT", "PROPERTY", rate, false, false, false);
         return new ImportResult(batchView, rows.size(), succeeded, skipped, errors);
     }
 
@@ -312,16 +315,57 @@ public class MasterWriteController {
 
         jdbc.update("DELETE FROM reduce_tier WHERE batch_id = ?", batchId);
         if (tiers != null && !tiers.isEmpty()) {
+            // BR-M2-18b：覆盖时记录“项目级当前 max(updated_at)”作基线，供 getBatch 比对得出 reduceDrift（V912 列）。
+            java.sql.Timestamp baseline = projectReduceBaseline(batch.projectId());
             for (ReduceTierDto t : tiers) {
                 jdbc.update(
-                        "INSERT INTO reduce_tier(project_id, batch_id, discount, cap_cents, waive_penalty, decide)"
-                                + " VALUES (?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO reduce_tier(project_id, batch_id, discount, cap_cents, waive_penalty, decide,"
+                                + " baseline_project_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                         batch.projectId(), batchId, t.discount(), t.capCents(),
-                        t.waivePenalty() != null && t.waivePenalty(), t.decide());
+                        t.waivePenalty() != null && t.waivePenalty(), t.decide(), baseline);
             }
         }
         // 空数组 → 不插 → 回退继承项目级（source=INHERITED）。
         return effectiveReduceTiers(batchId, batch.projectId());
+    }
+
+    // =====================================================================
+    // [7s] POST /batches/{id}/reduce-tiers:sync — syncBatchReduceTiers（一键同步为项目最新 BR-M2-18b）
+    //   放弃批次自定义、重新继承项目默认（等价 PUT tiers=[]），同步后 source=INHERITED、reduceDrift=false。
+    //   注意路径含冒号子动作 'reduce-tiers:sync'；权限 reduce.policy.edit，own-org。
+    // =====================================================================
+    @PostMapping("/batches/{id}/reduce-tiers:sync")
+    @RequirePermission("reduce.policy.edit")
+    @Transactional
+    public ReduceTiersResult syncBatchReduceTiers(@PathVariable("id") String id) {
+        CurrentSubject s = SubjectContext.get();
+        long batchId = parseIdOr404(id);
+        BatchRef batch = loadBatchOwnOrg(s, batchId);   // 不存在→404；越权→403
+
+        // 删除批次自定义（含其基线列）→ 回退继承项目级；source=INHERITED、drift 自然消失。
+        jdbc.update("DELETE FROM reduce_tier WHERE batch_id = ?", batchId);
+        return effectiveReduceTiers(batchId, batch.projectId());
+    }
+
+    // =====================================================================
+    // [7p] POST /batches/{id}/playbook:sync — syncBatchPlaybook（一键同步手册为项目最新 BR-M2-18b）
+    //   放弃批次自定义、重新继承项目最新手册，同步后 source=INHERITED、playbookDrift=false。
+    //   DDL playbook 仅 project_id 无 batch_id（批次手册经 project 折叠，见 PlaybookController）→ 当前无批次级自定义可清，
+    //   语义上为幂等 no-op（恒已是 INHERITED），仅落审计留痕；待批次级手册存储落地后此处清除批次覆盖+基线。
+    //   权限 playbook.adopt（对齐契约 syncBatchPlaybook x-permission），own-org；契约 200 无响应体。
+    // =====================================================================
+    @PostMapping("/batches/{id}/playbook:sync")
+    @RequirePermission("playbook.adopt")
+    @Transactional
+    public void syncBatchPlaybook(@PathVariable("id") String id) {
+        CurrentSubject s = SubjectContext.get();
+        long batchId = parseIdOr404(id);
+        BatchRef batch = loadBatchOwnOrg(s, batchId);   // 不存在→404；越权→403
+
+        // 当前无批次级手册存储 → no-op；留痕“恢复继承项目最新手册”。
+        String proxyFor = proxyForOrg(s, batch.orgId());
+        audit(s, "playbook.sync.batch", "batch", batchId, "sync-to-project-latest", proxyFor,
+                Map.of("batchId", batchId, "source", "INHERITED"));
     }
 
     // =====================================================================
@@ -398,6 +442,19 @@ public class MasterWriteController {
                         rs.getBoolean("waive_penalty"), rs.getString("decide")),
                 projectId);
         return new ReduceTiersResult("INHERITED", inherited);
+    }
+
+    /**
+     * 项目级减免阶梯当前基线（max(updated_at)，batch_id IS NULL）。
+     * 批次覆盖写入时快照此值存入 reduce_tier.baseline_project_updated_at（V912），
+     * getBatch 以“项目级当前 max(updated_at) > 基线”判定 reduceDrift（BR-M2-18b）。
+     * 项目级无任何阶梯时返回 null（基线为空，getBatch 端按无 drift 处理）。
+     */
+    private java.sql.Timestamp projectReduceBaseline(long projectId) {
+        return jdbc.query(
+                "SELECT max(updated_at) AS m FROM reduce_tier WHERE project_id = ? AND batch_id IS NULL",
+                rs -> rs.next() ? rs.getTimestamp("m") : null,
+                projectId);
     }
 
     private void validateTiers(List<ReduceTierDto> tiers) {

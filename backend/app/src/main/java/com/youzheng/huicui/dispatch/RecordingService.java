@@ -85,8 +85,9 @@ public class RecordingService {
         if (org == null) return false;
         String sql;
         if ("PROVIDER".equals(s.orgType())) {
-            sql = "SELECT count(*) FROM \"case\" c JOIN batch b ON b.id = c.batch_id"
-                    + " WHERE c.id = ? AND b.provider_id = ?";
+            // 案件级归属唯一权威（不回落 batch.provider_id）。
+            sql = "SELECT count(*) FROM \"case\" c"
+                    + " WHERE c.id = ? AND c.provider_id = ?";
         } else {
             sql = "SELECT count(*) FROM \"case\" c JOIN project p ON p.id = c.project_id"
                     + " WHERE c.id = ? AND p.org_id = ?";

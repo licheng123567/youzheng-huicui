@@ -10,6 +10,7 @@ import com.youzheng.huicui.security.CurrentSubject;
 import com.youzheng.huicui.security.RequirePermission;
 import com.youzheng.huicui.security.SubjectContext;
 import com.youzheng.huicui.web.dto.EvidenceItemDto;
+import com.youzheng.huicui.web.dto.EvidencePackageDto;
 import com.youzheng.huicui.web.dto.EvidenceVerifyDto;
 import com.youzheng.huicui.web.dto.LegalDocDto;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -46,6 +47,8 @@ import java.util.Set;
  *   POST /cases/{id}/evidence       createEvidence    | tags=evidence | perm=evidence.create scope=own-org 幂等 | 201 EvidenceItem(ISSUING)/409/422
  *   GET  /evidence                  listEvidence      | tags=evidence |                      scope=range       | 200 EvidencePage（服务商恒空）
  *   GET  /evidence/{id}/verify      verifyEvidence    | tags=evidence | public 免鉴权        scope=public      | 200 EvidenceVerify/404
+ *   POST /evidence/{id}/retry       retryEvidence     | tags=evidence | perm=evidence.create scope=own-org 幂等 | 200 EvidenceItem(ISSUING)/403/404/409
+ *   GET  /cases/{id}/evidence/package getEvidencePackage | tags=evidence |                   scope=range       | 200 EvidencePackage（服务商恒空）/403/404
  *   GET  /cases/{id}/legal-docs      listCaseLegalDocs| tags=legal    |                      scope=range       | 200 LegalDocPage
  *   POST /cases/{id}/legal-docs      createCaseLegalDoc| tags=legal   | perm=legal.create    scope=range 幂等  | 201 LegalDoc(GENERATING)/409/422
  *   POST /legal-docs/{id}/deliver    deliverLegalDoc  | tags=legal    | perm=legal.create    scope=range 幂等  | 200 LegalDoc/409
@@ -178,6 +181,64 @@ public class EvidenceM6Controller {
                 + "|" + nz(r.certNo) + "|" + nz(issuedAt));
         // public 不泄越权数据：仅返 valid/certNo/scene/issuedAt/hash，不含 org/owner/case 明细。
         return new EvidenceVerifyDto(valid, r.certNo, r.scene, issuedAt, hash);
+    }
+
+    // ── [3b] POST /evidence/{id}/retry  retryEvidence ────────────────────────────
+    // perm=evidence.create（同 createEvidence；VL/CO 服务商无→拦截器 403）。
+    // scope=own-org：经 evidence.org_id 复核本组织（平台不限；越组织→403）。
+    // 仅 status=FAILED 可重试，置回 ISSUING 重新出证；非 FAILED→409；不存在→404。
+    // 行锁 FOR UPDATE 防并发双重重试。
+    @PostMapping("/evidence/{id}/retry")
+    @RequirePermission("evidence.create")
+    @Transactional
+    public EvidenceItemDto retryEvidence(@PathVariable("id") String id) {
+        CurrentSubject s = SubjectContext.get();
+        long evidenceId = parseId(id, "存证");
+        EvidenceLock lock = lockEvidence(evidenceId);          // 不存在→404
+        requireOwnOrg(s, lock.orgId);                          // 越组织→403 PERM_403
+
+        // 仅 FAILED 可重试。已 ISSUING/ISSUED 重试→409（非失败态不可重发）。
+        if (!"FAILED".equals(lock.status)) {
+            throw new ApiException(BizError.STATE_409, "仅失败(FAILED)存证可重试");
+        }
+
+        // 置回 ISSUING 重新出证：清空上轮出证产物（cert_no/cert_url/issued_at），等待异步上链。
+        jdbc.update(
+                "UPDATE evidence SET status = 'ISSUING', cert_no = NULL, cert_url = NULL,"
+                        + " issued_at = NULL, updated_at = now() WHERE id = ?",
+                evidenceId);
+
+        // TODO(BR-M6-03/M9-B): 重试同样按次计费只向物业 —— recharge_log(type='EVIDENCE') 待 M9 计费域定。
+
+        return loadEvidence(evidenceId);
+    }
+
+    // ── [3c] GET /cases/{id}/evidence/package  getEvidencePackage ─────────────────
+    // 无 perm（靠 scope 控可见）。scope=range：case 越范围→403（存在性 404 优先）。
+    // 聚合本案已出证(ISSUED)存证为打包下载；三方隔离 BR-M6：服务商不可见存证→items 恒空。
+    // documentUrl 文件通道 TBD → 占位 null。
+    @GetMapping("/cases/{id}/evidence/package")
+    public EvidencePackageDto getEvidencePackage(@PathVariable("id") String id) {
+        CurrentSubject s = SubjectContext.get();
+        long caseId = parseId(id, "案件");
+
+        loadCaseOrg(caseId);                       // 不存在→404（存在性优先）
+        if (!visibleByRange(s, caseId)) {          // 越范围→403
+            throw new ApiException(BizError.PERM_403, "无权下载该案件存证包");
+        }
+
+        // 聚合已出证存证；三方隔离同 listEvidence（服务商恒空、物业 e.org_id、平台全量）。
+        StringBuilder where = new StringBuilder(" WHERE e.case_id = ? AND e.status = 'ISSUED'");
+        List<Object> args = new ArrayList<>();
+        args.add(caseId);
+        appendEvidenceScope(s, where, args);
+
+        List<EvidenceItemDto> items = jdbc.query(
+                "SELECT e.* FROM evidence e" + where + " ORDER BY e.id DESC",
+                evidenceMapper(), args.toArray());
+
+        // documentUrl 占位 null（文件打包通道 TBD）；itemCount = 聚合条数。
+        return new EvidencePackageDto(String.valueOf(caseId), null, items.size(), items);
     }
 
     // ── [4] GET /cases/{id}/legal-docs  listCaseLegalDocs ────────────────────────
@@ -357,7 +418,8 @@ public class EvidenceM6Controller {
     private void appendRangeScope(CurrentSubject s, StringBuilder where, List<Object> args) {
         if (s.isPlatform()) return;
         if ("PROVIDER".equals(s.orgType())) {
-            where.append(" AND b.provider_id = ?");
+            // 案件级归属唯一权威（不 COALESCE 回落 batch）。
+            where.append(" AND c.provider_id = ?");
             args.add(orgIdOrThrow(s));
         } else {
             where.append(" AND p.org_id = ?");
@@ -423,6 +485,25 @@ public class EvidenceM6Controller {
     }
 
     private record VerifyRow(long id, long caseId, String scene, String status, String certNo, Timestamp issuedAt) {}
+
+    private record EvidenceLock(long id, long orgId, String status) {}
+
+    /** 取存证并行锁（重试用）：不存在→404。带 org_id 供 own-org 复核。 */
+    private EvidenceLock lockEvidence(long id) {
+        try {
+            return jdbc.queryForObject(
+                    "SELECT id, org_id, status FROM evidence WHERE id = ? FOR UPDATE",
+                    (rs, i) -> new EvidenceLock(rs.getLong("id"), rs.getLong("org_id"), rs.getString("status")),
+                    id);
+        } catch (EmptyResultDataAccessException e) {
+            throw new ApiException(BizError.NOT_FOUND_404, "存证不存在");
+        }
+    }
+
+    /** 重新读取单条存证（重试后回快照）。 */
+    private EvidenceItemDto loadEvidence(long id) {
+        return jdbc.queryForObject("SELECT e.* FROM evidence e WHERE e.id = ?", evidenceMapper(), id);
+    }
 
     /** 同 case 同 scene 同 refIds 且仍在 ISSUING/ISSUED → 重复发起。 */
     private boolean existsActiveEvidence(long caseId, String scene, String refIdsJson) {

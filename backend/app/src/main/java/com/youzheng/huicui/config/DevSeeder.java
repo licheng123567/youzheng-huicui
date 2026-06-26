@@ -76,6 +76,11 @@ public class DevSeeder implements CommandLineRunner {
         ensureRotationSettings(50);
         // 4b) TIMERS 配置（CFG-T1/T2/TC/MAXCYCLE + 预警提前量·已定稿值）
         ensureTimersSettings();
+        // 4c) MARK_CODES 配置（CFG-MARK-CODES 内置五码）：使「通话结果标记」下拉首项=合法码(PROMISED)。
+        //     无此种子时 MARK_CODES 域空，settings.spec 增的 E2E_OK 会成唯一/首项；
+        //     而 RecordingService.markCodes() 读 mark_codes->>'markCodes'(数组无此键)→空→回退仅认内置五码 → E2E_OK 被 422 拒，
+        //     拖垮 case-mark-result.spec。种内置五码后首项恒 PROMISED(合法)，E2E_OK 仅追加在尾，互不影响。
+        ensureMarkCodesSettings();
 
         // 5) 批次 + 案件（M2 读视图演示 + M3 五稳态联调；schemathesis 各前置态 200）
         Long proj = jdbc.query("SELECT id FROM project WHERE name = '翠湖一期'", rs -> rs.next() ? rs.getLong(1) : null);
@@ -108,7 +113,25 @@ public class DevSeeder implements CommandLineRunner {
                 seedM9Billing(cuihu, provider, saAcct);
             }
             seedSmsRecords(cuihu, proj, caseS3Id);
+
+            // e2e 转真断言种子（物理隔离、幂等）：
+            //  · audit-log.spec :21「代操作」→ 一条 proxy_for 非空审计（SA 代翠湖物业操作，含 before/after 快照）
+            //  · sea-redispatch.spec :19/:37 护栏①→ 平台公海一件"被退回"案 + 其 case.return 审计(before_snap.providerId=捷信)
+            //  · batch-sync-drift.spec :18/:29 reduceDrift→ 翠湖首批次(id 最大)挂批次级减免覆盖+过去基线，项目级更晚
+            seedProxyAuditLog(cuihu);
+            seedSeaReturnedCase(proj, provider);
+            seedBatchReduceDrift(proj);
         }
+
+        // 案件级 provider_id 回填（V913）：DevSeeder 经 SQL 直插案件、绕过 dispatch/accept 控制器，
+        // 故 case.provider_id 留空；而 V913 回填在 Flyway 期(种子前)执行、看不到这些行。
+        // 可见性 scope 已改为直接 c.provider_id 权威，须在此按池语义补齐，否则服务商/催收员看不到本商案件。
+        // 语义：已归属某服务商的案件(已派待接 S1/服务商公海 S2/私海 S3)→ provider_id=batch.provider_id；
+        //   平台公海(S0)与开放抢单池(S4)→ 无归属，保持 NULL。
+        jdbc.update(
+                "UPDATE \"case\" c SET provider_id = b.provider_id FROM batch b "
+                        + "WHERE c.batch_id = b.id AND b.provider_id IS NOT NULL "
+                        + "AND c.provider_id IS NULL AND c.pool NOT IN ('PLATFORM_SEA', 'OPEN_POOL')");
     }
 
     // ── M9-B 计费流水种子（recharge_log 充值/扣减流水）─────────────────────────
@@ -245,6 +268,57 @@ public class DevSeeder implements CommandLineRunner {
         if (caseS3Id != null) {
             seedM4Collection(caseS3Id, projId, b2, coHolder, providerOrg);
         }
+
+        // M5 余额不足补解析（BR-M5-02）：另起 3 件 co1 私海案 M5-QB-0{1,2,3}，其最新录音均为 QUOTA_BLOCKED，
+        // 供「补解析/批量补解析」按钮渲染（与 M3-S3-01 的 READY 录音物理隔离，避免污染 AI 复盘/标记用例）。
+        // parse 桩实现会把 QUOTA_BLOCKED→PARSING（不可逆），e2e 三用例各自触发一次补解析故需各占一件，互不串味。
+        for (int i = 1; i <= 3; i++) {
+            String acct = "M5-QB-0" + i;
+            ensureSeaCase(b2, projId, "翠湖一期", acct, "郑余额" + i, "QB-10" + i, 250000L,
+                    "IN_PROGRESS", "PRIVATE", coHolder, "CLAIM", "PROVIDER_SEA", false, true /*tc*/);
+            Long caseQbId = jdbc.query(
+                    "SELECT id FROM \"case\" WHERE batch_id = ? AND acct_no = ?",
+                    rs -> rs.next() ? rs.getLong(1) : null, b2, acct);
+            if (caseQbId != null) {
+                seedQuotaBlockedRecording(caseQbId, coHolder);
+            }
+        }
+
+        // M8 结案脱敏（BR-M8-09）：一件 co1 持有、已撤案(WITHDRAWN)的私海案 M8-RD-01。
+        // 对非平台/非物业主体（VL/CO）→ redacted=true（业主名/电话脱敏、逐行明细收敛为统计卡）；
+        // 平台(SA)同案仍见完整明细。挂 1 条联系人供脱敏前/后对照。provider_id 由收尾回填(pool=PRIVATE)。
+        ensureSeaCase(b2, projId, "翠湖一期", "M8-RD-01", "韩结案", "RD-101", 200000L,
+                "WITHDRAWN", "PRIVATE", coHolder, "CLAIM", "PROVIDER_SEA", false, false);
+        Long caseRdId = jdbc.query(
+                "SELECT id FROM \"case\" WHERE batch_id = ? AND acct_no = 'M8-RD-01'",
+                rs -> rs.next() ? rs.getLong(1) : null, b2);
+        if (caseRdId != null) {
+            Integer rdContact = jdbc.queryForObject(
+                    "SELECT count(*) FROM contact WHERE case_id = ?", Integer.class, caseRdId);
+            if (rdContact == null || rdContact == 0) {
+                jdbc.update(
+                        "INSERT INTO contact(case_id, phone, label, is_primary, invalid) "
+                                + "VALUES (?, '13900000077', '本人', TRUE, FALSE)",
+                        caseRdId);
+            }
+        }
+    }
+
+    // ── M5 余额不足补解析录音种子（QUOTA_BLOCKED，供「补解析」按钮渲染）──────────────
+    //
+    // 给 co1 私海案 M5-QB-01 挂一条 QUOTA_BLOCKED 录音（无转写、无 AI 复盘——余额不足暂停态）。
+    // latest 取 ORDER BY created_at DESC,id DESC → 本案唯一录音即 latest，按钮 v-if 命中。
+    // 幂等：(case_id, source=APP_AUTO) 已存在则跳过。
+    private void seedQuotaBlockedRecording(Long caseId, Long coHolder) {
+        Long recId = jdbc.query(
+                "SELECT id FROM call_recording WHERE case_id = ? AND source = 'APP_AUTO'",
+                rs -> rs.next() ? rs.getLong(1) : null, caseId);
+        if (recId != null) return;
+        jdbc.update(
+                "INSERT INTO call_recording(case_id, collector_id, source, status, recorded_at, "
+                        + "duration_sec, phone) "
+                        + "VALUES (?, ?, 'APP_AUTO', 'QUOTA_BLOCKED', now() - interval '2 hours', 95, '13900000088')",
+                caseId, coHolder);
     }
 
     // ── M4 外围实体种子（私海案件 M3-S3-01 各挂 1 条，供 M4 GET 端点返 200）──────
@@ -710,6 +784,124 @@ public class DevSeeder implements CommandLineRunner {
                 org, memberId, operatorId);
     }
 
+    // ── e2e 转真断言种子（audit 代操作 / 公海退回案 / 批次减免 drift）─────────────
+
+    /**
+     * 代操作审计（audit-log.spec.ts:21）：种 1 条 proxy_for 非空记录——平台 SA 代某物业组织操作，
+     * 含 before/after 快照 → 前端「代操作」标签(row.proxyFor 非空)+展开行(before/after)可断言。
+     * actor=平台 SA（actor_id 指向 SA 账号、scope=PLATFORM、SA 全量可见）；proxy_for=被代操作物业组织名。
+     * 幂等：本组织已有任一 proxy 审计（action='case.follow' 且 proxy_for 非空）则跳过。
+     *
+     * @param propertyOrg 被代操作物业组织 id（翠湖物业）——proxy_for 取其组织名
+     */
+    private void seedProxyAuditLog(Long propertyOrg) {
+        if (propertyOrg == null) return;
+        Long saAcct = jdbc.query("SELECT id FROM account WHERE role_template = 'SA' ORDER BY id LIMIT 1",
+                rs -> rs.next() ? rs.getLong(1) : null);
+        String saName = jdbc.query("SELECT name FROM account WHERE id = ?",
+                rs -> rs.next() ? rs.getString(1) : null, saAcct);
+        String orgName = jdbc.query("SELECT name FROM org WHERE id = ?",
+                rs -> rs.next() ? rs.getString(1) : null, propertyOrg);
+        if (saAcct == null || orgName == null) return;
+        Integer exists = jdbc.queryForObject(
+                "SELECT count(*) FROM audit_log WHERE actor_id = ? AND proxy_for IS NOT NULL "
+                        + "AND action = 'case.follow'",
+                Integer.class, saAcct);
+        if (exists != null && exists > 0) return;
+        jdbc.update(
+                "INSERT INTO audit_log(actor_id, actor, action, target, target_type, target_id, scope, "
+                        + "proxy_for, before_snap, after_snap, reason) "
+                        + "VALUES (?, ?, 'case.follow', '案件跟进(代操作)', 'case', '1', 'PLATFORM', ?, "
+                        + "?::jsonb, ?::jsonb, '(演示)平台代物业登记跟进')",
+                saAcct, saName != null ? saName : "平台超管", orgName,
+                "{\"followState\":\"NONE\",\"note\":null}",
+                "{\"followState\":\"CONTACTED\",\"note\":\"业主承诺下月缴清\"}");
+    }
+
+    /**
+     * 平台公海"被退回"案 + case.return 审计（sea-redispatch.spec.ts:19/:37 护栏①）。
+     * 在 S0 批次(B-CH-M3-S0)下另起一件 S0 案(M3-RET-01，pool=PLATFORM_SEA,status=PENDING_DISPATCH)，
+     * 并补一条 action='case.return' 审计、before_snap->>'providerId'=捷信 org id——
+     * 使再派护栏 lastReturnedProvider() 命中：再选捷信被 409 拒(:37)、选其它服务商成功(:19)。
+     * 幂等：案件经 ensureSeaCase(按 batch+acct 唯一)；审计按 (target_type,target_id,action) 先查后插。
+     *
+     * @param projId      项目 id（翠湖一期）
+     * @param providerOrg 原退回服务商 org id（捷信催收）——写入 before_snap.providerId
+     */
+    private void seedSeaReturnedCase(Long projId, Long providerOrg) {
+        if (projId == null || providerOrg == null) return;
+        Long b0 = jdbc.query("SELECT id FROM batch WHERE project_id = ? AND no = 'B-CH-M3-S0'",
+                rs -> rs.next() ? rs.getLong(1) : null, projId);
+        if (b0 == null) return;
+        ensureSeaCase(b0, projId, "翠湖一期", "M3-RET-01", "退回案", "RET-101", 280000L,
+                "PENDING_DISPATCH", "PLATFORM_SEA", null, "DISPATCH", "PROVIDER_SEA", false, false);
+        Long caseId = jdbc.query(
+                "SELECT id FROM \"case\" WHERE batch_id = ? AND acct_no = 'M3-RET-01'",
+                rs -> rs.next() ? rs.getLong(1) : null, b0);
+        if (caseId == null) return;
+        // case.return 审计：before_snap.providerId=原退回服务商（捷信）→ 再派护栏据此禁原退回方。
+        Integer exists = jdbc.queryForObject(
+                "SELECT count(*) FROM audit_log WHERE target_type = 'case' AND target_id = ? "
+                        + "AND action = 'case.return'",
+                Integer.class, String.valueOf(caseId));
+        if (exists != null && exists > 0) return;
+        Long vlAcct = jdbc.query("SELECT id FROM account WHERE username = 'jx_vl'",
+                rs -> rs.next() ? rs.getLong(1) : null);
+        jdbc.update(
+                "INSERT INTO audit_log(actor_id, actor, action, target, target_type, target_id, scope, "
+                        + "before_snap, after_snap, reason) "
+                        + "VALUES (?, ?, 'case.return', '案件退回平台公海', 'case', ?, 'PROVIDER', "
+                        + "?::jsonb, ?::jsonb, '(演示)服务商退回—护栏①禁原退回方')",
+                vlAcct, "捷信负责人", String.valueOf(caseId),
+                "{\"providerId\":\"" + providerOrg + "\",\"pool\":\"PROVIDER_SEA\"}",
+                "{\"providerId\":null,\"pool\":\"PLATFORM_SEA\"}");
+    }
+
+    /**
+     * 批次级减免覆盖 drift（batch-sync-drift.spec.ts:18/:29）。
+     * e2e 进 /batches 取首行(ORDER BY b.id DESC → 翠湖 id 最大批次)，需该批 getBatch.reduceDrift=true：
+     *  (a) 项目级减免阶梯(batch_id IS NULL)至少一行——比对基线来源；
+     *  (b) 该批次级覆盖行(batch_id=首批次)，baseline_project_updated_at=过去时刻；
+     *  (c) 项目级行 updated_at 更晚 → 项目级 max(updated_at) > 基线 → reduceDrift=true。
+     * 幂等：首批次已有任一覆盖行则整体跳过（:29 一键同步会删覆盖行，重启后重新种回）。
+     *
+     * @param projId 项目 id（翠湖一期）
+     */
+    private void seedBatchReduceDrift(Long projId) {
+        if (projId == null) return;
+        // e2e 首批次：翠湖项目下 id 最大批次（与 BatchesM2Controller ORDER BY b.id DESC 对齐）。
+        Long firstBatch = jdbc.query(
+                "SELECT id FROM batch WHERE project_id = ? ORDER BY id DESC LIMIT 1",
+                rs -> rs.next() ? rs.getLong(1) : null, projId);
+        if (firstBatch == null) return;
+        // 幂等：首批次已有覆盖行则跳过。
+        Integer ovExists = jdbc.queryForObject(
+                "SELECT count(*) FROM reduce_tier WHERE batch_id = ?", Integer.class, firstBatch);
+        if (ovExists != null && ovExists > 0) return;
+
+        // (a) 项目级减免阶梯：若无则补一行（项目级 max(updated_at) 作 drift 比对源）。
+        Integer projTierExists = jdbc.queryForObject(
+                "SELECT count(*) FROM reduce_tier WHERE project_id = ? AND batch_id IS NULL",
+                Integer.class, projId);
+        if (projTierExists == null || projTierExists == 0) {
+            jdbc.update(
+                    "INSERT INTO reduce_tier(project_id, batch_id, discount, cap_cents, waive_penalty, decide) "
+                            + "VALUES (?, NULL, '9折', 50000, FALSE, 'COLLECTOR_SELF')",
+                    projId);
+        }
+        // (c) 确保项目级行 updated_at 为"现在"（晚于下面覆盖行写入的过去基线）。
+        jdbc.update(
+                "UPDATE reduce_tier SET updated_at = now() WHERE project_id = ? AND batch_id IS NULL",
+                projId);
+
+        // (b) 批次级覆盖行：baseline_project_updated_at=1 天前（早于项目级当前 max(updated_at)→ drift）。
+        jdbc.update(
+                "INSERT INTO reduce_tier(project_id, batch_id, discount, cap_cents, waive_penalty, decide, "
+                        + "baseline_project_updated_at) "
+                        + "VALUES (?, ?, '8折', 30000, FALSE, 'COLLECTOR_SELF', now() - interval '1 day')",
+                projId, firstBatch);
+    }
+
     /** 按 username 取 account.id（不存在返 null）。 */
     private Long accountIdByUsername(String username) {
         return jdbc.query("SELECT id FROM account WHERE username = ?",
@@ -866,6 +1058,28 @@ public class DevSeeder implements CommandLineRunner {
         String timers = "{\"t1Seconds\":172800,\"t2Seconds\":604800,\"tcSeconds\":604800,\"maxCycleSeconds\":7776000,"
                 + "\"t1WarnSeconds\":21600,\"t2WarnSeconds\":86400,\"tcWarnSeconds\":86400,\"maxCycleWarnSeconds\":604800}";
         jdbc.update("INSERT INTO settings(domain, version, timers, updated_by) VALUES ('TIMERS', 1, ?::jsonb, ?)", timers, sa);
+    }
+
+    /**
+     * MARK_CODES 配置（CFG-MARK-CODES 内置五码，结构对齐契约 Settings.markCodes，列存裸数组）。
+     * 顺序与 RecordingService 回退集一致：前四接通有效(effectiveFollowUp=true)、NO_ANSWER 未接通无效。
+     * 幂等：MARK_CODES 域已有任一版本则跳过（settings.spec 增版后不回退覆盖，仅保证首版有内置五码）。
+     */
+    private void ensureMarkCodesSettings() {
+        Integer exists = jdbc.queryForObject("SELECT count(*) FROM settings WHERE domain = 'MARK_CODES'", Integer.class);
+        if (exists != null && exists > 0) return;
+        Long sa = jdbc.query("SELECT id FROM account WHERE role_template = 'SA' ORDER BY id LIMIT 1",
+                rs -> rs.next() ? rs.getLong(1) : null);
+        if (sa == null) return;
+        String markCodes = "["
+                + "{\"code\":\"PROMISED\",\"label\":\"已承诺\",\"enabled\":true,\"connected\":true,\"effectiveFollowUp\":true},"
+                + "{\"code\":\"REFUSED\",\"label\":\"明确拒缴\",\"enabled\":true,\"connected\":true,\"effectiveFollowUp\":true},"
+                + "{\"code\":\"NEED_TICKET\",\"label\":\"需转工单\",\"enabled\":true,\"connected\":true,\"effectiveFollowUp\":true},"
+                + "{\"code\":\"FOLLOW_UP\",\"label\":\"待跟进\",\"enabled\":true,\"connected\":true,\"effectiveFollowUp\":true},"
+                + "{\"code\":\"NO_ANSWER\",\"label\":\"未接通\",\"enabled\":true,\"connected\":false,\"effectiveFollowUp\":false}"
+                + "]";
+        jdbc.update("INSERT INTO settings(domain, version, mark_codes, updated_by) VALUES ('MARK_CODES', 1, ?::jsonb, ?)",
+                markCodes, sa);
     }
 
     private void ensureRotationSettings(int holdCap) {

@@ -25,8 +25,10 @@ import java.util.Set;
  * 类名 SmsRecordsController（本批新建）。依赖 V5__sms_record.sql 真表（已建）。
  *
  * 横切落地：
- *   - GET /sms-records   listSmsRecords：x-data-scope=range，无 x-permission。
+ *   - GET /sms-records          listSmsRecords：x-data-scope=range，无 x-permission。
  *       range：平台全量；物业/服务商仅本组织（DataScope.ownOrg on sms_record.org_id）。
+ *   - GET /sms-records/export   exportSmsRecords：x-data-scope=range，无 x-permission。
+ *       同 listSmsRecords 同 scope 同过滤参数；返回 { url } 导出文件占位（文件通道 TBD，地基期恒 null）。
  *
  * 业务口径：
  *   - 失败不退条数（BR-M9-08）：FAILED 行照常返回，带 failure_reason（不从结果集剔除）。
@@ -63,9 +65,54 @@ public class SmsRecordsController {
         CurrentSubject s = SubjectContext.get();
         Pageable pg = Pageable.of(page, size);
 
-        StringBuilder where = new StringBuilder(" WHERE 1=1");
         List<Object> args = new ArrayList<>();
+        StringBuilder where = buildWhere(s, projectId, caseId, status, from, to, args);
 
+        Long total = jdbc.queryForObject(
+                "SELECT count(*) FROM sms_record" + where, Long.class, args.toArray());
+
+        List<Object> pageArgs = new ArrayList<>(args);
+        pageArgs.add(pg.size);
+        pageArgs.add(pg.offset);
+        // FAILED 行不剔除（失败不退条数 BR-M9-08），failure_reason 随行返回。
+        List<SmsSendRecordDto> items = jdbc.query(
+                "SELECT id, case_id, project_id, template, status, failure_reason, sent_at"
+                        + " FROM sms_record" + where + " ORDER BY sent_at DESC LIMIT ? OFFSET ?",
+                SMS_MAPPER, pageArgs.toArray());
+
+        return Page.of(items, pg, total == null ? 0 : total);
+    }
+
+    // ── [16b] GET /sms-records/export ─────────────────────────────────────────────
+    // x-data-scope=range，无 x-permission。同 listSmsRecords 同 scope 同过滤参数。
+    // 读端点·靠 scope 裁剪；返回 { url } 导出文件占位（文件通道 TBD，地基期恒 null）。
+    @GetMapping("/sms-records/export")
+    public java.util.Map<String, Object> exportSmsRecords(
+            @RequestParam(required = false) String projectId,
+            @RequestParam(required = false) String caseId,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
+        CurrentSubject s = SubjectContext.get();
+        // 过滤/scope 与 list 同口径校验（非法过滤值同样 422）；range 裁剪不串组织。
+        List<Object> args = new ArrayList<>();
+        buildWhere(s, projectId, caseId, status, from, to, args);
+
+        // 文件打包通道 TBD → url 占位 null（对齐契约 exportSmsRecords 响应 { url: string|null }）。
+        java.util.Map<String, Object> resp = new java.util.LinkedHashMap<>();
+        resp.put("url", null);
+        return resp;
+    }
+
+    // ── helpers ─────────────────────────────────────────────────────────────────
+
+    /**
+     * 构造 list/export 共用的 WHERE（过滤 + range scope）；非法过滤值 → 422（绝不 5xx）。
+     * args 原地追加占位参数。range：平台全量；物业/服务商 → 本组织（sms_record.org_id 锚点 V5）。
+     */
+    private StringBuilder buildWhere(CurrentSubject s, String projectId, String caseId,
+                                     String status, String from, String to, List<Object> args) {
+        StringBuilder where = new StringBuilder(" WHERE 1=1");
         // 过滤值非法 → 422（不放进 SQL）。id 类入参非数字也 422（避免 Long.parseLong 抛 5xx）。
         if (notBlank(projectId)) {
             where.append(" AND project_id = ?");
@@ -93,28 +140,12 @@ public class SmsRecordsController {
             where.append(" AND sent_at < (?::date + INTERVAL '1 day')");
             args.add(to);
         }
-
         // range：平台全量；物业/服务商 → 本组织（sms_record.org_id 为裁剪锚点 V5）。
         DataScope.Fragment scope = DataScope.ownOrg(s, "org_id");
         where.append(scope.sql());
         for (Object p : scope.params()) args.add(p);
-
-        Long total = jdbc.queryForObject(
-                "SELECT count(*) FROM sms_record" + where, Long.class, args.toArray());
-
-        List<Object> pageArgs = new ArrayList<>(args);
-        pageArgs.add(pg.size);
-        pageArgs.add(pg.offset);
-        // FAILED 行不剔除（失败不退条数 BR-M9-08），failure_reason 随行返回。
-        List<SmsSendRecordDto> items = jdbc.query(
-                "SELECT id, case_id, project_id, template, status, failure_reason, sent_at"
-                        + " FROM sms_record" + where + " ORDER BY sent_at DESC LIMIT ? OFFSET ?",
-                SMS_MAPPER, pageArgs.toArray());
-
-        return Page.of(items, pg, total == null ? 0 : total);
+        return where;
     }
-
-    // ── helpers ─────────────────────────────────────────────────────────────────
 
     private static final RowMapper<SmsSendRecordDto> SMS_MAPPER = (rs, i) -> new SmsSendRecordDto(
             String.valueOf(rs.getLong("id")),

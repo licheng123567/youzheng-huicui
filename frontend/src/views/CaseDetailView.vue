@@ -25,15 +25,43 @@ function canAct(actionKey: string, permission: string): boolean {
   return auth.has(permission) && actions.indexOf(actionKey) !== -1
 }
 
-// L-01: 通话结果标记码集中常量(对齐契约 MarkCodeEnum 描述的常见值，enabled 状态以 settings 为准)
-const MARK_CODES: Array<{ code: string; label: string }> = [
+// M-01: 通话结果标记码 SSOT — 改读 CaseDetail.markCodes(后端按 settings/CFG-MARK-CODES 下发可见启用项，绕开 platform-scoped /settings)。
+// 无来源时回退本地兜底常量(防 d 未加载/老后端)。
+const MARK_CODES_FALLBACK: Array<{ code: string; label: string }> = [
   { code: 'PROMISED', label: '已承诺' },
   { code: 'REFUSED', label: '拒接/拒还' },
   { code: 'NEED_TICKET', label: '需转工单' },
   { code: 'FOLLOW_UP', label: '待跟进' },
   { code: 'NO_ANSWER', label: '无人接听' }
 ]
+// 仅取 enabled 项；后端未下发 markCodes 则回退兜底
+const markCodes = computed<Array<{ code: string; label: string }>>(function () {
+  var src = d.value && d.value.markCodes ? d.value.markCodes : []
+  var enabled = src.filter(function (m: any) { return m && m.enabled !== false && m.code })
+    .map(function (m: any) { return { code: m.code, label: m.label || m.code } })
+  return enabled.length ? enabled : MARK_CODES_FALLBACK
+})
+
+// H-05: 结案脱敏收敛 — redacted=true 且当前主体非平台(SA/SE)时，概览/联系人切统计视图、不渲染逐行明细。
+// 平台(SA/SE)与持有物业仍可见明细(脱敏由后端按 scope 决定，此处仅控收敛展示)。
+const isPlatform = computed<boolean>(function () { return auth.me?.org?.type === 'PLATFORM' })
+const redacted = computed<boolean>(function () { return !!(d.value && d.value.case && d.value.case.redacted) })
+// 统计收敛态：脱敏 且 非平台 → 概览/联系人不渲染明细，改渲染统计卡
+const summaryView = computed<boolean>(function () { return redacted.value && !isPlatform.value })
+// 统计卡聚合(前端聚合，无需后端 summary)
+const stat = computed<any>(function () {
+  var settled = repays.value.filter(function (r: any) { return !r.reversed }).reduce(function (s: number, r: any) { return s + (r.amountCents || 0) }, 0)
+  return {
+    dueCents: d.value?.case?.dueCents,
+    reduceAfterCents: d.value?.case?.reduceAfterCents ?? d.value?.case?.dueCents,
+    repaidCents: settled,
+    promiseCount: promises.value.length,
+    ticketCount: tickets.value.length,
+    contactCount: (d.value?.contacts ?? []).length
+  }
+})
 const promises = ref<any[]>([]); const tickets = ref<any[]>([]); const legalDocs = ref<any[]>([]); const repays = ref<any[]>([])
+const readyRecs = ref<any[]>([])   // H-02: 本案 READY 录音(供 RECORDING 存证选 refIds)
 const payLinks = ref<any[]>([])   // 本会话创建的缴费链接(契约无 per-case 列表端点,发后捕获→可重发/作废 BR-M4-14)
 const latest = ref<any>(null); const review = ref<any>(null)
 const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
@@ -45,6 +73,9 @@ async function loadAll() {
   promises.value = ((await api.GET('/cases/{id}/promises', { params: { path: { id }, query: { page: 1, size: 20 } } } as any)).data as any)?.items ?? []
   tickets.value = ((await api.GET('/cases/{id}/tickets', { params: { path: { id }, query: { page: 1, size: 20 } } } as any)).data as any)?.items ?? []
   legalDocs.value = ((await api.GET('/cases/{id}/legal-docs', { params: { path: { id }, query: { page: 1, size: 20 } } } as any)).data as any)?.items ?? []
+  // H-02: 本案录音列表(供存证 RECORDING 场景选 READY 录音 refIds)
+  const recs = ((await api.GET('/recordings', { params: { query: { caseId: id, page: 1, size: 50 } } } as any)).data as any)?.items ?? []
+  readyRecs.value = recs.filter((x: any) => x.status === 'READY')
   // 回款明细经批次端点过滤本案（无独立 per-case 列表端点）
   const bid = d.value?.case?.batchId
   if (bid) {
@@ -71,14 +102,36 @@ async function uploadRecording(e: any) {
   if (!r.ok) { ElMessage.error('上传失败 ' + r.status); return }
   ElMessage.success('已上传，解析中'); getLatest()
 }
-// FAILED 走 /reprocess(重处理)；parse 仅 QUOTA_BLOCKED/READY 补解析(BR-M5-08)
+// FAILED 走 /reprocess(重处理)；parse 仅 QUOTA_BLOCKED/READY 补解析(BR-M5-02/08)
 async function reprocessRec(recId: string) {
   const { error } = await api.POST('/recordings/{id}/reprocess', { params: { path: { id: recId } } } as any)
   if (error) { ElMessage.error('重处理失败：' + ((error as any)?.message ?? '')); return }
   ElMessage.success('已触发重处理'); getLatest()
 }
+// H-06: QUOTA_BLOCKED 单条补解析(充值后手动补触发 ASR BR-M5-02)；余额不足 409 BIZ_QUOTA_EXHAUSTED 提示充值
+async function parseRec(recId: string) {
+  const { error } = await api.POST('/recordings/{id}/parse', { params: { path: { id: recId } } } as any)
+  if (error) {
+    var code = (error as any)?.code ?? (error as any)?.error?.code
+    if (code === 'BIZ_QUOTA_EXHAUSTED') { ElMessage.warning('解析余额不足，请先充值解析分钟后再补解析'); return }
+    ElMessage.error('补解析失败：' + ((error as any)?.message ?? '')); return
+  }
+  ElMessage.success('已受理补解析（解析中）'); getLatest()
+}
+// H-06: 批量补解析(按本案 caseId 过滤待解析录音，余额扣完为止 BR-M5-02)
+async function batchParseRec() {
+  const { data, error } = await api.POST('/recordings/batch-parse', { body: { caseIds: [id] } as any })
+  if (error) {
+    var code = (error as any)?.code ?? (error as any)?.error?.code
+    if (code === 'BIZ_QUOTA_EXHAUSTED') { ElMessage.warning('解析余额不足，请先充值后再批量补解析'); return }
+    ElMessage.error('批量补解析失败：' + ((error as any)?.message ?? '')); return
+  }
+  var r = data as any
+  ElMessage.success('已受理批量补解析：入队 ' + (r?.queued ?? 0) + ' 条' + (r?.skipped ? ('，余额不足跳过 ' + r.skipped + ' 条') : ''))
+  getLatest()
+}
 const mkdlg = ref(false); const mkForm = ref<any>({})
-function openMark(recId: string) { mkForm.value = { recId, mark: 'PROMISED' }; mkdlg.value = true }
+function openMark(recId: string) { mkForm.value = { recId, mark: markCodes.value[0]?.code ?? 'PROMISED' }; mkdlg.value = true }
 async function submitMark() {
   const { error } = await api.POST('/recordings/{id}/ai-review', { params: { path: { id: mkForm.value.recId } }, body: { mark: mkForm.value.mark } as any })
   if (error) { ElMessage.error('标记失败：' + ((error as any)?.message ?? '')); return }
@@ -88,22 +141,36 @@ async function submitMark() {
 // 通用动作对话框（跟进/承诺/工单/缴费/结案/还款/法务/存证）
 const dlg = ref<{ open: boolean; kind: string; title: string }>({ open: false, kind: '', title: '' })
 const form = ref<any>({})
+// H-02: 存证 refIds 候选 — RECORDING 用本案 READY 录音；DELIVERY 用本案 SIGNED 法律文书；MATERIAL_PACK 可空
+const evidenceRefOptions = computed<Array<{ value: string; label: string }>>(function () {
+  var scene = form.value && form.value.scene
+  if (scene === 'RECORDING') return readyRecs.value.map(function (r: any) { return { value: String(r.id), label: '录音#' + r.id + ' · ' + (r.durationSec || 0) + 's' } })
+  if (scene === 'DELIVERY') return legalDocs.value.filter(function (l: any) { return l.status === 'SIGNED' }).map(function (l: any) { return { value: String(l.id), label: l.type + ' #' + l.id } })
+  return []
+})
 function openAct(kind: string, title: string, sourceSuggestionId?: string) {
-  form.value = kind === 'follow' ? { content: '', method: 'CALL', sourceSuggestionId }
+  form.value = kind === 'follow' ? { content: '', method: 'CALL', attachments: [], sourceSuggestionId }
     : kind === 'promise' ? { date: '', amountYuan: 0, installments: [], sourceSuggestionId }
     : kind === 'ticket' ? { type: '上门核实', note: '', sourceSuggestionId }
     : kind === 'close' ? { closeKind: 'WITHDRAWN', reason: '' }
     : kind === 'repay' ? { amountYuan: 0, channel: 'WECHAT_QR', paidAt: '' }
     : kind === 'legal' ? { type: 'COLLECTION_LETTER' }
-    : kind === 'evidence' ? { scene: 'RECORDING', note: '' }
+    : kind === 'evidence' ? { scene: 'RECORDING', note: '', refIds: [] }
     : { channel: 'SMS', sourceSuggestionId }
   dlg.value = { open: true, kind, title }
 }
+// follow 跟进附件增删(name+url)
+function addAttachment() { (form.value.attachments ||= []).push({ name: '', url: '' }) }
+function removeAttachment(i: number) { form.value.attachments.splice(i, 1) }
 function addInstallment() { (form.value.installments ||= []).push({ seq: form.value.installments.length + 1, dueDate: '', amountYuan: 0 }) }
 async function submitAct() {
   const k = dlg.value.kind, f = form.value
   let res: any
-  if (k === 'follow') res = await api.POST('/cases/{id}/follow-ups', { params: { path: { id } }, body: { content: f.content, method: f.method, sourceSuggestionId: f.sourceSuggestionId } as any })
+  if (k === 'follow') {
+    // M-08: 跟进携带附件(过滤掉空行)
+    const atts = (f.attachments || []).filter((a: any) => a && (a.name || a.url))
+    res = await api.POST('/cases/{id}/follow-ups', { params: { path: { id } }, body: { content: f.content, method: f.method, attachments: atts.length ? atts : undefined, sourceSuggestionId: f.sourceSuggestionId } as any })
+  }
   else if (k === 'promise') {
     const inst = (f.installments || []).map((x: any) => ({ seq: x.seq, dueDate: x.dueDate, amountCents: Math.round(x.amountYuan * 100) }))
     res = await api.POST('/cases/{id}/promises', { params: { path: { id } }, body: { date: f.date, amountCents: Math.round(f.amountYuan * 100), installments: inst.length ? inst : undefined, sourceSuggestionId: f.sourceSuggestionId } as any })
@@ -112,7 +179,13 @@ async function submitAct() {
   else if (k === 'close') res = await api.POST('/cases/{id}/close', { params: { path: { id } }, body: { kind: f.closeKind, reason: f.reason } as any })
   else if (k === 'repay') res = await api.POST('/cases/{id}/repay-lines', { params: { path: { id } }, body: { amountCents: Math.round(f.amountYuan * 100), channel: f.channel, paidAt: f.paidAt } as any })
   else if (k === 'legal') res = await api.POST('/cases/{id}/legal-docs', { params: { path: { id } }, body: { type: f.type } as any })
-  else if (k === 'evidence') res = await api.POST('/cases/{id}/evidence', { params: { path: { id } }, body: { scene: f.scene, note: f.note } as any })
+  else if (k === 'evidence') {
+    // H-02: RECORDING/DELIVERY 必带 refIds(指向 READY 录音/SIGNED 文书)，否则后端 422
+    if ((f.scene === 'RECORDING' || f.scene === 'DELIVERY') && !(f.refIds && f.refIds.length)) {
+      ElMessage.error(f.scene === 'RECORDING' ? '录音存证需选择至少一条 READY 录音' : '送达存证需选择至少一份 SIGNED 文书'); return
+    }
+    res = await api.POST('/cases/{id}/evidence', { params: { path: { id } }, body: { scene: f.scene, note: f.note, refIds: (f.refIds && f.refIds.length) ? f.refIds : undefined } as any })
+  }
   else res = await api.POST('/cases/{id}/pay-links', { params: { path: { id } }, body: { channel: f.channel, sourceSuggestionId: f.sourceSuggestionId } as any })
   if (res.error) { ElMessage.error('提交失败：' + ((res.error as any)?.message ?? '')); return }
   if (k === 'paylink' && res.data) payLinks.value.unshift(res.data)   // 捕获新链接→可重发/作废
@@ -146,14 +219,20 @@ async function reverseRepay(r: any) {
     ElMessage.success('已冲销'); loadAll()
   } catch { /* 取消 */ }
 }
-// 联系人 add / 失效
-async function addContact() {
-  try {
-    const { value: phone } = await ElMessageBox.prompt('新增联系电话', '新增联系人', { inputValidator: (v) => /^\d{6,}$/.test(v) || '请输入有效号码' })
-    const { error } = await api.POST('/cases/{id}/contacts', { params: { path: { id } }, body: { phone, label: '补充' } as any })
-    if (error) { ElMessage.error('新增失败'); return }
-    ElMessage.success('已新增联系人'); loadAll()
-  } catch { /* 取消 */ }
+// 联系人 add / 失效 / 设主号 — M-08：主号(isPrimary)显示+可设、标签可选、新增时可勾主号
+const cdlg = ref(false); const cForm = ref<any>({})
+function openAddContact() { cForm.value = { phone: '', label: '本人', isPrimary: false }; cdlg.value = true }
+async function submitContact() {
+  if (!/^\d{6,}$/.test(cForm.value.phone)) { ElMessage.error('请输入有效号码'); return }
+  const { error } = await api.POST('/cases/{id}/contacts', { params: { path: { id } }, body: { phone: cForm.value.phone, label: cForm.value.label, isPrimary: cForm.value.isPrimary } as any })
+  if (error) { ElMessage.error('新增失败'); return }
+  ElMessage.success('已新增联系人'); cdlg.value = false; loadAll()
+}
+// 设主号：PATCH isPrimary:true(后端维护单一主号约束，旧主号降级)
+async function setPrimaryContact(c: any) {
+  const { error } = await api.PATCH('/contacts/{id}', { params: { path: { id: String(c.id) } }, body: { isPrimary: true } as any })
+  if (error) { ElMessage.error('设主号失败：' + ((error as any)?.message ?? '')); return }
+  ElMessage.success('已设为主号'); loadAll()
 }
 async function invalidContact(c: any) {
   const { error } = await api.PATCH('/contacts/{id}', { params: { path: { id: String(c.id) } }, body: { invalid: true } as any })
@@ -211,6 +290,26 @@ onMounted(loadAll)
 
     <el-tabs>
       <el-tab-pane label="概览 / 联系人">
+        <!-- H-05: 结案脱敏(redacted)且非平台 → 统计收敛视图，不渲染逐行明细 -->
+        <template v-if="summaryView">
+          <el-alert type="info" :closable="false" style="margin-bottom:10px" title="本案已结案并脱敏（BR-M8-09）：仅展示统计汇总，业主姓名/联系方式等明细已收敛。" />
+          <el-descriptions :column="3" border size="small">
+            <el-descriptions-item label="户号">{{ d.case?.acctNo }}</el-descriptions-item>
+            <el-descriptions-item label="状态">{{ d.case?.status }}</el-descriptions-item>
+            <el-descriptions-item label="池">{{ d.case?.pool }}</el-descriptions-item>
+          </el-descriptions>
+          <el-row :gutter="12" style="margin-top:12px">
+            <el-col :span="6"><el-statistic title="应收" :value="(stat.dueCents ?? 0)/100" :precision="2" prefix="¥" /></el-col>
+            <el-col :span="6"><el-statistic title="减免后" :value="(stat.reduceAfterCents ?? 0)/100" :precision="2" prefix="¥" /></el-col>
+            <el-col :span="6"><el-statistic title="已回款合计" :value="stat.repaidCents/100" :precision="2" prefix="¥" /></el-col>
+            <el-col :span="6"><el-statistic title="联系方式数" :value="stat.contactCount" /></el-col>
+          </el-row>
+          <el-row :gutter="12" style="margin-top:12px">
+            <el-col :span="6"><el-statistic title="承诺数" :value="stat.promiseCount" /></el-col>
+            <el-col :span="6"><el-statistic title="工单数" :value="stat.ticketCount" /></el-col>
+          </el-row>
+        </template>
+        <template v-else>
         <el-descriptions :column="3" border size="small">
           <el-descriptions-item label="户号">{{ d.case?.acctNo }}</el-descriptions-item>
           <el-descriptions-item label="应收">{{ yuan(d.case?.dueCents) }}</el-descriptions-item>
@@ -218,12 +317,17 @@ onMounted(loadAll)
           <el-descriptions-item label="状态">{{ d.case?.status }}</el-descriptions-item>
           <el-descriptions-item label="池">{{ d.case?.pool }}</el-descriptions-item>
         </el-descriptions>
-        <el-divider content-position="left">联系方式 <el-button v-if="auth.has('case.follow')" size="small" text type="primary" @click="addContact">+ 新增</el-button></el-divider>
+        <el-divider content-position="left">联系方式 <el-button v-if="auth.has('case.follow')" size="small" text type="primary" @click="openAddContact">+ 新增</el-button></el-divider>
         <el-table :data="d.contacts ?? []" size="small" border>
           <el-table-column prop="phone" label="电话" /><el-table-column prop="label" label="标签" />
+          <el-table-column label="主号" width="70"><template #default="{row}"><el-tag v-if="row.isPrimary" size="small" type="warning">主号</el-tag></template></el-table-column>
           <el-table-column label="状态"><template #default="{row}"><el-tag size="small" :type="row.invalid?'info':'success'">{{ row.invalid?'失效':'有效' }}</el-tag></template></el-table-column>
-          <el-table-column label="操作" width="90"><template #default="{row}"><el-button v-if="!row.invalid && auth.has('case.follow')" size="small" text @click="invalidContact(row)">标失效</el-button></template></el-table-column>
+          <el-table-column label="操作" width="150"><template #default="{row}">
+            <el-button v-if="!row.invalid && !row.isPrimary && auth.has('case.follow')" size="small" text type="primary" @click="setPrimaryContact(row)">设主号</el-button>
+            <el-button v-if="!row.invalid && auth.has('case.follow')" size="small" text @click="invalidContact(row)">标失效</el-button>
+          </template></el-table-column>
         </el-table>
+        </template>
         <template v-if="payLinks.length">
           <el-divider content-position="left">缴费链接（本会话创建 · BR-M4-14 重发/作废）</el-divider>
           <el-table :data="payLinks" size="small" border>
@@ -248,15 +352,31 @@ onMounted(loadAll)
               <el-button size="small" type="primary" @click="loadReview(latest.recording.id)">看 AI 复盘</el-button>
               <el-button size="small" @click="router.push(`/cases/${id}/call/${latest.recording.id}`)">通话记录详情</el-button>
               <el-button v-if="latest.recording.status==='FAILED'" size="small" @click="reprocessRec(latest.recording.id)">重新处理</el-button>
+              <!-- H-06: QUOTA_BLOCKED 充值后补解析(单条 parse + 批量 batch-parse) -->
+              <el-button v-if="latest.recording.status==='QUOTA_BLOCKED' && auth.has('case.call')" size="small" type="warning" @click="parseRec(latest.recording.id)">补解析</el-button>
+              <el-button v-if="latest.recording.status==='QUOTA_BLOCKED' && auth.has('case.call')" size="small" @click="batchParseRec">批量补解析</el-button>
               <!-- H-05: 标记结果调 POST /recordings/{id}/ai-review x-permission=case.follow，非 case.call -->
               <el-button v-if="auth.has('case.follow')" size="small" @click="openMark(latest.recording.id)">标记结果</el-button>
             </el-descriptions-item>
           </el-descriptions>
+          <el-alert v-if="latest.recording.status==='QUOTA_BLOCKED'" type="warning" :closable="false" style="margin-top:8px" title="解析余额不足已暂停（BR-M5-02）：充值解析分钟后点「补解析」按时间顺序续解析。" />
         </template>
         <template v-if="review">
           <el-divider>AI 复盘</el-divider>
           <p><b>小结：</b>{{ review.summary }}</p>
-          <p v-if="review.risks?.length"><b>风险：</b><el-tag v-for="r in review.risks" :key="r.desc" type="danger" size="small" style="margin:2px">{{ r.level }} {{ r.desc }}</el-tag></p>
+          <!-- M-02: 说话人分离对话气泡(review.dialogue) -->
+          <template v-if="review.dialogue?.length">
+            <div style="max-height:260px;overflow:auto;background:#f5f7fa;padding:8px;border-radius:4px;margin:6px 0">
+              <div v-for="(turn,ti) in review.dialogue" :key="ti" style="display:flex;margin:4px 0" :style="{ justifyContent: turn.speaker==='AGENT' || turn.speaker==='催收员' ? 'flex-end' : 'flex-start' }">
+                <div :style="{ maxWidth:'72%', background: turn.speaker==='AGENT' || turn.speaker==='催收员' ? '#d9ecff' : '#fff', border:'1px solid #e4e7ed', borderRadius:'6px', padding:'6px 10px' }">
+                  <div style="font-size:12px;color:#909399">{{ turn.speaker }}</div>
+                  <div style="font-size:13px;white-space:pre-wrap">{{ turn.text }}</div>
+                </div>
+              </div>
+            </div>
+          </template>
+          <!-- M-02: 风险标签追加 segmentTs 片段定位 -->
+          <p v-if="review.risks?.length"><b>风险：</b><el-tag v-for="(r,ri) in review.risks" :key="ri" type="danger" size="small" style="margin:2px">{{ r.level }} {{ r.desc }}<span v-if="r.segmentTs"> @{{ r.segmentTs }}</span></el-tag></p>
           <el-card v-for="su in review.suggestions ?? []" :key="su.id" shadow="never" style="margin:6px 0">
             <b>{{ su.title }}</b> <el-tag size="small">{{ su.type }}</el-tag>
             <div style="color:#606266;font-size:13px">{{ su.body }}</div>
@@ -313,6 +433,15 @@ onMounted(loadAll)
         <template v-if="dlg.kind==='follow'">
           <el-form-item label="方式"><el-select v-model="form.method"><el-option v-for="m in ['CALL','SMS','VISIT','WECHAT','OTHER']" :key="m" :label="m" :value="m" /></el-select></el-form-item>
           <el-form-item label="内容"><el-input v-model="form.content" type="textarea" :rows="3" /></el-form-item>
+          <!-- M-08: 跟进附件(name+url) -->
+          <el-form-item label="附件">
+            <el-button size="small" @click="addAttachment">+ 加附件</el-button>
+            <div v-for="(a,ai) in form.attachments" :key="ai" style="margin-top:4px;display:flex;gap:4px;align-items:center">
+              <el-input v-model="a.name" size="small" placeholder="名称" style="width:120px" />
+              <el-input v-model="a.url" size="small" placeholder="url" style="width:200px" />
+              <el-button size="small" text type="danger" @click="removeAttachment(ai)">删</el-button>
+            </div>
+          </el-form-item>
         </template>
         <template v-else-if="dlg.kind==='promise'">
           <el-form-item label="承诺日期"><el-date-picker v-model="form.date" type="date" value-format="YYYY-MM-DD" /></el-form-item>
@@ -337,7 +466,13 @@ onMounted(loadAll)
           <el-form-item label="文书类型"><el-select v-model="form.type"><el-option label="催款函" value="COLLECTION_LETTER" /><el-option label="律师函" value="LAWYER_LETTER" /><el-option label="诉讼" value="LITIGATION" /></el-select></el-form-item>
         </template>
         <template v-else-if="dlg.kind==='evidence'">
-          <el-form-item label="存证场景"><el-select v-model="form.scene"><el-option label="录音" value="RECORDING" /><el-option label="送达" value="DELIVERY" /><el-option label="材料包" value="MATERIAL_PACK" /></el-select></el-form-item>
+          <el-form-item label="存证场景"><el-select v-model="form.scene" @change="form.refIds=[]"><el-option label="录音" value="RECORDING" /><el-option label="送达" value="DELIVERY" /><el-option label="材料包" value="MATERIAL_PACK" /></el-select></el-form-item>
+          <!-- H-02: RECORDING/DELIVERY 必选 refIds(READY 录音 / SIGNED 文书)；MATERIAL_PACK 可留空 -->
+          <el-form-item v-if="form.scene==='RECORDING' || form.scene==='DELIVERY'" :label="form.scene==='RECORDING' ? '选录音' : '选文书'">
+            <el-select v-model="form.refIds" multiple style="width:100%" :placeholder="evidenceRefOptions.length ? '请选择' : (form.scene==='RECORDING' ? '本案无 READY 录音' : '本案无 SIGNED 文书')">
+              <el-option v-for="o in evidenceRefOptions" :key="o.value" :label="o.label" :value="o.value" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="备注"><el-input v-model="form.note" /></el-form-item>
         </template>
         <template v-else-if="dlg.kind==='close'">
@@ -362,10 +497,20 @@ onMounted(loadAll)
     </el-dialog>
 
     <!-- 通话结果标记 -->
-    <!-- L-01: 标记码由 MARK_CODES 常量驱动(对齐契约 MarkCodeEnum/CFG-MARK-CODES 常见值) -->
+    <!-- M-01: 标记码 SSOT 来自 CaseDetail.markCodes(enabled 项)，无来源回退 MARK_CODES_FALLBACK -->
     <el-dialog v-model="mkdlg" title="通话结果标记（POST /recordings/{id}/ai-review）" width="400px">
-      <el-form label-width="80px"><el-form-item label="结果码"><el-select v-model="mkForm.mark"><el-option v-for="m in MARK_CODES" :key="m.code" :label="m.label" :value="m.code" /></el-select></el-form-item></el-form>
+      <el-form label-width="80px"><el-form-item label="结果码"><el-select v-model="mkForm.mark"><el-option v-for="m in markCodes" :key="m.code" :label="m.label" :value="m.code" /></el-select></el-form-item></el-form>
       <template #footer><el-button @click="mkdlg=false">取消</el-button><el-button type="primary" @click="submitMark">标记</el-button></template>
+    </el-dialog>
+
+    <!-- M-08: 新增联系人(标签 + 主号) -->
+    <el-dialog v-model="cdlg" title="新增联系人（POST /cases/{id}/contacts）" width="400px">
+      <el-form label-width="80px">
+        <el-form-item label="电话"><el-input v-model="cForm.phone" placeholder="联系号码" /></el-form-item>
+        <el-form-item label="标签"><el-select v-model="cForm.label"><el-option v-for="l in ['本人','配偶','亲属','单位','补充']" :key="l" :label="l" :value="l" /></el-select></el-form-item>
+        <el-form-item label="设为主号"><el-switch v-model="cForm.isPrimary" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="cdlg=false">取消</el-button><el-button type="primary" @click="submitContact">提交</el-button></template>
     </el-dialog>
   </div>
 </template>

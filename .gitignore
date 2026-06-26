@@ -19,3 +19,7 @@ dist/
 _verify.sh
 /tmp/
 .hypothesis/
+
+# Playwright 产物
+frontend/test-results/
+frontend/playwright-report/

@@ -1,0 +1,1578 @@
+[
+ {
+  "module": "结算 Settlement (M9)",
+  "statusSummary": "收佣/付佣双线 + 内催佣金链端到端已通（生成/发送/完成/撤销/确认支付后端齐全），但前端存在三处实活缺陷：PL/PC 因菜单门控漏权被完全挡在结算页外（与矩阵\"◐只读\"冲突）、对账汇总表字段名漂移导致批次/比例/应结三列全部显示\"—\"、内催佣金单缺\"人→批次→明细勾选\"穿透（现为手输 lineId 且从不调用已实现的 /co-pay-docs/{id} 详情）。",
+  "findings": [
+   {
+    "id": "H-01",
+    "title": "PL/PC 被结算菜单门控完全挡掉，违反矩阵\"收佣支付申请单◐只读本物业\"",
+    "stillLive": true,
+    "evidence": "AppLayout.vue:29 /settlement perms=['payreq.create','payreq.complete','cocomm.self.view','cocomm.manage']，any 命中才显；Permissions.java:27-29 PL/PC 权限集不含任何上述权限点→菜单对 PL/PC 不渲染。但 docs/ui/02-角色操作权限矩阵.md:111 收佣支付申请单 PL=◐只读本物业/PC=◐只读，:113 下载 PL=◐本物业/PC=◐。契约 listPaymentRequests(yaml:992-1006) 与 getPaymentRequest(yaml:1027-1036) 均无 x-permission、x-data-scope=range+x-settlement-side-rule(IN→平台+物业可见)，即物业本就应能 GET 收佣单列表；后端 ReconRepayM9Controller.java:237-246 双线隔离也允许 PROPERTY 看 IN。故应可见，现被前端菜单误挡。系统中不存在 payreq.read/view 只读权限点。",
+    "severity": "HIGH"
+   },
+   {
+    "id": "M-10",
+    "title": "对账汇总表三列字段名漂移，PL/PC/平台均显示\"—\"",
+    "stillLive": true,
+    "evidence": "SettlementView.vue:135 渲染 row.batchCode、:136 pct(row.rate ?? row.commRate)、:137 yuan(row.commCents)。但契约 ReconRollup(yaml:2167) 字段为 batch/batchId/proj/period/baseCents/cnt/repayRate/commRate/dueCents/settledCents/unsettledCents，无 batchCode/rate/commCents。后端 ReconRollupM9Dto.java(record 字段 batch,batchId,proj,period,baseCents,cnt,repayRate,commRate,dueCents,settledCents,unsettledCents) 与契约 1:1。结果：批次列(batchCode)空、比例列 rate 不存在回退 commRate 凑巧有值、应结列(commCents)空→应改用 row.batch / row.commRate / row.dueCents。",
+    "severity": "HIGH"
+   },
+   {
+    "id": "M-05",
+    "title": "内催佣金缺\"人→批次→明细勾选\"，现手输 lineId 且不调用已实现的 /co-pay-docs/{id} 详情",
+    "stillLive": true,
+    "evidence": "SettlementView.vue:113-121 genCoPayDoc 用 ElMessageBox.prompt 让用户手输逗号分隔 lineId 文本组单(无穿透 UI)；coDocs 列表(:174-179)无\"详情\"操作、从不调用 GET /co-pay-docs/{id}。但后端 CoCommissionM9Controller.java:301-326 getCoPayDoc 已返回 lines 穿透快照(lineId/caseId/ownerName/room/repayCents/commCents)，契约 getCoPayDoc(yaml:1145-1161)+CoPayDoc.lines(yaml:2266-2277) 齐全。US-M9-10:118 要求\"按催收员聚合→穿透各批次→案件回款明细勾选\"，当前完全缺失该穿透链。缺口：(a) 无批次/明细列举数据源(无 /co-commissions/{collectorId} 批次下钻端点)，(b) FE 无勾选 UI，(c) 不展示已实现的 co-pay-doc 详情快照。",
+    "severity": "MEDIUM"
+   },
+   {
+    "id": "N-01",
+    "title": "净增：支付申请单/佣金单单据下载+电子签章占位未展示",
+    "stillLive": true,
+    "evidence": "契约 PaymentRequest 已含 documentUrl(yaml:2215 '单据下载 URL·占位') 与 sealed(yaml:2216 '电子签章状态 TBD')，BR-M9-12d/16/US-M9-08:166-170 要求可下载/盖电子章。SettlementView.vue 详情弹窗(:204-221)只展示 code/status/base/rate/comm/voucher，不渲染 documentUrl/sealed；列表无下载入口。CoPayDoc schema(yaml:2256-2277) 无 documentUrl/sealed 字段，内催佣金单亦无下载占位。",
+    "severity": "LOW"
+   },
+   {
+    "id": "N-02",
+    "title": "净增：只读菜单口径——结算/存证读端点无 x-permission，菜单应改\"代表读权限或 platform\"范式",
+    "stillLive": true,
+    "evidence": "AppLayout.vue:20 自注\"菜单为 UX 门控\"。结算读端点(recon/rollup, payment-requests GET)无 x-permission 仅 scope=range，PL/PC 本应只读可见。当前 :29 用写权限(payreq.create)做菜单门控，与 H-01/H-02/H-03 已采纳的\"读靠 scope、菜单去 perms 或挂 platform\"范式不一致。需把 /settlement 菜单口径与 /reports(:31 无 perms)、/projects(:25)、/batches(:26) 对齐。",
+    "severity": "MEDIUM"
+   }
+  ],
+  "feChanges": [
+   {
+    "file": "frontend/src/layouts/AppLayout.vue",
+    "change": "修 H-01/N-02：将 /settlement(line 29) 菜单门控放宽，使 PL/PC 物业只读角色可见。两选一：(a) 去掉 perms 改为无门控(读靠后端 scope+side-rule 裁剪，对齐 /reports 范式)；或 (b) 在 perms 数组追加物业可识别的代表权限(如 case.repay.mark / proj.edit，PL/PC 均持有)。推荐 (a)，并补注释说明收佣单 GET 无 x-permission、物业 range+IN 线可读。"
+   },
+   {
+    "file": "frontend/src/views/SettlementView.vue",
+    "change": "修 M-10：对账汇总表 line 135 改 row.batchCode→row.batch；line 136 pct(row.rate ?? row.commRate)→pct(row.commRate)；line 137 yuan(row.commCents)→yuan(row.dueCents)。可选增列 已结(settledCents)/未结(unsettledCents)/回款率(repayRate)/项目(proj)。"
+   },
+   {
+    "file": "frontend/src/views/SettlementView.vue",
+    "change": "修 H-01 只读体验：PL/PC 进入后 canGenerate/canComplete/canRevoke 已恒 false(line 19/21/23)、sides 已锁 IN(line 13)、canViewPayReq 已 true(line 12 role!==CO)，故菜单放行后即得只读 IN 线视图；补一处\"只读\"提示文案/隐藏\"勾选明细生成\"按钮(line 131 已 v-if canGenerate 不显，确认无误)。"
+   },
+   {
+    "file": "frontend/src/views/SettlementView.vue",
+    "change": "修 M-05：重写 genCoPayDoc(line 113-121) 为穿透勾选弹窗——选催收员→列其各批次(比例)→展开该催收员×批次未结回款明细(数据源见 BE 改动 新增 /co-commissions/{collectorId} 批次下钻 + 复用 /batches/{id}/repay-lines 过滤 holder)→勾选行→POST /co-pay-docs。替代手输 lineId 文本框。"
+   },
+   {
+    "file": "frontend/src/views/SettlementView.vue",
+    "change": "修 M-05：内催佣金单列表(line 174-179)增\"详情\"操作，调用 GET /co-pay-docs/{id} 展示 lines 穿透快照(catch 404)，复用支付申请单详情弹窗范式(line 204-221)。"
+   },
+   {
+    "file": "frontend/src/views/SettlementView.vue",
+    "change": "净增 N-01：支付申请单详情弹窗(line 204-221) 增 documentUrl(下载链接/占位\"单据通道 TBD\")与 sealed(电子签章状态标签)；列表(line 147-156)可加\"下载\"按钮(指向 documentUrl，空则 disabled)。"
+   }
+  ],
+  "beChanges": [
+   {
+    "endpoint": "GET /payment-requests (listPaymentRequests)",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改：契约 yaml:992-1006 无 x-permission、scope=range+IN 线物业可见；后端 PaymentRequestM9Controller 应已按 side-rule 放行 PROPERTY 读 IN 线。仅需前端菜单放行(H-01)。建议核验 list/get 对 PROPERTY+IN 确返回 200(非 403)。"
+   },
+   {
+    "endpoint": "GET /co-pay-docs/{id} (getCoPayDoc)",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改：CoCommissionM9Controller.java:301-326 已返回 lines 穿透快照，契约 yaml:1145-1161 齐全。仅前端未消费(M-05)。"
+   },
+   {
+    "endpoint": "GET /co-commissions/{collectorId}/batches (或 batch-drilldown)",
+    "existsInContract": false,
+    "existsInBackend": false,
+    "change": "M-05 缺口：当前无\"某催收员→其各批次(比例)→批次内该催收员持有案件未结回款明细\"的下钻数据源。两选一：(a) 新增 GET /co-commissions/{collectorId}/batches 返回 [{batchId,batchName,rate,dueCents,unsettledLineCount}]，再复用 /batches/{id}/repay-lines 按 holder 过滤明细；或 (b) 扩展 /batches/{id}/repay-lines 增 collectorId+settledScope=internal 过滤参数(后端 loadActiveLinesForCollectorBatch 逻辑已存在于 CoCommissionM9Controller.java:469-476，可抽出复用)。需契约新增端点/参数。"
+   },
+   {
+    "endpoint": "PaymentRequest.documentUrl / sealed",
+    "existsInContract": true,
+    "existsInBackend": false,
+    "change": "净增 N-01：契约 yaml:2215-2216 已有字段但后端 PaymentRequest DTO 大概率未填(占位)。本轮可仅返回 null/false 占位(文件通道 TBD)，无需真实现下载/签章。前端按占位展示即可。"
+   }
+  ],
+  "contractChanges": [
+   {
+    "path": "GET /co-commissions/{collectorId}/batches",
+    "change": "新增端点(M-05 穿透下钻数据源)：x-permission=cocomm.manage, x-data-scope=own-org；返回 CoCommissionBatchRow[]{batchId,batchName,rate,dueCents,unsettledCents,unsettledLineCount}。或改为给 /batches/{id}/repay-lines 增 collectorId + internalUnsettled 查询参数(二选一，建议前者更清晰)。"
+   },
+   {
+    "path": "components.schemas.CoPayDoc",
+    "change": "净增 N-01(可选)：与 PaymentRequest 对齐增 documentUrl{string|null,占位} + sealed{boolean} 字段，供内催佣金单下载/签章占位展示。本轮允许改契约。"
+   },
+   {
+    "path": "AppLayout 菜单门控约定 / openapi-core.yaml 约定头",
+    "change": "N-02 文档对齐：在约定层补记\"结算读端点(recon/rollup, payment-requests GET, payment-requests/{id} GET)无 x-permission、靠 range+side-rule 裁剪，菜单不得用写权限(payreq.create)做显隐门控\"，与 H-01/H-02/H-03 已采纳范式一致。"
+   }
+  ],
+  "newScreens": [
+   "内催佣金单 详情弹窗(GET /co-pay-docs/{id} lines 穿透快照)",
+   "内催佣金 人→批次→明细勾选组单弹窗(替代手输 lineId)"
+  ],
+  "e2eSpecs": [
+   {
+    "file": "frontend/e2e/settlement-readonly.spec.ts",
+    "scenario": "PL/PC 登录后侧边栏可见\"结算\"菜单(修 H-01)；进入后 side 锁定 IN(收佣线)、对账汇总表批次/比例/应结三列有值非\"—\"(修 M-10)、不出现\"勾选明细生成支付申请单\"按钮、PENDING 单无\"确认收款/撤销\"按钮(只读)。",
+    "story": "US-M9-06(物业只查看不确认/不驳回) + 矩阵§6 line111 PL/PC=◐只读"
+   },
+   {
+    "file": "frontend/e2e/settlement-recon-fields.spec.ts",
+    "scenario": "平台 SA 登录进结算，IN/OUT 切换后对账汇总表展示批次号(batch)、比例(commRate×100%)、应结佣金(dueCents/100)正确，无字段漂移空列。",
+    "story": "BR-M9-12a 对账列表按批次汇总 + M-10 字段修复"
+   },
+   {
+    "file": "frontend/e2e/co-commission-drilldown.spec.ts",
+    "scenario": "VL 登录进结算内催佣金面板，点某催收员\"生成佣金单\"→弹出人→批次→明细勾选穿透(非手输框)→勾选未结明细→生成 PENDING_PAY 单；点佣金单\"详情\"→展示 lines 穿透快照(业主/房号/回款/佣金)；\"确认支付\"→变 SETTLED。",
+    "story": "US-M9-10 服务商设佣金并按明细支付 + M-05"
+   },
+   {
+    "file": "frontend/e2e/co-commission-self.spec.ts",
+    "scenario": "CO 登录可见\"结算\"菜单但仅\"我的佣金\"面板(GET /me/settlement)，无对账/支付申请单/内催管理面板(canViewPayReq=false, showCoComm=false)，全只读。",
+    "story": "US-M9-09 催收员我的结算自查(只读 BR-M9-19a)"
+   }
+  ],
+  "effort": "M",
+  "risk": "中。H-01/M-10 为小改动低风险(菜单门控+字段名)，但 H-01 放宽菜单后必须确保后端 listPaymentRequests/getPaymentRequest 对 PROPERTY+IN 线确返回 200 而非 403(若后端 side-rule 漏放 PROPERTY 读会暴露空白页)，需联调核验。M-05 穿透下钻涉及新增契约端点(/co-commissions/{collectorId}/batches)+后端 SQL(可复用已有 loadActiveLinesForCollectorBatch)，是本模块主要工作量与回归面。改 AppLayout.vue 为跨模块共享文件，菜单数组改动须防与其它模块菜单条目冲突。",
+  "sharedFiles": [
+   "frontend/src/layouts/AppLayout.vue (菜单数组·全模块共享，改 /settlement 条目)",
+   "docs/api/openapi-core.yaml (契约真源·新增 co-commissions 下钻端点/CoPayDoc 字段，与对账/佣金共线)",
+   "backend/app/src/main/java/com/youzheng/huicui/common/Permissions.java (角色权限映射·登录JWT与 permission-matrix 共用，若新增 payreq.read 须改此处但本方案不建议新增)",
+   "backend/app/src/main/java/com/youzheng/huicui/web/CoCommissionM9Controller.java (内催佣金控制器·M-05 新增下钻端点落点)",
+   "frontend/src/api/schema.d.ts (openapi-typescript 生成·契约改后须 gen:api 重生)"
+  ],
+  "prdStoryRefs": [
+   "US-M9-06 收佣线支付申请单(物业只读)",
+   "US-M9-08 支付申请单据与凭证(下载/盖章占位 N-01)",
+   "US-M9-09 催收员我的结算自查",
+   "US-M9-10 服务商设催收员佣金并按明细支付(穿透勾选 M-05)",
+   "BR-M9-12a 对账列表按批次汇总(M-10)",
+   "BR-M9-12d/16 单据下载+电子签章",
+   "BR-M9-19 服务商内部催收员佣金",
+   "矩阵§6 line111/113 收佣单 PL/PC ◐只读·下载"
+  ],
+  "_key": "结算 Settlement"
+ },
+ {
+  "module": "存证 Evidence (M6)",
+  "statusSummary": "后端 3 端点(POST /cases/{id}/evidence、GET /evidence、GET /evidence/{id}/verify)已实现且三方隔离/scope 正确；FE EvidenceView 仅列表+验真+证书下载，存证发起在 CaseDetailView。两个真缺陷仍成立：(1) /evidence 菜单门控把有只读权的 PL 错误挡掉；(2) FE 发起存证只传 scene+note 不传 refIds，导致 RECORDING/DELIVERY 场景必 422。FAILED 态前端无重试且契约无重试端点。",
+  "findings": [
+   {
+    "id": "H-02",
+    "title": "/evidence 菜单门控用 evidence.create 把有只读权(○)的 PL 错误挡掉",
+    "stillLive": true,
+    "evidence": "frontend/src/layouts/AppLayout.vue:32 `{ path: '/evidence', perms: ['evidence.create'], platform: true }`；docs/ui/02-角色操作权限矩阵.md:128 存证管理 PL=○(只读)、PC=●(决定/创建)、VL/CO=—；line 129 证书下载 PL=●/PC=●/VL/CO=—。菜单只对持 evidence.create 者显示 → PC 见、SA/SE(platform)见，但 PL 仅○无 create → 被菜单挡，无法进入只读+下载证书。VL/CO 被挡是正确的。后端 GET /evidence 无 x-permission 仅 scope=range(EvidenceM6Controller.java:127-151，物业按 e.org_id、PROVIDER 恒空)，所以 PL 在后端本可见，纯属前端 UX 门控误挡。",
+    "severity": "HIGH"
+   },
+   {
+    "id": "M6-FE-REFIDS",
+    "title": "FE 发起存证只传 scene+note 不传 refIds，RECORDING/DELIVERY 场景后端必 422",
+    "stillLive": true,
+    "evidence": "frontend/src/views/CaseDetailView.vue:115 `body: { scene: f.scene, note: f.note }` —— 无 refIds；后端 EvidenceM6Controller.java:292-329 validateScene：RECORDING 须 refIds 指向 call_recording.status='READY'(line 296-307)，DELIVERY 须 refIds 指向 legal_doc.status='SIGNED'(line 311-322)，refIds 为空即抛 VALIDATION_422。契约 EvidenceInput(openapi-core.yaml:2344) refIds 为可选数组但场景语义强依赖。结论：当前 FE 只有 MATERIAL_PACK(放宽不校验，line 324-326)能成功，录音/送达存证发起 100% 失败。",
+    "severity": "HIGH"
+   },
+   {
+    "id": "M6-FAILED-RETRY",
+    "title": "存证 FAILED 态前端无视觉区分/无重试入口，且契约无重试端点",
+    "stillLive": true,
+    "evidence": "EvidenceStatusEnum 含 FAILED(openapi-core.yaml:2333；schema.d.ts:3081)，但 EvidenceView.vue:33 状态 tag 只分 ISSUED(success)/其余(warning)，FAILED 不显 danger 也无重试按钮。契约存证组无 reprocess/retry 端点(对比录音有 POST /recordings/{id}/reprocess)。出证异步(controller line 112 落 ISSUING)失败后无补救路径——本轮允许改契约，需新增重试端点或定为线下重发。",
+    "severity": "MEDIUM"
+   },
+   {
+    "id": "M6-PACKAGE-DL",
+    "title": "净增需求'证据包下载'契约中无对应端点(仅单证 certUrl)",
+    "stillLive": true,
+    "evidence": "EvidenceItem.certUrl(openapi-core.yaml:2345)为单条证书链接，EvidenceView.vue:38 已渲染'证书'下载按钮(v-if row.certUrl)。但'证据包下载'(整案多存证打包/zip)在契约无端点、无 schema 字段。若需此能力须新增契约端点(如 GET /cases/{id}/evidence/package 或 GET /evidence/{id}/package)。",
+    "severity": "LOW"
+   }
+  ],
+  "feChanges": [
+   {
+    "file": "frontend/src/layouts/AppLayout.vue",
+    "change": "修 H-02：将 /evidence 菜单 perms 从 ['evidence.create'] 改为 ['evidence.create','evidence.view'](或新增只读代表权限点)，使持只读权的 PL 也可进入；保持 platform:true 让 SA/SE 可见；VL/CO 仍无任一权限→正确被挡。需与后端/permMatrix 同步引入 evidence.view 权限点。"
+   },
+   {
+    "file": "frontend/src/views/CaseDetailView.vue",
+    "change": "修 M6-FE-REFIDS：发起存证表单(line 115 提交 + line 206 入口)按 scene 增加 refIds 选择——RECORDING 场景列出本案 READY 录音多选、DELIVERY 场景列出本案 SIGNED 法律文书多选、MATERIAL_PACK 可留空；提交时 body 带 refIds: f.refIds。"
+   },
+   {
+    "file": "frontend/src/views/EvidenceView.vue",
+    "change": "(1) FAILED 态 tag 显 danger(line 33 增加 FAILED 分支)；(2) 若契约新增重试端点，FAILED 行加'重试'按钮；(3) 列表加 caseId 过滤/分页 meta 展示(当前固定 page1/size30)；(4) 可选：加'证据包下载'按钮(依赖新契约端点)。"
+   }
+  ],
+  "beChanges": [
+   {
+    "endpoint": "POST /cases/{id}/evidence",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "已实现(EvidenceM6Controller.java:84-123)，perm=evidence.create scope=own-org 场景校验齐全。无需改，除非引入证据包/重试。"
+   },
+   {
+    "endpoint": "GET /evidence",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "已实现(EvidenceM6Controller.java:127-151)，三方隔离正确(平台全量/物业 e.org_id/PROVIDER 恒空)。本身无 x-permission 是有意设计(读靠 scope)，无需改。"
+   },
+   {
+    "endpoint": "GET /evidence/{id}/verify",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "已实现(EvidenceM6Controller.java:155-181)，public 不泄越权字段，正确。无需改。"
+   },
+   {
+    "endpoint": "POST /evidence/{id}/retry (新)",
+    "existsInContract": false,
+    "existsInBackend": false,
+    "change": "M6-FAILED-RETRY：若决定支持失败重试，须新增端点(perm=evidence.create scope=own-org，仅 FAILED→ISSUING)。或评审定为线下重新发起则不加。"
+   },
+   {
+    "endpoint": "GET /evidence/{id}/package 或 /cases/{id}/evidence/package (新)",
+    "existsInContract": false,
+    "existsInBackend": false,
+    "change": "M6-PACKAGE-DL：若需证据包打包下载须新增端点。建议先评审是否真需求，否则单证 certUrl 已够。"
+   }
+  ],
+  "contractChanges": [
+   {
+    "path": "openapi-core.yaml GET /evidence (line 1275)",
+    "change": "评估为只读 PL 增加显性 x-permission:evidence.view(或保持无 x-permission 仅 scope，仅前端菜单加只读权限点)。若引入 evidence.view 须同步 permMatrix 与 OrgSystemM1Controller.java:371。"
+   },
+   {
+    "path": "openapi-core.yaml EvidenceInput (line 2344)",
+    "change": "为 refIds 增补按 scene 的必填语义说明(RECORDING/DELIVERY 必填且指向 READY 录音/SIGNED 文书；MATERIAL_PACK 可空)，与后端 validateScene 对齐，避免 FE 漏传。"
+   },
+   {
+    "path": "openapi-core.yaml 新增 POST /evidence/{id}/retry (可选)",
+    "change": "若支持失败重试：x-permission:evidence.create scope=own-org，仅 FAILED→ISSUING，返回 EvidenceItem。"
+   },
+   {
+    "path": "openapi-core.yaml 新增证据包下载端点 (可选)",
+    "change": "若需证据包：GET 端点返回打包下载 url 或二进制，x-data-scope 同 evidence。"
+   }
+  ],
+  "newScreens": [],
+  "e2eSpecs": [
+   {
+    "file": "frontend/e2e/evidence-menu-gating.spec.ts",
+    "scenario": "以 PL 登录可见 /evidence 菜单并进入只读列表+下载证书；以 PC 登录可见且可发起存证；以 VL/CO 登录 /evidence 菜单不渲染、直接访问被 scope 裁剪为空；SA/SE 可见全量。",
+    "story": "存证管理(矩阵§7 line128) PL=○只读/PC=●/VL·CO=—；H-02 修复验收"
+   },
+   {
+    "file": "frontend/e2e/evidence-create-refids.spec.ts",
+    "scenario": "PC 在案件详情发起 RECORDING 存证：未选录音应被挡或提示；选中 READY 录音提交 → 201 ISSUING；选未 READY 录音 → 422。DELIVERY 场景须选 SIGNED 文书。MATERIAL_PACK 可留空成功。",
+    "story": "BR-M6 三场景按次存证·场景校验；M6-FE-REFIDS 修复验收"
+   },
+   {
+    "file": "frontend/e2e/evidence-verify-public.spec.ts",
+    "scenario": "无登录态访问 /evidence/{id}/verify(扫码核验)：有效存证返回 valid+hash+certNo，篡改/不存在返回 valid=false 或 404，且不泄露 org/owner 明细。",
+    "story": "BR-M6 二维码公开核验"
+   },
+   {
+    "file": "frontend/e2e/evidence-failed-state.spec.ts",
+    "scenario": "FAILED 状态存证在列表显示 danger 标识；若有重试端点点击重试回到 ISSUING。",
+    "story": "M6-FAILED-RETRY 失败态处理"
+   }
+  ],
+  "effort": "M",
+  "risk": "中。H-02 菜单修复低风险但需引入 evidence.view 权限点并三处同步(permMatrix/后端/前端)，否则口径漂移。refIds 修复需在 CaseDetailView 拉取本案 READY 录音/SIGNED 文书列表，涉及与 M5(录音)/M4(法律文书)数据耦合。重试/证据包为新契约端点须先评审是否真需求，避免过度设计。codegen 无自动断言保证 yaml 扩展↔后端注解一致，改契约后须手动核对 EvidenceM6Controller 注解。",
+  "sharedFiles": [
+   "frontend/src/layouts/AppLayout.vue (全模块共享菜单门控，改 perms 数组须避免与 H-01/H-03 其它模块改动冲突)",
+   "frontend/src/views/CaseDetailView.vue (M4/M5/M6 共用案件详情动作面板，evidence/legal/repay/promise 等多动作同文件，refIds 改动须与法律文书/录音模块协调)",
+   "backend/app/.../web/OrgSystemM1Controller.java:371 (permMatrix 权限点注册表，新增 evidence.view 须改此处)",
+   "backend/app/.../common/Permissions.java:28 (权限点白名单)",
+   "docs/api/openapi-core.yaml (契约真源，与其它模块共改须防合并冲突)",
+   "docs/ui/02-角色操作权限矩阵.md (权限矩阵真源)"
+  ],
+  "prdStoryRefs": [
+   "docs/ui/02-角色操作权限矩阵.md:128 存证管理(三场景) PL=○/PC=●/VL·CO=—",
+   "docs/ui/02-角色操作权限矩阵.md:129 存证证书下载/二维码核验 PL=●/PC=●/SA·SE=●",
+   "BR-M6 三场景按次存证(送达/录音/材料打包)",
+   "BR-M6-02 录音存证无需法务前置",
+   "BR-M6-03 按次计费只向物业",
+   "docs/api/openapi-core.yaml:1258-1291 evidence 端点组"
+  ],
+  "_key": "存证 Evidence"
+ },
+ {
+  "module": "资金双线字段隐藏 Funds-Redaction",
+  "statusSummary": "后端与契约的资金双线\"整字段省略\"已正确落地（ProjectForProvider 物理无 commInRate、BatchPropertyView 物理无 payOutRate，按 RoleResponse 选独立 record）；唯一缺口在前端三个视图把资金费率列无条件渲染成占位串\"—（XX视角不可见）\"，列头始终可见，泄露了字段存在性，违反\"整列不渲染/字段级不存在\"语义。属纯前端展示层修复。",
+  "findings": [
+   {
+    "id": "H-03",
+    "title": "无权资金字段未整列不渲染，现以占位串显示列名（泄露字段存在性）",
+    "stillLive": true,
+    "evidence": "ProjectsView.vue:33-35 收佣比例列对所有视角渲染，row.commInRate==null 时显示 '—（服务商视角无）'，列头'收佣比例'恒在。BatchesView.vue:118-120 付佣比例列恒渲染，payOutRate==null 显示 '—（物业视角不可见）'。BatchDetailView.vue:14 pct() 对 null 返回 '—（视角不可见）'，:41-42 收佣/付佣两行 el-descriptions-item 恒渲染。对照后端 BatchesM2Controller.java:159-176 toView 已按角色返回 BatchPropertyView(无 payOutRate)/BatchProviderView(无 commInRate)；ProjectsM2Controller.java:159-162 服务商返回 ProjectForProvider 物理无 commInRate。契约 openapi-core.yaml:1853/1937/1945 明确字段级不含+契约测试断言字段不存在。结论：后端/契约正确，前端列头泄露 stillLive=true。",
+    "severity": "HIGH"
+   },
+   {
+    "id": "FR-NEW-01",
+    "title": "前端缺少基于 viewRole 的列可见性判定工具，三视图各自硬编码占位文案",
+    "stillLive": true,
+    "evidence": "ProjectsView.vue 无 auth/viewRole 引用；BatchesView.vue:8 引入 auth 仅用于按钮门控，列渲染未用 viewRole；BatchDetailView.vue 用 b.viewRole(模板:37 已展示)但未据其裁列。三处占位文案各异（'服务商视角无'/'物业视角不可见'/'视角不可见'），无统一'字段不存在→不渲染列'范式。",
+    "severity": "MEDIUM"
+   }
+  ],
+  "feChanges": [
+   {
+    "file": "frontend/src/views/ProjectsView.vue",
+    "change": "收佣比例列改为条件渲染整列：用 v-if=\"items.some(r=>r.commInRate!=null)\"（或据当前 me.role!=='VL'/'CO'，但优先按响应字段存在性判定，符合字段省略语义）包裹该 el-table-column。服务商视角下整列（含列头'收佣比例'）不渲染，而非占位串。删除 :34 的 '—（服务商视角无）' 占位分支。"
+   },
+   {
+    "file": "frontend/src/views/BatchesView.vue",
+    "change": "付佣比例列(:118-120)与收佣比例列(:115-117)各自改条件渲染整列：付佣列 v-if 仅平台/服务商视角(items.some(r=>r.payOutRate!=null))，收佣列 v-if 仅平台/物业视角(items.some(r=>r.commInRate!=null))。删除 '—（物业视角不可见）' 占位文案，物业视角下付佣列整列不出。"
+   },
+   {
+    "file": "frontend/src/views/BatchDetailView.vue",
+    "change": "收佣/付佣两个 el-descriptions-item(:41-42)改为各自 v-if（收佣:b.commInRate!=null 即平台/物业；付佣:b.payOutRate!=null 即平台/服务商）。pct() 不再返回 '—（视角不可见）' 占位（仅用于真值 null 边界，如未设费率），改由 v-if 控制整项是否渲染。:61 alert 文案'物业视角无付佣比例'可保留为说明但确保该项不渲染。"
+   },
+   {
+    "file": "frontend/src/composables/useRoleFields.ts (新建·可选)",
+    "change": "抽一个小工具/常量统一'按 viewRole 或字段存在性判定列可见'的逻辑，避免三视图重复硬编码，并统一未来新增资金字段的裁列范式（与 AppLayout 菜单门控范式呼应）。非必须，S 级若不抽则三处内联。"
+   }
+  ],
+  "beChanges": [
+   {
+    "endpoint": "GET /projects, GET /projects/{id}",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动。ProjectsM2Controller.java:159-162 服务商已返回 ProjectForProvider 物理无 commInRate，字段级省略正确。"
+   },
+   {
+    "endpoint": "GET /batches, GET /batches/{id}",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动。BatchesM2Controller.java:159-176 toView 按 RoleResponse.of(s) 返回三独立 record，物业 BatchPropertyView 无 payOutRate、服务商 BatchProviderView 无 commInRate，字段级隔离正确。"
+   }
+  ],
+  "contractChanges": [
+   {
+    "path": "docs/api/openapi-core.yaml: ProjectForProvider(:1851-1869) / BatchForProperty(:1936-1943) / BatchForProvider(:1944-1951)",
+    "change": "无需改 schema（已正确字段级省略+additionalProperties/unevaluatedProperties:false）。建议仅在 getProject(:182)/getBatch(:247) summary 或新增说明里补一句'前端据字段缺失整列不渲染、不得以占位串展示列名'，把'前端不得渲染缺失字段列'写成约定，避免回归。属文档级注释，非结构变更。"
+   }
+  ],
+  "newScreens": [],
+  "e2eSpecs": [
+   {
+    "file": "frontend/e2e/funds-redaction.spec.ts",
+    "scenario": "服务商(VL/CO)登录后 /projects 列表与 /projects/{id} 详情：断言页面不出现'收佣比例'列头/标签（getByText('收佣比例') 不可见），且响应体不含 commInRate。验证整列不渲染而非占位。",
+    "story": "BR-M1-06/BR-M9-11 资金双线·服务商不见收佣比例"
+   },
+   {
+    "file": "frontend/e2e/funds-redaction.spec.ts",
+    "scenario": "物业(PL/PC)登录后 /batches 列表与 /batches/{id} 详情：断言不出现'付佣比例'列头/标签，且不出现占位串'物业视角不可见'。验证付佣整列不渲染。",
+    "story": "BR-M9-11 资金双线·物业不见付佣比例"
+   },
+   {
+    "file": "frontend/e2e/funds-redaction.spec.ts",
+    "scenario": "平台(SA)登录 /batches/{id}：断言'收佣比例'与'付佣比例'两项均渲染且有真实百分比值（双线均含）。回归保护，确保裁列未误伤平台视角。",
+    "story": "D5/BR-M9-11 平台双线全含"
+   }
+  ],
+  "effort": "S",
+  "risk": "低。纯前端展示层条件渲染，后端/契约已正确无需动。主要风险：(1) e2e 需要 VL/CO 与 PL/PC 测试账号，当前 dev seed(V900) 仅有 admin(SA)，需补种子账号或用 API mock，是跨模块依赖；(2) 按'字段存在性'(items.some)判定在空列表时列会消失，需兜底用 me.role 判定视角而非纯靠数据，避免空数据时平台视角也丢列。建议以 viewRole/me.role 为主判据。",
+  "sharedFiles": [
+   "frontend/src/stores/auth.ts (读 me.role 判视角，与所有模块共享，仅读不改)",
+   "frontend/e2e/helpers.ts (loginAs 复用；若新增角色登录可能需扩展，与其它 e2e 模块共享)",
+   "backend/app/src/main/resources/db/migration/V900__dev_seed.sql (若为 e2e 补种 VL/PL 账号则与所有后端模块共享种子文件，需协调)",
+   "docs/api/openapi-core.yaml (若补约定注释则与所有契约消费模块共享)"
+  ],
+  "prdStoryRefs": [
+   "BR-M1-06",
+   "BR-M9-11",
+   "D5",
+   "openapi-core.yaml:1853",
+   "openapi-core.yaml:1937",
+   "openapi-core.yaml:1945"
+  ],
+  "_key": "资金双线字段隐藏 Funds-Redaction"
+ },
+ {
+  "module": "公海 Sea (M3)",
+  "statusSummary": "公海读端点(GET /sea, /sea/events)与抢单/承接/拒接/指派/开放抢单已实装且与契约对齐；但平台公海缺\"再派其他服务商\"单案分支(只有开放抢单)、缺释放记录可见(BR-M3-27)、缺批量分配(BR-M3-25)三处 PRD 能力。",
+  "findings": [
+   {
+    "id": "H-04",
+    "title": "平台公海缺\"再派其他服务商\"单案分支(US-M3-02 二选一只实现了开放抢单一半)",
+    "stillLive": true,
+    "evidence": "frontend/src/views/SeaView.vue:108-113 平台公海(row.pool==='PLATFORM_SEA')仅渲染\"开放抢单\"按钮(act→/cases/{id}/open-for-claim)，无\"再派\"分支。契约 docs/api/openapi-core.yaml:589 仅有批次级 /batches/{id}/redispatch(redispatchBatch)，无单案 /cases/{id}/redispatch；该批次级端点只在 frontend/src/views/BatchesView.vue:27-57 从批次页触达，不在公海单案上下文。PRD docs/prd/03-案件流转与公海.md:122-128 US-M3-02 明确平台对平台公海案件\"再派其他服务商\"或\"开放抢单\"二选一，并校验再派护栏①(Y≠X)。后端 doDispatch 已实现护栏(DispatchM3Controller.java:165-168 lastReturned 比对)，但只走批次入口。",
+    "severity": "HIGH"
+   },
+   {
+    "id": "M3-REL-01",
+    "title": "释放记录缺失：VL 看不到本商催收员释放历史/频次(BR-M3-27)",
+    "stillLive": true,
+    "evidence": "BR-M3-27 (docs/prd/03-案件流转与公海.md:90) 要求所有释放(主动/自动)留记录、服务商负责人可见本商催收员释放历史与频次。契约仅有写端点 /cases/{id}/release(openapi-core.yaml:546 releaseCase)，无任何 release-records/releaseHistory 读端点(grep release-records/releaseRecords 全仓 0 命中)。SeaView.vue 无释放记录 UI(仅事件日志 GET /sea/events RELEASE 标签 line 66，非按催收员聚合的释放频次)。",
+    "severity": "MEDIUM"
+   },
+   {
+    "id": "M3-BULK-01",
+    "title": "批量分配缺失：VL 只能逐案指派，无多选批量/平均分配(US-M3-05 / BR-M3-25)",
+    "stillLive": true,
+    "evidence": "PRD docs/prd/03-案件流转与公海.md:151,153 US-M3-05 要求勾选多件批量分配给同一催收员(超额度部分被拒)及可选\"平均分配\"。当前 SeaView.vue:49-63,127-138 指派对话框为单案(openAssign(id)/submitAssign 单 collectorId)，契约 /cases/{id}/assign(openapi-core.yaml:515 assignCase)仅单案 path 参数，无 caseIds 批量入参。表格无多选列。",
+    "severity": "MEDIUM"
+   }
+  ],
+  "feChanges": [
+   {
+    "file": "frontend/src/views/SeaView.vue",
+    "change": "平台公海行(row.pool==='PLATFORM_SEA')新增\"再派\"按钮(auth.has('case.dispatch'))，与\"开放抢单\"并列形成二选一。打开再派对话框：选目标服务商(GET /dispatch/provider-metrics 或 /orgs 取候选+负荷指标 BR-M3-24)，提交 POST /cases/{id}/redispatch {providerId}。失败按 Error 信封提示护栏原因(409 BIZ_REDISPATCH_GUARD)。"
+   },
+   {
+    "file": "frontend/src/views/SeaView.vue",
+    "change": "指派对话框升级为支持批量：表格加多选列(el-table @selection-change)，新增\"批量分配\"入口，提交 POST /cases/assign-batch {caseIds,collectorId}（或循环单案兜底）；展示超额度被拒明细。可选\"平均分配\"在所选催收员组内按余量分摊。"
+   },
+   {
+    "file": "frontend/src/views/SeaView.vue",
+    "change": "VL 视角新增\"释放记录\"抽屉/标签：GET /providers/{id}/release-records 按催收员聚合展示释放历史与频次(BR-M3-27)，仅 case.assign/负责人可见。"
+   },
+   {
+    "file": "frontend/src/api/schema.d.ts",
+    "change": "运行 gen:api 重新生成类型：新增 /cases/{id}/redispatch、/cases/assign-batch、/providers/{id}/release-records 端点类型(由契约改动驱动，勿手改)。"
+   }
+  ],
+  "beChanges": [
+   {
+    "endpoint": "POST /cases/{id}/redispatch",
+    "existsInContract": false,
+    "existsInBackend": false,
+    "change": "新增单案再派端点(perm=case.dispatch, scope=platform)。前置=平台公海(S0/PLATFORM_SEA)；body={providerId}；复用 DispatchM3Controller.doDispatch 的护栏①逻辑(lastReturnedProvider≠providerId, requireActiveProvider)，转移到目标服务商公海。可在 PlatformDispatchM3Controller 或 DispatchM3Controller 落地以复用 lastReturnedProvider/requireActiveProvider。"
+   },
+   {
+    "endpoint": "POST /cases/assign-batch",
+    "existsInContract": false,
+    "existsInBackend": false,
+    "change": "新增批量分配端点(perm=case.assign, scope=own-org)。body={caseIds[],collectorId, 可选 evenSplit}；行锁逐案校验 CFG-HOLDCAP，超额度部分返回被拒明细而非整体失败(BR-M3-25/06)。复用现有单案 assignCase 转移逻辑。"
+   },
+   {
+    "endpoint": "GET /providers/{id}/release-records",
+    "existsInContract": false,
+    "existsInBackend": false,
+    "change": "新增释放记录读端点(scope=own-org)。按催收员聚合本商释放历史/频次(主动+自动)。地基期可由 audit_log case.release/auto-release 派生(参照 SeaM3Controller.listSeaEvents 由 case 派生事件的降级范式)，后续接独立释放记录表。"
+   }
+  ],
+  "contractChanges": [
+   {
+    "path": "/cases/{id}/redispatch",
+    "change": "新增 operationId=redispatchCase, x-permission: case.dispatch, x-data-scope: platform, requestBody={providerId(required)}; 409 BIZ_REDISPATCH_GUARD(目标=原退回服务商/已停用)。与批次级 /batches/{id}/redispatch 区分：此为平台公海单案再派(US-M3-02)。"
+   },
+   {
+    "path": "/cases/assign-batch",
+    "change": "新增 operationId=assignCasesBatch, x-permission: case.assign, x-data-scope: own-org, requestBody={caseIds[], collectorId, evenSplit?}; 响应含 assigned[]/rejected[](超额度明细 BR-M3-25/06)。新 schema BatchAssignInput + BatchAssignResult。"
+   },
+   {
+    "path": "/providers/{id}/release-records",
+    "change": "新增 operationId=listReleaseRecords, x-data-scope: own-org(VL 仅本商); 新 schema ReleaseRecord(collectorId,collectorName,caseId,reason,kind(MANUAL/AUTO),at)+ReleaseRecordPage; 支撑 BR-M3-27 释放频次可见。"
+   }
+  ],
+  "newScreens": [
+   "公海-平台公海行内\"再派服务商\"对话框(选服务商+负荷指标+护栏提示)",
+   "公海-批量分配对话框(多选案件+催收员余量推荐+超额度被拒明细)",
+   "公海-释放记录抽屉(按催收员聚合释放历史/频次, VL 视角)"
+  ],
+  "e2eSpecs": [
+   {
+    "file": "frontend/e2e/sea-redispatch.spec.ts",
+    "scenario": "SA 登录公海平台公海页，对被服务商X退回的案件点\"再派\"选服务商Y提交成功(进Y服务商公海)；再对同案选X验证护栏①拒绝并提示原因。",
+    "story": "US-M3-02 平台公海二选一处置(再派分支)"
+   },
+   {
+    "file": "frontend/e2e/sea-redispatch.spec.ts",
+    "scenario": "T1超时入平台公海(无原服务商)案件，再派任意有效服务商成功(护栏①不适用)。",
+    "story": "US-M3-02 (BR-M3-16)"
+   },
+   {
+    "file": "frontend/e2e/sea-assign-batch.spec.ts",
+    "scenario": "VL 登录服务商公海，多选N件批量分配给同一催收员；在剩余额度内全部进私海，超额度部分被拒并展示明细。",
+    "story": "US-M3-05 服务商负责人分配案件(批量, BR-M3-25/06)"
+   },
+   {
+    "file": "frontend/e2e/sea-release-records.spec.ts",
+    "scenario": "VL 打开释放记录抽屉，可见本商催收员释放历史与频次；CO/平台无关池不可见。",
+    "story": "BR-M3-27 释放记录可见(US-M3-06 衍生管理视图)"
+   }
+  ],
+  "effort": "L",
+  "risk": "中。再派单案需与批次级 redispatch 护栏逻辑保持一致(复用 DispatchM3Controller.doDispatch/lastReturnedProvider，避免两套护栏漂移)；批量分配并发与持有上限行锁需复用 assignCase 原子逻辑防止超分；新增三端点须手动同步 x-permission/x-data-scope 到后端注解(契约无自动 CI 断言, 见 ground-truth §2)。释放记录地基期由 audit_log 派生为降级实现，频次口径需与产品确认。",
+  "sharedFiles": [
+   "docs/api/openapi-core.yaml (与所有模块共享, 新增三端点+schema)",
+   "frontend/src/api/schema.d.ts (codegen 产物, 全局)",
+   "backend/app/src/main/java/com/youzheng/huicui/web/DispatchM3Controller.java (再派护栏逻辑复用, 与批次派单共享)",
+   "frontend/src/views/BatchesView.vue (批次级 redispatch 入口, 概念易与单案再派混淆需文案区分)",
+   "backend/app/src/main/java/com/youzheng/huicui/web/CasesM2Controller.java (assignCase 单案逻辑复用)"
+  ],
+  "prdStoryRefs": [
+   "US-M3-02 平台公海二选一处置 (docs/prd/03-案件流转与公海.md:122-128)",
+   "US-M3-05 服务商负责人分配案件/批量 (docs/prd/03-案件流转与公海.md:147-154, BR-M3-25)",
+   "BR-M3-27 释放记录可见 (docs/prd/03-案件流转与公海.md:90)",
+   "BR-M3-16 再派护栏① (docs/prd/03-案件流转与公海.md:91, 126)"
+  ],
+  "_key": "公海 Sea"
+ },
+ {
+  "module": "案件作业台 CaseDetail",
+  "statusSummary": "核心作业闭环（动作区/通话/承诺工单/回款/法务存证/AI采纳）已实现且后端齐备，但结案脱敏统计视图、QUOTA_BLOCKED补解析入口、标记码SSOT、AI对话分离/segmentTs呈现、联系人主号与跟进附件五处仍为缺口；其中标记码来源在契约上对CO/VL不可达，需补契约。",
+  "findings": [
+   {
+    "id": "H-05",
+    "title": "结案后统计收敛未落前端：始终渲染明细，未对 closed+redacted 的 VL/CO 切统计视图",
+    "stillLive": true,
+    "severity": "HIGH",
+    "evidence": "CaseDetailView.vue:222-238/270-288 概览联系人表、承诺表、回款表无条件渲染明细，从不读 d.case.redacted 或 status 分支；contracts Case.redacted(openapi:1979)。后端 CasesM2Controller.java:135/143/284 已置 redacted 并把 phone/ownerName 替为占位串，但前端仅原样展示占位串、未切换为统计/收敛视图，VL/CO 结案后仍看到逐行明细骨架。"
+   },
+   {
+    "id": "H-06",
+    "title": "QUOTA_BLOCKED 补解析断链：FE 仅 FAILED 走 reprocess，未接 parse 单条/batch-parse 批量",
+    "stillLive": true,
+    "severity": "HIGH",
+    "evidence": "CaseDetailView.vue:74-79 仅定义 reprocessRec→POST /recordings/{id}/reprocess；模板:250 重新处理按钮 v-if status==='FAILED'。无 QUOTA_BLOCKED 分支与 parse 调用。契约 openapi:821-839 parseRecording 与 :841-863 batchParseRecordings 均存在；后端 RecordingsM4Controller.java:193-205 parse 已实现(非QUOTA_BLOCKED/READY→409)，BillingController.java:50-53 batch-parse 已实现；schema.d.ts:875/899 类型已生成。端点全链路已就绪、唯前端未接。"
+   },
+   {
+    "id": "M-01",
+    "title": "通话结果码硬编码：MARK_CODES 写死常量，未来自 CFG-MARK-CODES",
+    "stillLive": true,
+    "severity": "MEDIUM",
+    "evidence": "CaseDetailView.vue:29-35 MARK_CODES 为本地常量，模板:367 直接遍历。真源 MarkCodeEnum(openapi:1767-1769) 取值来自 CFG-MARK-CODES、服务端按 settings 校验；markCodes 结构在 Settings(openapi:2538)。但 GET /settings x-data-scope=platform，后端 SettingsController.java:36/76 非平台一律 403——而标记执行者正是 CO(perm case.follow)。故契约无任何非平台路径让 CO/VL 取得启用标记码，硬编码是被迫的。"
+   },
+   {
+    "id": "M-02",
+    "title": "AI复盘未呈现说话人分离/对话片段/segmentTs",
+    "stillLive": true,
+    "severity": "MEDIUM",
+    "evidence": "CaseDetailView.vue:256-265 与 CallRecordView.vue:36-41 AI复盘仅渲染 summary、risks(只 level/desc，无 segmentTs)、suggestions。契约 AiReview.dialogue(speaker/text,openapi:2141) 与 risks[].segmentTs(openapi:2142) 均存在；后端 RecordingsM4Controller.java:292-300 已 SELECT 返回 dialogue/risks/suggestions。数据已下发、前端两视图均未渲染 dialogue 与 segmentTs。"
+   },
+   {
+    "id": "M-08",
+    "title": "联系人主号/标签/附件未落地：isPrimary 不显不可设、attachments 无上传",
+    "stillLive": true,
+    "severity": "MEDIUM",
+    "evidence": "CaseDetailView.vue:222-226 联系人表仅 phone/label/状态，无主号列与设主号动作；addContact:150-157 硬编码 label:'补充' 且不传 isPrimary。契约 Contact/ContactInput 含 isPrimary(openapi:1988/2054)，PATCH /contacts 请求体含 isPrimary(openapi:709)；后端 CasesM2Controller.java:139/145/236 已读 is_primary 并按其 DESC 排序、回填 isPrimary。FollowUpInput.attachments(openapi:2027) 存在，但 follow 表单:313-316 无附件、submitAct:106 不传 attachments。"
+   }
+  ],
+  "feChanges": [
+   {
+    "file": "frontend/src/views/CaseDetailView.vue",
+    "change": "H-05：新增 computed isClosed/redacted 分支，当 d.case.redacted===true 时概览/联系人 tab 不渲染逐行明细表，改渲染统计卡(应收/减免后/已回款合计/承诺数/工单数)，联系人改为脱敏占位提示；平台(SA/SE)与持有物业仍可见明细。"
+   },
+   {
+    "file": "frontend/src/views/CaseDetailView.vue",
+    "change": "H-06：通话 tab 当 status==='QUOTA_BLOCKED' 显示「补解析」按钮→新增 parseRec(recId) 调 POST /recordings/{id}/parse，处理 409 BIZ_QUOTA_EXHAUSTED；提供「批量补解析」入口调 /recordings/batch-parse(caseIds 或 batchId)。"
+   },
+   {
+    "file": "frontend/src/views/CaseDetailView.vue",
+    "change": "M-01：移除本地 MARK_CODES 常量，改从 CaseDetail 新增 markCodes 字段(见契约改动)读 enabled 项渲染下拉；mkForm.mark 默认第一项；无来源时回退当前常量兜底。"
+   },
+   {
+    "file": "frontend/src/views/CaseDetailView.vue",
+    "change": "M-02：AI复盘新增 review.dialogue 按 speaker 左右气泡渲染 text；risks 标签追加 segmentTs 定位。"
+   },
+   {
+    "file": "frontend/src/views/CallRecordView.vue",
+    "change": "M-02：独立通话记录页同样渲染 review.dialogue 说话人分离气泡与 risks[].segmentTs。"
+   },
+   {
+    "file": "frontend/src/views/CaseDetailView.vue",
+    "change": "M-08：联系人表新增主号列(isPrimary→tag)与设主号动作(PATCH /contacts/{id} isPrimary:true)；addContact 增 label 选择与 isPrimary 勾选并透传；follow 弹窗增附件上传，submitAct follow 携带 attachments:[{name,url}]。"
+   }
+  ],
+  "beChanges": [
+   {
+    "endpoint": "POST /recordings/{id}/parse",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动，已在 RecordingsM4Controller.java:193-205。仅前端接入。"
+   },
+   {
+    "endpoint": "POST /recordings/batch-parse",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动，已在 BillingController.java:50-53。仅前端接入。"
+   },
+   {
+    "endpoint": "PATCH /contacts/{id}",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "请求体已含 isPrimary(openapi:709)。核验后端是否消费 isPrimary 并维护单一主号约束(置主号时旧主号降级)；若仅消费 invalid/label 需补 isPrimary 写入与去重。"
+   },
+   {
+    "endpoint": "POST /cases/{id}/follow-ups",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "FollowUpInput.attachments 已在契约(openapi:2027)。核验后端是否持久化 attachments；若未落库需补存储与时间线引用。"
+   },
+   {
+    "endpoint": "GET /cases/{id}",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "M-01：CaseDetail 需附带案件可见启用标记码集合；后端 getCaseDetail 增加从 settings markCodes 域读 enabled 项放入 CaseDetail 响应(对 case-actor 可见，绕开 /settings platform 限制)。"
+   },
+   {
+    "endpoint": "GET /recordings/{id}/ai-review",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动，dialogue/risks(含 segmentTs)/suggestions 已在 RecordingsM4Controller.java:292-300 返回。仅前端渲染。"
+   }
+  ],
+  "contractChanges": [
+   {
+    "path": "components.schemas.CaseDetail",
+    "change": "M-01：新增 markCodes 字段(array, items {code,label,enabled,connected,effectiveFollowUp}，与 Settings.markCodes 同构)，承载案作业方可见的启用标记码，使 CO/VL 无需访问 platform-scoped /settings 即可取 CFG-MARK-CODES。"
+   },
+   {
+    "path": "GET /cases/{id}/mark-codes (备选)",
+    "change": "M-01 备选：若不撑大 CaseDetail，新增 GET /cases/{id}/mark-codes(x-permission case.follow / x-data-scope case-actor) 专返启用标记码。与上条二选一。"
+   },
+   {
+    "path": "components.schemas.Case.redacted / CaseDetail",
+    "change": "H-05：redacted=true 时 contacts/明细脱敏语义已足够，统计视图可由前端聚合无需改契约；若望后端直接给汇总，可在 CaseDetail 增 summary 统计对象(可选)。"
+   }
+  ],
+  "newScreens": [
+   "案件作业台·结案脱敏统计视图(redacted 态下的概览/联系人收敛卡)",
+   "通话 tab·QUOTA_BLOCKED 补解析操作区(单条 parse + 批量 batch-parse)",
+   "AI复盘·说话人分离对话气泡 + segmentTs 风险定位区(CaseDetail 与 CallRecord 共用组件)"
+  ],
+  "e2eSpecs": [
+   {
+    "file": "frontend/e2e/case-detail-redaction.spec.ts",
+    "scenario": "VL/CO 打开已结案(redacted)案件，断言联系人电话为脱敏占位、明细被统计卡替代；平台同案仍见完整明细",
+    "story": "US-M8 结案脱敏(docs/prd/08-结案与生命周期.md, BR-M8-09)"
+   },
+   {
+    "file": "frontend/e2e/case-recording-parse.spec.ts",
+    "scenario": "QUOTA_BLOCKED 录音出「补解析」按钮→/recordings/{id}/parse 转 PARSING；余额不足 409 提示；批量补解析→/recordings/batch-parse 返 queued/skipped",
+    "story": "US-M5 余额不足暂停→充值补解析(docs/prd/05-录音转写AI话术质检.md, BR-M5-02)"
+   },
+   {
+    "file": "frontend/e2e/case-mark-result.spec.ts",
+    "scenario": "CO 复盘内打开标记弹窗，下拉项来自服务端启用 markCodes(非硬编码)，提交接通有效码后断言 T_collector 重置",
+    "story": "US-M4 通话结果标记(docs/prd/04-催收作业.md, BR-M4-03a/BR-M4-12)"
+   },
+   {
+    "file": "frontend/e2e/case-ai-review-dialogue.spec.ts",
+    "scenario": "READY 录音 AI复盘渲染说话人分离对话气泡与 risks segmentTs 标签；CallRecord 独立页一致",
+    "story": "US-M5 AI复盘对话+质检(docs/prd/05-录音转写AI话术质检.md, BR-M5-04a)"
+   },
+   {
+    "file": "frontend/e2e/case-contacts-followup.spec.ts",
+    "scenario": "联系人表显主号标记并可设主号(PATCH isPrimary，旧主号降级)；新增联系人可勾主号；写跟进可上传附件并在时间线留痕",
+    "story": "US-M4 联系人管理与跟进留痕(docs/prd/04-催收作业.md)"
+   }
+  ],
+  "effort": "L",
+  "risk": "M-01 触及契约(新增 CaseDetail.markCodes 或新端点)并需后端 getCase 改造，跨契约+前后端三层，是本模块主要风险点，须与 settings 标记码语义(connected/effectiveFollowUp 重置 T_collector)一致；H-05 脱敏视图涉及角色×状态分支，易与列表脱敏(openapi:457/782)口径漂移。其余为纯前端接线，风险低。",
+  "sharedFiles": [
+   "docs/api/openapi-core.yaml (CaseDetail/Case schema 多模块共用，改动需重生成 schema.d.ts 并跑 CI 防漂移)",
+   "frontend/src/api/schema.d.ts (gen 产物，多模块共享)",
+   "backend/app/src/main/java/com/youzheng/huicui/web/CasesM2Controller.java (getCase 与案件列表/脱敏共用，与案件列表模块冲突点)",
+   "backend/app/src/main/java/com/youzheng/huicui/web/SettingsController.java (markCodes 真源，与设置模块共享)",
+   "frontend/src/views/CallRecordView.vue (AI复盘渲染与 CaseDetail 共用 dialogue/segmentTs，建议抽公共组件)"
+  ],
+  "prdStoryRefs": [
+   "docs/prd/05-录音转写AI话术质检.md (BR-M5-02 补解析, BR-M5-04a AI复盘, BR-M5-08 失败不扣分钟)",
+   "docs/prd/08-结案与生命周期.md (BR-M8-09 结案脱敏)",
+   "docs/prd/04-催收作业.md (BR-M4-03a 通话结果标记重置 T_collector, BR-M4-12 标记码 connected/effectiveFollowUp, 联系人/跟进留痕)"
+  ],
+  "_key": "案件作业台 CaseDetail"
+ },
+ {
+  "module": "项目维护 ProjectMaint (M2-A 项目档案)",
+  "statusSummary": "后端与契约对 M2-A 已完整就绪（createProject/updateProject/setProjectReduceTiers/setProjectCoordinators 四端点 + ProjectInput/ReduceTier/CoordinatorsInput schema 全在），缺口纯在前端：ProjectsView/ProjectDetailView 仍为只读，无新建/编辑项目、协调员挂载、减免阶梯维护界面。",
+  "findings": [
+   {
+    "id": "H-07",
+    "title": "M2 项目维护主链缺界面（只读基础字段，缺项目编辑/协调员/减免规则 + 净增新建/编辑项目入口）",
+    "stillLive": true,
+    "evidence": "ProjectsView.vue 全文仅 GET /projects 表格，无任何「新建」按钮（AppLayout.vue:25 注释声称按钮在 ProjectsView 内按 proj.edit 门控，但 ProjectsView.vue:26-40 实读无该按钮）。ProjectDetailView.vue:33-67 仅 el-descriptions 只读展示 + 作战手册采纳，无编辑表单、无协调员挂载入口、无减免阶梯维护（p.reduceTiers/p.coordinators 后端已返回但前端未渲染/未提供编辑）。对照后端：createProject(ProjectsM2Controller.java:168)、updateProject(:190)、setProjectReduceTiers(MasterWriteController.java:330)、setProjectCoordinators(MasterWriteController.java:356) 均已实现且挂 @RequirePermission；契约 openapi-core.yaml:163/190/203/217 四端点齐全。故 finding 成立但为纯前端缺口。",
+    "severity": "HIGH"
+   },
+   {
+    "id": "H-07b",
+    "title": "AppLayout 注释与实现不一致：声称新建按钮已在 ProjectsView 门控，实则不存在",
+    "stillLive": true,
+    "evidence": "AppLayout.vue:25 注释「新建按钮在 ProjectsView 内按 proj.edit 门控」与 ProjectsView.vue 实读不符（无按钮）。属文档漂移，须随 H-07 一并落地。",
+    "severity": "LOW"
+   }
+  ],
+  "feChanges": [
+   {
+    "file": "frontend/src/views/ProjectsView.vue",
+    "change": "卡片 header 右侧增『新建项目』按钮，v-if=\"auth.has('proj.edit')\"（PL/PC/SA/SE 可见）。点击打开项目新建/编辑对话框组件（见下）。表格行操作列或行点击进详情后由详情页提供编辑。引入 useAuth。"
+   },
+   {
+    "file": "frontend/src/views/ProjectDetailView.vue",
+    "change": "1) header 增『编辑档案』按钮 v-if=auth.has('proj.edit')，打开编辑对话框，预填 p 当前值，提交 PUT /projects/{id}（body=ProjectInput：name/area/省市区/propCompany/contractType/feeRows/feeCycle/penalty/payInfo/commInRate 必填/litigation）。2) 新增『关联协调员』分区：展示 p.coordinators，按钮『维护协调员』v-if=auth.has('proj.edit') 打开多选对话框（候选来自 GET /members?role=PC 本组织 PC），提交 PUT /projects/{id}/coordinators（CoordinatorsInput.coordinatorIds 全量覆盖）。3) 新增『减免阶梯』分区：展示 p.reduceTiers（discount/capCents÷100/waivePenalty/decide 枚举），按钮『维护减免规则』v-if=auth.has('reduce.policy.edit') 打开阶梯编辑表格（增删行：折扣/减免上限分→元/是否含违约金/决定权 SELF|OFFLINE），提交 PUT /projects/{id}/reduce-tiers（裸数组 ReduceTier[]，空数组=清空）。capCents 展示÷100、提交×100。decide 枚举映射催收员自决/线下内部流程。"
+   },
+   {
+    "file": "frontend/src/components/ProjectEditDialog.vue",
+    "change": "新增（可选抽组件）：项目新建/编辑共用表单对话框，含基本信息（区域必填）/合同/缴费标准 feeRows/收款/收佣比例 commInRate（Rate 分数 0-1，UI 输入百分比×0.01 存）/诉讼要素 litigation。必填校验对应 US-M2-01 验收（基本信息+缴费标准描述缺失阻止提交）。create 走 POST /projects（201），edit 走 PUT /projects/{id}。"
+   },
+   {
+    "file": "frontend/src/components/CoordinatorPicker.vue",
+    "change": "新增（可选抽组件）：协调员多选器，加载 GET /members?role=PC，el-transfer 或多选，回填已关联 ids。供项目级与后续批次级（/batches/{id}/coordinators）复用。"
+   },
+   {
+    "file": "frontend/src/layouts/AppLayout.vue",
+    "change": "修正 :25 注释，使其与新增的 ProjectsView 新建按钮一致（消除 H-07b 漂移）。"
+   }
+  ],
+  "beChanges": [
+   {
+    "endpoint": "POST /projects (createProject)",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动。ProjectsM2Controller.java:168 已实现，proj.edit/own-org，返回 201 Project。commInRate 校验 0-1 已在 reqRate。"
+   },
+   {
+    "endpoint": "PUT /projects/{id} (updateProject)",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动。ProjectsM2Controller.java:190 已实现，requireOwnOrgProject 越组织 403/不存在 404。注：契约 ProjectInput 含 coordinatorIds，但 updateProject 未处理协调员（协调员走独立 /coordinators 端点，符合设计，无需改）。"
+   },
+   {
+    "endpoint": "PUT /projects/{id}/reduce-tiers (setProjectReduceTiers)",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动。MasterWriteController.java:330，reduce.policy.edit/own-org，裸数组全量覆盖，BR-M2-18b 已自定义批次保留。"
+   },
+   {
+    "endpoint": "PUT /projects/{id}/coordinators (setProjectCoordinators)",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动。MasterWriteController.java:356，proj.edit，validateCoordinatorsArePc 校验 + audit before/after。"
+   },
+   {
+    "endpoint": "GET /members?role=PC (listMembers)",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "前端协调员候选数据源，已存在（openapi-core.yaml:1536）。确认 role 过滤参数可用即可，无需改后端。"
+   }
+  ],
+  "contractChanges": [],
+  "newScreens": [
+   "项目新建/编辑对话框（ProjectEditDialog · POST/PUT /projects）",
+   "项目详情-关联协调员维护对话框（PUT /projects/{id}/coordinators）",
+   "项目详情-减免阶梯维护编辑器（PUT /projects/{id}/reduce-tiers）"
+  ],
+  "e2eSpecs": [
+   {
+    "file": "frontend/e2e/project-maint.spec.ts",
+    "scenario": "PL 登录→项目列表见『新建项目』按钮→填基本信息(区域)+缴费标准+收佣比例→保存→新项目出现在列表",
+    "story": "US-M2-01 物业负责人创建/编辑项目"
+   },
+   {
+    "file": "frontend/e2e/project-maint.spec.ts",
+    "scenario": "PL 进项目详情→编辑档案改名/区域→保存生效→详情刷新展示新值",
+    "story": "US-M2-01 编辑项目档案"
+   },
+   {
+    "file": "frontend/e2e/project-maint.spec.ts",
+    "scenario": "PL 维护减免阶梯：增两档(折扣/上限/决定权 自决/线下)→保存→详情减免阶梯区渲染；capCents 元↔分换算正确",
+    "story": "US-M2-01 维护减免规则（BR-M2-18a）"
+   },
+   {
+    "file": "frontend/e2e/project-maint.spec.ts",
+    "scenario": "PL 维护协调员：多选两个 PC 关联→保存→详情协调员区显示两人；清空再保存→为空",
+    "story": "US-M2-02 挂载协调员（项目级·多对多）"
+   },
+   {
+    "file": "frontend/e2e/project-maint.spec.ts",
+    "scenario": "CO 登录进项目详情→无『编辑档案/维护协调员/维护减免』入口（auth.has 门控 false）",
+    "story": "US-M2-01 协调员/非负责人无维护入口被拒（BR-M2-11）"
+   },
+   {
+    "file": "frontend/e2e/project-maint.spec.ts",
+    "scenario": "新建项目时基本信息/收佣比例必填缺失→提交被阻止并提示缺失项",
+    "story": "US-M2-01 必填分区缺失阻止提交"
+   }
+  ],
+  "effort": "M",
+  "risk": "中。后端/契约零改动，纯前端补 UI，回归面小。主要风险：1) commInRate Rate 分数 0-1 与 UI 百分比换算（×100 展示/×0.01 存）须与既有 ProjectDetailView.vue:45 口径一致，错则佣金显示偏差 100 倍；2) reduceTiers.capCents 元↔分换算易错；3) 协调员候选须限本组织 PC，否则后端 validateCoordinatorsArePc 422；4) ProjectInput 含 coordinatorIds 但 updateProject 不消费协调员（走独立端点），FE 编辑档案时勿误以为能一并改协调员。",
+  "sharedFiles": [
+   "frontend/src/layouts/AppLayout.vue（菜单/注释，多模块共改）",
+   "frontend/src/views/ProjectDetailView.vue（与 M5 作战手册采纳共存，勿覆盖现有 playbook 逻辑）",
+   "frontend/src/components/CoordinatorPicker.vue（拟与 M2-B 批次级 /batches/{id}/coordinators 复用，需协调命名）",
+   "frontend/e2e/navigation.spec.ts（新增项目维护导航可能触及）",
+   "backend/app/.../MasterWriteController.java（减免/协调员端点与 M2-B 批次端点同文件，仅读不改）"
+  ],
+  "prdStoryRefs": [
+   "US-M2-01 物业负责人创建/编辑项目（docs/prd/02-项目批次案件主数据.md:103）",
+   "US-M2-02 物业负责人挂载协调员 项目级/批次级 多对多（:112）",
+   "BR-M2-11 项目创建/维护权归物业负责人",
+   "BR-M2-13 协调员关联多对多",
+   "BR-M2-18a 减免政策层级=阶梯+决定权",
+   "BR-M9-01a 收佣比例必填"
+  ],
+  "_key": "项目维护 ProjectMaint"
+ },
+ {
+  "module": "通话记录列表(净增) CallRecordsList",
+  "statusSummary": "后端 GET /recordings(listRecordings) 全套过滤+range裁剪+结案脱敏已实现、契约与类型已生成；缺的纯是前端：无「通话记录」菜单、无列表路由、无 CallRecordsView 列表页(仅有 CallRecordView 单条详情页)。属纯净增前端工作。",
+  "findings": [
+   {
+    "id": "M-03",
+    "title": "缺通话记录列表入口(路由仅详情, /recordings 列表后端已存在)",
+    "stillLive": true,
+    "evidence": "frontend/src/router/index.ts:22 仅有详情路由 cases/:id/call/:callId → CallRecordView.vue，无 /recordings 列表路由；AppLayout.vue:24-35 MENU 无『通话记录』项；frontend/src/views/ 仅 CallRecordView.vue(单条详情, 第7行注释标 US-M4-12 但实为详情页)，无列表 View。后端 RecordingsM4Controller.java:219-280 listRecordings 已实现全过滤(caseId/projectId/batchId/collectorId/phone/room/from/to/page/size)+appendRangeScope+结案脱敏 phone。契约 openapi-core.yaml:777-795 GET /recordings + CallRecordingPage(:2113) 齐备，schema.d.ts:817 已生成类型。finding 成立。",
+    "severity": "MEDIUM"
+   },
+   {
+    "id": "M-03b",
+    "title": "现有唯一入口仅经案件详情『通话/AI复盘』tab",
+    "stillLive": true,
+    "evidence": "frontend/src/views/CaseDetailView.vue:249 仅在案件详情 tab 内 router.push(`/cases/${id}/call/${latest.recording.id}`) 进单条详情;无全局『通话记录』查询页,无法按业主/房号/电话/项目/批次/时间跨案件检索(US-M4-12 BR-M4-22)。",
+    "severity": "MEDIUM"
+   }
+  ],
+  "feChanges": [
+   {
+    "file": "frontend/src/router/index.ts",
+    "change": "新增列表路由 { path: 'recordings', name: 'call-records', component: () => import('../views/CallRecordsView.vue') }(置于 cases 附近)。详情路由 cases/:id/call/:callId(line22)保留不动。"
+   },
+   {
+    "file": "frontend/src/layouts/AppLayout.vue",
+    "change": "MENU 数组(line24-35)新增 { path:'/recordings', label:'通话记录' }。建议不挂 perms(贴合读端点 GET /recordings 无 x-permission·scope=range 范式,与/cases/projects 一致,服务端 range 裁剪);若需限催收员/协调员主用可挂 case.call/case.follow。须与菜单门控口径对齐。"
+   },
+   {
+    "file": "frontend/src/views/CallRecordsView.vue",
+    "change": "新建列表页(净增)。复用 api.GET('/recordings',{params:{query:{...}}}) 已生成类型。(1)过滤表单 phone/room/caseId/projectId/batchId/collectorId/from/to(对齐后端8参数);(2)el-table 列 id/caseId/source/status/recordedAt/durationSec/phone;(3)分页 page/size 用 CallRecordingPage.meta;(4)行『AI复盘/详情』→router.push(`/cases/${row.caseId}/call/${row.id}`) 复用 CallRecordView;(5)结案脱敏 phone 后端已返'***'前端直显;(6)status tag 沿用 CallRecordView.vue:28 配色。遵原型铁律:弹窗/数组字段初始化、禁 ES2020+。"
+   }
+  ],
+  "beChanges": [
+   {
+    "endpoint": "GET /recordings (listRecordings)",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动。RecordingsM4Controller.java:219-280 已实现全过滤+range裁剪(appendRangeScope)+结案 phone 脱敏(line262,272 redact→'***')。本模块 BE 零改动。"
+   }
+  ],
+  "contractChanges": [
+   {
+    "path": "GET /recordings (openapi-core.yaml:777-795)",
+    "change": "无需改契约。端点/8参数/CallRecordingPage 已存且与后端一致。x-data-scope:range 符合『读靠 scope』范式,无需加 x-permission。本模块契约零改动。"
+   }
+  ],
+  "newScreens": [
+   "CallRecordsView.vue (通话记录列表查询页: 过滤+表格+分页, 点开进 CallRecordView 详情/AI复盘)"
+  ],
+  "e2eSpecs": [
+   {
+    "file": "frontend/e2e/call-records.spec.ts",
+    "scenario": "催收员/SA 登录→点『通话记录』菜单→断言 URL /recordings 且列表(.el-table)渲染;输入 phone 过滤→请求带 phone 参数、结果刷新",
+    "story": "US-M4-12 / BR-M4-22 通话记录查询(按业主/房号/电话搜索+项目/批次/时间过滤)"
+   },
+   {
+    "file": "frontend/e2e/call-records.spec.ts",
+    "scenario": "列表点某行『AI复盘/详情』→跳 /cases/:id/call/:callId →断言 CallRecordView 渲染(转写文本/AI复盘卡片可见)",
+    "story": "US-M4-12 点开通话→AI复盘(M5 BR-M5-04a)或进案件"
+   },
+   {
+    "file": "frontend/e2e/navigation.spec.ts",
+    "scenario": "SCREENS 数组(line5-15)追加 { label:'通话记录', url:/\\/recordings/ } 纳入 SA 各屏可达性巡检",
+    "story": "US-M4-12 屏可达性回归"
+   }
+  ],
+  "effort": "S",
+  "risk": "低。纯前端净增,后端/契约/类型全就绪,无 BE/契约改动、无数据迁移。唯一决策点:菜单门控口径(无 perms vs case.call/case.follow)——需与审计组对齐既有『读靠 scope』范式。结案脱敏由后端兜底,前端只显 '***'。",
+  "sharedFiles": [
+   "frontend/src/router/index.ts (多模块共改路由表,注意合并冲突)",
+   "frontend/src/layouts/AppLayout.vue (MENU 数组多模块共改,菜单顺序/门控冲突)",
+   "frontend/e2e/navigation.spec.ts (SCREENS 数组多模块共追加)",
+   "frontend/src/views/CallRecordView.vue (复用为详情目标,本模块不改但强依赖其路由 cases/:id/call/:callId)"
+  ],
+  "prdStoryRefs": [
+   "US-M4-12 通话记录查询 (docs/prd/04-催收作业.md:202)",
+   "BR-M4-22 (可见范围内按业主/房号/电话搜索+项目/批次/时间过滤)",
+   "BR-M8-09 (结案后查询脱敏, 后端已实现)",
+   "BR-M5-04a (点开通话→AI复盘)"
+  ],
+  "_key": "通话记录列表(净增) CallRecordsList"
+ },
+ {
+  "module": "案件筛选 CasesFilter (P-DATA-08)",
+  "statusSummary": "CasesView 仅硬编码分页 GET /cases?page=1&size=20，无任何筛选 UI；契约/后端已支持 batchId+status 过滤但前端从未传参，且契约与后端均缺 projectId、缺手机号/户号/业主关键字过滤——M-04 仍成立。",
+  "findings": [
+   {
+    "id": "M-04",
+    "title": "案件列表缺跨层级筛选/批次直达(现仅分页)",
+    "stillLive": true,
+    "evidence": "frontend/src/views/CasesView.vue:16 硬编码 api.GET('/cases',{params:{query:{page:1,size:20}}})，无 batchId/status/projectId/phone 参数；template:24-35 仅 el-card+el-table，无任何筛选表单/输入框/下拉。契约 openapi-core.yaml:459-463 仅 batchId/status/Page/Size，无 projectId、无关键字。backend CasesM2Controller.java:76-94 listCases 仅接 batchId+status(SQL已实现 WHERE c.batch_id / c.status)，无 projectId、无 owner/acctNo/phone 关键字过滤。批次直达：batchId 参数链路在契约+后端齐备(456-465 / 86-90)，但 FE 既无 UI 也未消费 route.query.batchId，无法从批次页跳达。",
+    "severity": "MEDIUM"
+   }
+  ],
+  "feChanges": [
+   {
+    "file": "frontend/src/views/CasesView.vue",
+    "change": "新增筛选栏(el-form inline)：项目下拉(载入 GET /projects 填 projectId)、批次输入/下拉(batchId)、状态下拉(status 枚举 CaseStatusEnum 8 值)、关键字输入(q：手机号/户号/业主名)。新增 filters reactive 对象+查询/重置按钮，把 page 重置为 1 后重查。"
+   },
+   {
+    "file": "frontend/src/views/CasesView.vue",
+    "change": "onMounted 读 route.query.batchId(及 projectId/status)作为初始筛选，实现从批次页/全局搜索『批次号直达』；列表请求由当前 onMounted 单次拉取改为可复用 load() 函数，filters 变更与分页都调用 load()。"
+   },
+   {
+    "file": "frontend/src/views/CasesView.vue",
+    "change": "补真分页控件 el-pagination(当前仅展示 total，page/size 写死)，page-change 触发 load()，与筛选联动。"
+   },
+   {
+    "file": "frontend/src/api/client.ts(或 schema.d.ts 经 gen:api 重生成)",
+    "change": "契约新增 projectId/q 查询参数后跑 npm run gen:api 重生成 schema.d.ts，使 api.GET('/cases') 类型接受新参数；无手写改动，仅重生成。"
+   }
+  ],
+  "beChanges": [
+   {
+    "endpoint": "GET /cases listCases",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "端点已存在。需扩参：新增 projectId(按 c.project_id 过滤，与现有 batchId 同范式 try parse Long 失败置 1=0)与 q 关键字(ILIKE 命中 c.acct_no / c.owner_name / contact.phone，需 EXISTS 子查询或 LEFT JOIN contact)。现状 CasesM2Controller.java:77-94 仅 batchId+status。注意 q 命中 owner_name/phone 时仍受 BR-M8-09 脱敏与 range scope 双重裁剪：脱敏案件不应被明文 phone/姓名关键字命中(避免侧信道泄露)，建议 q 仅对非脱敏可见行生效或排除结案脱敏行。"
+   }
+  ],
+  "contractChanges": [
+   {
+    "path": "/cases GET listCases parameters (openapi-core.yaml:459-463)",
+    "change": "新增 query 参数 projectId:{type:string}(与 /batches:235、/sea:786 同名同义，复用既有约定)；新增 q:{type:string, description:'关键字:手机号/户号/业主名,受脱敏与scope裁剪'}。x-data-scope 维持 range 不变，无需 x-permission(读靠 scope 范式)。summary 文案补『按项目/批次/状态/关键字过滤』。"
+   }
+  ],
+  "newScreens": [],
+  "e2eSpecs": [
+   {
+    "file": "frontend/e2e/cases-filter.spec.ts",
+    "scenario": "PC 进 /cases，用项目下拉+状态下拉过滤，断言表格行数变化且 URL/请求带 projectId&status",
+    "story": "P-DATA-08 跨层级筛选"
+   },
+   {
+    "file": "frontend/e2e/cases-filter.spec.ts",
+    "scenario": "从批次页/全局搜索带 ?batchId=xxx 进入 /cases，断言列表仅含该批次案件(批次号直达)",
+    "story": "P-DATA-08 批次号直达 / P-G-06 全局搜索按批次号"
+   },
+   {
+    "file": "frontend/e2e/cases-filter.spec.ts",
+    "scenario": "输入手机号/户号关键字 q 查询，断言命中目标案件；并验证 VL/CO 对结案脱敏案件用业主名/手机号关键字无法命中(脱敏不泄露)",
+    "story": "P-DATA-08 关键字筛选 + BR-M8-09 脱敏隔离"
+   }
+  ],
+  "effort": "M",
+  "risk": "关键字 q 跨 owner_name/phone 过滤与 BR-M8-09 结案脱敏冲突——若不限定，VL/CO 可用明文姓名/手机号探测被脱敏案件，构成侧信道泄露；须确保 q 只对非脱敏可见行命中。range scope 已在 appendRangeScope 落地，新参数不得绕过 WHERE 拼装顺序(scope 必须始终追加)。q 走 contact 表 LEFT JOIN/EXISTS 时注意去重与分页 count 准确。",
+  "sharedFiles": [
+   "docs/api/openapi-core.yaml (与所有改 /cases 或共享 CaseStatusEnum/projectId 参数的模块冲突)",
+   "frontend/src/api/schema.d.ts (gen:api 重生成,任何契约改动方都会触碰)",
+   "backend/app/src/main/java/com/youzheng/huicui/web/CasesM2Controller.java (与 M2/M3/M4 案件读写、脱敏、scope 模块共享)",
+   "frontend/src/views/CasesView.vue (与案件详情跳转/全局搜索结果跳转模块共享)"
+  ],
+  "prdStoryRefs": [
+   "docs/ui/01-页面清单与信息架构.md:69 P-DATA-08 案件列表(跨层级筛选+批次号直达+数据隔离)",
+   "docs/ui/01-页面清单与信息架构.md:43 P-G-06 全局搜索结果(按批次号/案件/手机号)",
+   "BR-M8-09 结案脱敏",
+   "BR-M1-14 SE range scope"
+  ],
+  "_key": "案件筛选 CasesFilter"
+ },
+ {
+  "module": "计费短信(净增) BillingSms",
+  "statusSummary": "M-06 仍成立：BillingView.vue 只平铺 /billing/usage + /billing/recharge-log，完全未消费已就绪的 GET /sms-records（契约 SmsSendRecordPage + 后端 SmsRecordsController 均已落地），也未实现 /billing/usage 契约要求的「月→日→明细」下钻；纯前端净增即可闭合 US-M9-04，无需改后端。",
+  "findings": [
+   {
+    "id": "M-06",
+    "title": "计费/短信明细不足：仅平铺用量，未用 /sms-records，无月→日→明细下钻",
+    "stillLive": true,
+    "evidence": "frontend/src/views/BillingView.vue:15-43 load() 只调 GET /billing/usage(page/size, 无 month) 与 /billing/recharge-log，usage 表(:38-43)平铺 type/qty/caseId/occurredAt，无下钻、无 month 过滤；全文件无 /sms-records 调用(grep frontend/src/views 0 命中)。契约 GET /billing/usage 摘要明写「月→日→明细下钻」(openapi-core.yaml:1337) 但 FE 未传 month/dimension。GET /sms-records 契约存在(openapi-core.yaml:1664-1680, SmsSendRecordPage:2610-2621)且后端 SmsRecordsController.java:54-115 已全量实现(projectId/caseId/status/from/to 过滤, FAILED 行带 failureReason 不剔除)，前端零消费(仅 smoke.mjs:392 触达)。US-M9-04(docs/prd/09-结算与对账.md:132-138) 要求短信发送记录/状态(成功/失败/未达)/明细 + 失败原因及汇总。",
+    "severity": "MEDIUM"
+   }
+  ],
+  "feChanges": [
+   {
+    "file": "frontend/src/views/BillingView.vue",
+    "change": "新增「短信发送明细」分区：调 GET /sms-records，支持 projectId/caseId/status/from/to 过滤 + 分页；表格列 sentAt/template/caseId/projectId/status(SENT/FAILED/DELIVERED 用 el-tag 着色)/failureReason；FAILED 行高亮并展示失败原因。"
+   },
+   {
+    "file": "frontend/src/views/BillingView.vue",
+    "change": "短信失败汇总：基于本页(或单独统计调用)聚合 FAILED 条数/占比，文案标注「失败不退条数」(BR-M9-08)，满足 US-M9-04「失败原因及汇总」验收。"
+   },
+   {
+    "file": "frontend/src/views/BillingView.vue",
+    "change": "能力用量改为「月→日→明细」下钻：load() 传 month 参数(契约 GET /billing/usage 的 month/type 入参, openapi-core.yaml:1339)；新增 type 维度切换(BillingTypeEnum STT/SMS/EVIDENCE/LEGAL) 与按月汇总→点行展开当月每日→再下钻到明细行的三级交互。"
+   },
+   {
+    "file": "frontend/src/api/schema.d.ts",
+    "change": "无需手改(generated)；若新增 sms 导出端点契约则重新 gen:api 重生成 listSmsRecords/SmsSendRecord 类型。"
+   }
+  ],
+  "beChanges": [
+   {
+    "endpoint": "GET /sms-records",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动：SmsRecordsController.java:54-115 已实现过滤/分页/range 裁剪/FAILED 带 failureReason，契约 SmsSendRecordPage 已定义。前端直接消费即可。"
+   },
+   {
+    "endpoint": "GET /billing/usage",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "BillingM9Controller(已存在)已支持 type/month 入参(契约 openapi-core.yaml:1339)；若日级汇总需服务端预聚合则按需补 dimension=day 逻辑，否则前端按 occurredAt 客户端分组即可，BE 可不动。"
+   },
+   {
+    "endpoint": "GET /sms-records/export (可选)",
+    "existsInContract": false,
+    "existsInBackend": false,
+    "change": "契约 listSmsRecords 描述标注「导出端点 TBD」(openapi-core.yaml:1669)、SmsRecordsController 尾注同样标 TBD；若 US-M9-04 需导出短信明细则新增此端点，否则本轮可不做(导出非 US-M9-04 硬验收项)。"
+   }
+  ],
+  "contractChanges": [
+   {
+    "path": "GET /sms-records (可选)",
+    "change": "如需短信明细导出：复用 POST /reports/export 模式新增 x-exportable 真端点(挂 report.export)，把当前 description 里的 TBD 落实；不做则保持现状，不阻塞 US-M9-04 主验收。"
+   },
+   {
+    "path": "无强制契约改动",
+    "change": "本 finding 主体为前端净增：/sms-records 与 /billing/usage(含 month 下钻入参) 契约+后端均已就绪，无需新 schema / x-permission / redaction 调整。"
+   }
+  ],
+  "newScreens": [
+   "BillingView 内新增「短信发送明细」分区(项目/状态/时段过滤 + 失败汇总)",
+   "BillingView 能力用量「月→日→明细」三级下钻视图"
+  ],
+  "e2eSpecs": [
+   {
+    "file": "frontend/tests/e2e/billing-sms.spec.ts",
+    "scenario": "PL 进入计费页，短信明细分区加载 GET /sms-records 并渲染发送记录(sentAt/template/status)，断言含 SENT/FAILED/DELIVERED 状态标签",
+    "story": "US-M9-04"
+   },
+   {
+    "file": "frontend/tests/e2e/billing-sms.spec.ts",
+    "scenario": "按 status=FAILED 过滤，断言 FAILED 行展示 failureReason 且失败汇总文案显示「失败不退条数」，失败行不消失",
+    "story": "US-M9-04(BR-M9-08)"
+   },
+   {
+    "file": "frontend/tests/e2e/billing-sms.spec.ts",
+    "scenario": "能力用量月→日→明细下钻：选 month 后表格按月汇总，展开某月见日级，再下钻见明细行",
+    "story": "US-M9-04 / US-M10-02"
+   },
+   {
+    "file": "frontend/tests/e2e/billing-sms.spec.ts",
+    "scenario": "CO 角色无结算/计费菜单可见性时跳过；VL 进入计费页短信分区为本组织数据(range 裁剪)不串组织",
+    "story": "US-M9-04(数据隔离)"
+   }
+  ],
+  "effort": "M",
+  "risk": "低-中：纯前端净增，后端/契约已就绪无破坏性改动。主要风险在 /billing/usage 月→日下钻的聚合归属(服务端 vs 客户端分组)需确认 BillingM9Controller 是否已支持 day 维度，否则前端按 occurredAt 客户端分组；以及短信失败「汇总」若需精确总数(非仅本页)可能需后端补 count by status，本轮可先做本页汇总。BillingView.vue 单文件改动，冲突面小。",
+  "sharedFiles": [
+   "frontend/src/views/BillingView.vue (本模块主改, 也含充值/用量, 与计费充值模块共享)",
+   "frontend/src/api/schema.d.ts (generated, 与全局共享, 仅 gen:api 重生)",
+   "frontend/src/router/index.ts (billing 路由已存在, 通常无需改)",
+   "frontend/tests/e2e/ (新 spec 与其它 e2e 共目录, 用独立文件名避免冲突)"
+  ],
+  "prdStoryRefs": [
+   "US-M9-04 (docs/prd/09-结算与对账.md:132-138)",
+   "BR-M9-08 短信发送/失败汇总·失败不退条数",
+   "BR-M9-09 平台统一签名+模板",
+   "US-M10-02 / BR-M9-06b 能力用量只量不金额·月→日→明细下钻 (openapi-core.yaml:1337)",
+   "BR-M4-16 短信发送明细"
+  ],
+  "_key": "计费短信(净增) BillingSms"
+ },
+ {
+  "module": "审计日志(净增) AuditLog",
+  "statusSummary": "契约(GET /audit-log + AuditLog/AuditLogPage schema)与后端 listAuditLog 均已实现且可用(range scope)，唯独前端缺 AuditLogView/路由/菜单——纯净增前端页即可闭环；附带一个\"被代方可见(BR-M1-15)\"的 scope 语义缺口需契约/后端确认。",
+  "findings": [
+   {
+    "id": "M-07",
+    "title": "操作日志页前端缺失(/audit-log 契约+后端已就绪，仅缺 FE 页)",
+    "stillLive": true,
+    "evidence": "契约: docs/api/openapi-core.yaml:1682-1689 listAuditLog(x-data-scope:range, 参数 from/to/Page/Size, 返回 AuditLogPage); schema docs/api/openapi-core.yaml:2559-2577 AuditLog 含 proxyFor/before/after/reason/ip/traceId/tm。后端: backend/app/src/main/java/com/youzheng/huicui/web/OrgSystemM1Controller.java:239-280 @GetMapping(\"/audit-log\") listAuditLog 已实现(平台全量; 非平台 actor_id IN org members; from/to/分页; auditMapper 全字段)。前端: frontend/src/router/index.ts:13-34 路由表无 audit 项; grep frontend/src/ 仅 frontend/src/api/schema.d.ts:2038/6982 有生成类型, 无 AuditLogView.vue, AppLayout.vue:23-35 MENU 无审计菜单。结论: 页面确实缺失，finding 成立。",
+    "severity": "HIGH"
+   },
+   {
+    "id": "M-07b",
+    "title": "被代方可见(BR-M1-15)在 range scope 下不成立——平台代操作的 AuditLog 物业/服务商看不到",
+    "stillLive": true,
+    "evidence": "契约 AuditLog.proxyFor 注释(openapi-core.yaml:2570)='代操作=代谁(平台代物业/服务商 BR-M1-15)'，UI 01-页面清单 P-ORG-08 标注'代操作记录(被代方可见)'。但后端 OrgSystemM1Controller.java:251-254 非平台过滤为 actor_id IN (SELECT id FROM account WHERE org_id=?)。平台代物业操作时 actor 是平台账号(org_id≠物业)，故该条不落入物业 org 成员集合 → 被代方(物业)查不到。x-data-scope=range 当前未把 proxy_for 指向本组织的记录纳入可见集。语义缺口，需契约补 OR 条件: actor 在本组织 OR proxy_for 指向本组织。",
+    "severity": "MEDIUM"
+   }
+  ],
+  "feChanges": [
+   {
+    "file": "frontend/src/views/AuditLogView.vue",
+    "change": "新建。复用 MembersView.vue 的 api.GET 范式: api.GET('/audit-log',{params:{query:{from,to,page,size}}})。列表列: tm/actor/action/target+targetType+targetId/scope/proxyFor(代操作徽标)/reason/ip/traceId; before/after 快照用可展开 JSON(el-popover 或 expand row)。顶部 from/to 日期范围筛选(el-date-picker)+分页(el-pagination 绑定 meta)。proxyFor 非空时高亮'代操作'标签。纯只读, 不含写按钮(契约无写端点)。"
+   },
+   {
+    "file": "frontend/src/router/index.ts",
+    "change": "在 children 内新增 { path:'audit-log', name:'audit-log', component:()=>import('../views/AuditLogView.vue') }(放在 members 后)。"
+   },
+   {
+    "file": "frontend/src/layouts/AppLayout.vue",
+    "change": "MENU 数组新增 { path:'/audit-log', label:'操作日志', perms:['member.manage'] }(置于 /members 后)。审计 GET 无 x-permission(scope=range), 但 P-ORG-08 定位为组织管理者(PC)页, 故菜单按 member.manage 门控与成员管理同档; 真隔离在后端 scope。如需让平台 SE 也见, 可改为 perms:['member.manage'] 不加 platform(SE 含 member.manage 视角色模板)。需与权限模块确认 member.manage 在 PL/PC 的授予。"
+   }
+  ],
+  "beChanges": [
+   {
+    "endpoint": "GET /audit-log",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动即可支撑前端净增页(listAuditLog 已全字段实现, OrgSystemM1Controller.java:239)。仅当采纳 M-07b 修复时, 在非平台 WHERE 子句追加 OR proxy_for 指向本组织(需 audit_log 增可关联本组织的列, 或 proxy_for 存 org 标识)以满足'被代方可见'。"
+   }
+  ],
+  "contractChanges": [
+   {
+    "path": "GET /audit-log",
+    "change": "可选(若采纳 M-07b): 在 x-data-scope:range 说明里补充 range 对 audit-log 的口径='本组织成员产生的审计 OR proxy_for 指向本组织(被代方可见 BR-M1-15)', 使契约语义与 BR-M1-15 一致; 当前契约 1682-1689 仅写 range 未澄清 proxy 可见性。"
+   }
+  ],
+  "newScreens": [
+   "AuditLogView (P-ORG-08 操作日志/代操作记录, 列表只读, from/to 筛选+分页+before/after 快照展开)"
+  ],
+  "e2eSpecs": [
+   {
+    "file": "frontend/e2e/audit-log.spec.ts",
+    "scenario": "管理角色(admin/PL)进入'操作日志'菜单→列表渲染, 表头含 时间/操作人/动作/范围列就位",
+    "story": "P-ORG-08 / US-M1(操作日志可见)"
+   },
+   {
+    "file": "frontend/e2e/audit-log.spec.ts",
+    "scenario": "代操作记录: 存在 proxyFor 非空行时显示'代操作'标签且能展开 before/after 快照",
+    "story": "BR-M1-15 代操作留痕(被代方可见)"
+   },
+   {
+    "file": "frontend/e2e/audit-log.spec.ts",
+    "scenario": "无权限角色(如 CO, 无 member.manage)菜单不渲染'操作日志'入口(UX 门控), 直接访问 /audit-log 后端按 range 裁剪",
+    "story": "BR-M1-08 审计可见范围 / 权限门控"
+   }
+  ],
+  "effort": "S",
+  "risk": "低。后端+契约已就绪, 改动是纯前端净增只读页+路由+菜单, 无写路径、无 schema 破坏。唯一非平凡点: (1)before/after 为 object|null, 渲染需容错 null 与任意 JSON 结构; (2)菜单门控权限选择(member.manage vs platform)需与权限/成员模块对齐避免 PL/PC 看不到本应可见的日志; (3)M-07b 被代方可见若纳入本轮则升为 M(涉及后端 SQL+契约语义), 建议拆出单独确认。",
+  "sharedFiles": [
+   "frontend/src/router/index.ts (与所有新增页模块共享, 加 children 行)",
+   "frontend/src/layouts/AppLayout.vue (MENU 数组, 与成员/设置/报表等所有菜单模块共享)",
+   "backend/app/src/main/java/com/youzheng/huicui/web/OrgSystemM1Controller.java (与权限矩阵/组织/成员 M1 模块共享, 仅当采纳 M-07b 才触碰)",
+   "docs/api/openapi-core.yaml (与所有契约改动共享, 仅 M-07b 触碰 /audit-log 段)"
+  ],
+  "prdStoryRefs": [
+   "P-ORG-08 操作日志/代操作记录(docs/ui/01-页面清单与信息架构.md:56)",
+   "BR-M1-08 授权变更/启停/登录/交接全程留痕",
+   "BR-M1-15 平台代物业/服务商操作=代操作留痕(被代方可见)"
+  ],
+  "_key": "审计日志(净增) AuditLog"
+ },
+ {
+  "module": "设置全域 SettingsDomains",
+  "statusSummary": "后端 SettingsController + 契约 SettingsInput 已全量支持 5 个配置域(TIMERS/ROTATION/MARK_CODES/CLOSE_REASONS/SMS)的读写与版本/审计；前端 SettingsView 仅实现了 ROTATION 的编辑表单，其余 4 域只读展示无编辑 UI；权限矩阵表格缺 BR-M1-04c 要求的导出按钮且契约无导出端点。即:前后端割裂在 FE 侧，BE/契约已就绪。",
+  "findings": [
+   {
+    "id": "M-09",
+    "title": "设置页只能编辑 ROTATION，缺 TIMERS/MARK_CODES/CLOSE_REASONS/SMS 全域编辑表单",
+    "stillLive": true,
+    "evidence": "frontend/src/views/SettingsView.vue:19-28 仅 openRotation/saveRotation；:68 仅\"编辑轮转配置(ROTATION)\"按钮；:121-127 仅 ROTATION 对话框(holdCap/maxRotations)；:30 domainOf 读取全 5 域但 :69-74 表格纯只读展示。后端 SettingsController.java:188-208 validateDomainBody 已全量支持 TIMERS/ROTATION/MARK_CODES/CLOSE_REASONS/SMS 写入(:144-153 INSERT 各域 jsonb 列)；契约 openapi-core.yaml:2541-2552 SettingsInput 已定义全 5 域字段。故为纯 FE 缺口，BE+契约已就绪。",
+    "severity": "MEDIUM"
+   },
+   {
+    "id": "L-02",
+    "title": "权限矩阵表格缺导出按钮(BR-M1-04c \"可导出\")",
+    "stillLive": true,
+    "evidence": "frontend/src/views/SettingsView.vue:78-82 权限矩阵 el-table 无任何导出按钮(对比 ReportsView.vue:46 有 auth.has('report.export') 导出 xlsx 按钮)。契约 openapi-core.yaml:1690-1696 getPermissionMatrix 仅 GET 无导出端点；grep 确认无 /permission-matrix/export。PRD docs/prd/01-组织与权限.md:46 BR-M1-04c 明确\"平台可查看、可导出\"。",
+    "severity": "LOW"
+   }
+  ],
+  "feChanges": [
+   {
+    "file": "frontend/src/views/SettingsView.vue",
+    "change": "M-09: 为 TIMERS 域新增编辑对话框 + 按钮(t1Hours/tCollectorHours/t2Hours/maxCycleDays，参 CFG-TIMERS-DRAFT 建议值与含义提示)，复用 saveRotation 范式改为通用 saveDomain(domain, value)，PUT /settings body={domain:'TIMERS', timers:{...}}，全部 settings.manage 门控。注意非负/合理区间前端校验(对齐 US-M3-11 负数拒绝)。"
+   },
+   {
+    "file": "frontend/src/views/SettingsView.vue",
+    "change": "M-09: 为 SMS 域新增编辑对话框(cooldownMinutes/signature/templates 列表/warnThreshold，契约 :2552)，settings.manage 门控；signature/templates 标注\"平台统一配置 BR-M9-09，物业不创建\"。"
+   },
+   {
+    "file": "frontend/src/views/SettingsView.vue",
+    "change": "M-09: 为 MARK_CODES 域新增数组编辑器(code/label/enabled/connected/effectiveFollowUp，契约 :2538/2550)，须保证 connected/effectiveFollowUp 结构与读一致(BR-M4-12)；行内增删改 + 保存 PUT {domain:'MARK_CODES', markCodes:[...]}。"
+   },
+   {
+    "file": "frontend/src/views/SettingsView.vue",
+    "change": "M-09: 为 CLOSE_REASONS 域新增数组编辑器(kind=CloseKindEnum/code/label，契约 :2539/2551)，PUT {domain:'CLOSE_REASONS', closeReasons:[...]}。"
+   },
+   {
+    "file": "frontend/src/views/SettingsView.vue",
+    "change": "M-09: 重构 form 状态——当前 form 硬编码 {holdCap,maxRotations} 仅适配 ROTATION，需改为按 domain 动态初始化的表单结构(遵循原型约定：弹窗数组字段初始就初始化防白屏；禁用 ES2020+语法)。"
+   },
+   {
+    "file": "frontend/src/views/SettingsView.vue",
+    "change": "L-02: 在权限矩阵 el-divider/表格区(:78-82)加导出按钮。优先客户端 CSV 导出(matrix.value 已在内存，无需后端端点，feature/role/permission/dataScope/allowed 四五列拼 CSV + Blob 下载)，settings.manage 或 platform 门控。若选服务端 xlsx 则依赖下方 BE/契约新增导出端点。"
+   }
+  ],
+  "beChanges": [
+   {
+    "endpoint": "PUT /settings (各域)",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动。SettingsController.java updateSettings 已全量支持 5 域写入/版本递增/审计(:106-162)，validateDomainBody 已覆盖各域(:188-208)。M-09 是纯前端缺口，后端无改动。"
+   },
+   {
+    "endpoint": "GET /settings",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动。listSettings 已返回全 5 域最新版本(:73-101)。"
+   },
+   {
+    "endpoint": "GET /permission-matrix/export (可选)",
+    "existsInContract": false,
+    "existsInBackend": false,
+    "change": "L-02 若采用服务端导出方案则需新增。建议优先前端客户端 CSV 导出(矩阵已在内存、数据量小、平台内部用)，避免新增端点。若坚持服务端 xlsx，则须新增端点 + PermissionInterceptor 注解(x-permission 建议 none/platform scope，对齐 getPermissionMatrix)。"
+   }
+  ],
+  "contractChanges": [
+   {
+    "path": "openapi-core.yaml: /settings PUT + SettingsInput",
+    "change": "无需改契约。SettingsInput(:2541-2552) 与 Settings(:2529-2540) 已含全 5 域字段，updateSettings(:1652-1662) 已挂 x-permission=settings.manage + x-data-scope=platform。M-09 不触发契约改动。"
+   },
+   {
+    "path": "openapi-core.yaml: /permission-matrix/export (可选)",
+    "change": "L-02 仅在选服务端导出时才新增此端点(GET，x-data-scope=platform，响应 file/octet-stream 或复用 ReportsExport 范式)。若采用前端 CSV 方案则契约零改动。推荐前端 CSV 方案以保契约稳定(v1.3.1 已四轮审计冻结)。"
+   }
+  ],
+  "newScreens": [],
+  "e2eSpecs": [
+   {
+    "file": "frontend/e2e/settings.spec.ts",
+    "scenario": "SA 登录进 /settings，编辑 TIMERS(改 t2Hours)保存成功，再次 GET /settings 该域 version 递增、值生效；提交负数被拒(校验提示)",
+    "story": "US-M3-11 超管配置时效参数(BR-M3-19 仅新计时案件生效 / 非法值拒绝)"
+   },
+   {
+    "file": "frontend/e2e/settings.spec.ts",
+    "scenario": "SA 编辑 MARK_CODES 数组(增一条 connected=true/effectiveFollowUp=true)保存，回读结构一致",
+    "story": "US-M3-11 派生 / BR-M4-12 标记码结构读写一致"
+   },
+   {
+    "file": "frontend/e2e/settings.spec.ts",
+    "scenario": "SA 编辑 SMS(cooldownMinutes/signature)与 CLOSE_REASONS 保存成功，全 5 域均可编辑",
+    "story": "US-M3-11 全域参数配置(BR-M4-14a/M9-08/09 短信/结案原因配置)"
+   },
+   {
+    "file": "frontend/e2e/settings.spec.ts",
+    "scenario": "非平台角色(PL)无 /settings 菜单(AppLayout platform:true 门控)；若直访路由后端 403",
+    "story": "BR-M1-04b 参数配置仅平台 / 菜单与后端 platform scope 双重门控"
+   },
+   {
+    "file": "frontend/e2e/settings.spec.ts",
+    "scenario": "SA 在权限矩阵区点导出，触发 CSV/文件下载且内容含 feature/role/permission 列",
+    "story": "BR-M1-04c 权限矩阵总览可导出"
+   }
+  ],
+  "effort": "M",
+  "risk": "M-09 主要风险:① MARK_CODES/CLOSE_REASONS 是数组域，数组编辑器须遵循原型约定(弹窗数组字段初始即初始化防白屏、禁 ES2020+ 语法兼容老 WebView)，否则易白屏；② MARK_CODES 的 connected/effectiveFollowUp 结构必须读写一致(BR-M4-12)，写错会影响 T_collector 重置逻辑(M4)，属跨模块语义耦合；③ form 状态从单一 ROTATION 结构改通用结构有回归风险，须保留 ROTATION 既有行为。L-02 低风险:推荐前端 CSV 方案则不碰契约(已冻结 v1.3.1)与后端。整体无后端/契约必改项，风险集中在前端表单正确性。",
+  "sharedFiles": [
+   "frontend/src/views/SettingsView.vue (本模块独占，但与 AI 配置/话术库/权限矩阵共处同一文件——改动须避免碰已有 AI/script-lib/matrix 逻辑)",
+   "frontend/src/layouts/AppLayout.vue (菜单 /settings platform:true 门控，新增编辑不改菜单；若加 e2e 角色门控断言会读此文件)",
+   "frontend/e2e/helpers.ts (loginAs 复用，新增 settings.spec.ts 依赖)",
+   "docs/api/openapi-core.yaml (仅 L-02 服务端方案才触碰，与其它模块共享契约文件——推荐 CSV 方案规避)"
+  ],
+  "prdStoryRefs": [
+   "US-M3-11 (docs/prd/03-案件流转与公海.md:202-206) 超管配置 T1/T2/TC/MAXCYCLE 时效参数",
+   "BR-M3-19 参数变更只对新计时案件生效",
+   "BR-M1-04b (docs/prd/01-组织与权限.md:45) 平台参数配置范围含 CFG 时效/计费/角色模板/权限矩阵/AI",
+   "BR-M1-04c (docs/prd/01-组织与权限.md:46) 权限矩阵总览可导出",
+   "BR-M4-12 标记码 connected/effectiveFollowUp 结构",
+   "BR-M9-08/09 SMS 阈值/签名/模板平台统一配置",
+   "docs/api/CFG-TIMERS-DRAFT.md TIMERS 各值含义/建议值/计时基准"
+  ],
+  "_key": "设置全域 SettingsDomains"
+ },
+ {
+  "module": "成员组织 MembersOrg",
+  "statusSummary": "成员管理/督导/组织管理三块功能闭环且后端 member.manage/org.manage + own-org/range scope 隔离正确；唯一实存缺陷是前端 ROLE_LABELS 角色文案漂移（PC/CO 各被错标为\"物业催收员\"/\"服务商催收员\"，与矩阵\"协调员/催收员\"不符），属纯文案级 S 工。",
+  "findings": [
+   {
+    "id": "L-01",
+    "title": "角色文案漂移：ROLE_LABELS 把 PC/CO 标成催收员，与矩阵/后端不符",
+    "stillLive": true,
+    "evidence": "frontend/src/views/MembersView.vue:15 ROLE_LABELS = { ... PC: 'PC 物业催收员', ... CO: 'CO 服务商催收员' }；矩阵 docs/ui/02-角色操作权限矩阵.md:16 定义 PC=物业协调员、:18 CO=催收员；后端 MemberM1Controller.java:149/153 文案为「协调员(PC)」「催收员(CO)」。前端是唯一漂移源。VL='服务商负责人'与矩阵:17 一致、PL='物业负责人'与:15 一致，无须改。",
+    "severity": "LOW"
+   },
+   {
+    "id": "L-02",
+    "title": "角色文案为前端硬编码字典，契约 RoleTemplateEnum 无展示标签作为单一真源",
+    "stillLive": true,
+    "evidence": "docs/api/openapi-core.yaml:1756 RoleTemplateEnum: enum:[SA,SE,PL,PC,VL,CO] 仅枚举码无 label；表格列 MembersView.vue:136 直接 prop='role' 渲染裸码、新建/编辑下拉靠 ROLE_LABELS:15 本地字典。两处文案口径分散，是 L-01 复发根因。建议在契约枚举旁补 x-enum-labels 或文档锚定，前端单一引用。",
+    "severity": "LOW"
+   },
+   {
+    "id": "N-01",
+    "title": "权限子集授予 UI 把当前主体「全部 permissions」铺成 checkbox，未按目标角色模板预过滤",
+    "stillLive": true,
+    "evidence": "MembersView.vue:185-187/198-200 v-for=\"p in myPermissions\" 列出操作人全部权限点为可勾选项；后端 MemberM1Controller.java:160-163 requireSubset 仅校验⊆操作人集，不校验⊆目标 role 应得集。建组织类型已被后端 role 校验锁定(只能建 PC/CO)，但权限勾选可越出该角色语义模板(如给 CO 勾 payreq.create)。属「净增 角色模板配置」缺口：缺按 role 的默认权限模板/越模板提示。非阻断，当前靠人工勾选。",
+    "severity": "NEW"
+   },
+   {
+    "id": "N-02",
+    "title": "无未授权只读态——/members 菜单与页面对无 member.manage 者整体不渲染，符合矩阵但需确认非「只读提示」诉求",
+    "stillLive": true,
+    "evidence": "AppLayout.vue:35 { path:'/members', perms:['member.manage'] } 菜单门控；MembersView.vue:133/138 新增/操作列 v-if=auth.has('member.manage')；表格本身无 v-if 但路由仅菜单可达。即不存在「有入口但只读」场景。任务所列「未授权只读提示口径」在本模块不成立(无中间只读态)，确认为非缺陷；若 PRD 要求 VL/CO 进页只读看本组织成员，则为净增需求(当前无此入口)。",
+    "severity": "NEW"
+   }
+  ],
+  "feChanges": [
+   {
+    "file": "frontend/src/views/MembersView.vue",
+    "change": "修正 ROLE_LABELS(line 15)：PC 改为 'PC 物业协调员'、CO 改为 'CO 催收员'（对齐矩阵:16/:18 与后端 MemberM1Controller.java:149/153）。SA/SE/PL/VL 维持。"
+   },
+   {
+    "file": "frontend/src/views/MembersView.vue",
+    "change": "角色列(line 136 prop='role')渲染裸码 PC/CO，建议加 formatter 用 ROLE_LABELS 映射展示中文，避免表格仍显裸码而下拉显中文的双口径。"
+   },
+   {
+    "file": "frontend/src/views/MembersView.vue",
+    "change": "(N-01,可选)权限子集 checkbox(line 185-187/198-200)：按所选 role 引入「该角色默认权限模板」做预勾选+越模板灰提示，提示文案与后端 requireSubset 口径一致(权限须⊆操作人集)。"
+   },
+   {
+    "file": "frontend/src/stores/auth.ts 或新增 frontend/src/constants/roles.ts",
+    "change": "(L-02)抽出单一 ROLE_LABELS 常量，MembersView 与其它引用角色文案处统一 import，消除分散硬编码。"
+   }
+  ],
+  "beChanges": [
+   {
+    "endpoint": "POST /members",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无须改。role 枚举/组织类型匹配/权限子集校验已在 MemberM1Controller.java:133-163 完整，文案漂移纯前端。"
+   },
+   {
+    "endpoint": "PATCH /members/{id}",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无须改。MemberPatch(openapi:2588) name/permissions/dataScope 与后端 updateMember:200 一致。"
+   },
+   {
+    "endpoint": "GET /members,/members/supervision,/orgs",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无须改。own-org/range scope + manageable 派生(MemberM1Controller.java:369-375)正确。"
+   },
+   {
+    "endpoint": "(N-01 可选)POST /members 角色权限模板校验",
+    "existsInContract": false,
+    "existsInBackend": false,
+    "change": "若采纳按角色模板裁剪，需后端补「permissions ⊆ role 默认模板集」二次校验(当前仅⊆操作人集)。非本轮必须。"
+   }
+  ],
+  "contractChanges": [
+   {
+    "path": "components/schemas/RoleTemplateEnum (openapi-core.yaml:1756)",
+    "change": "(L-02,建议)补 x-enum-labels 或描述把六码 ↔ 中文标签锚定为单一真源(SA 平台超管/SE 平台员工/PL 物业负责人/PC 物业协调员/VL 服务商负责人/CO 催收员)，供前端引用消除文案漂移。本轮允许改契约。"
+   },
+   {
+    "path": "components/schemas/MemberInput.permissions (openapi-core.yaml:2523)",
+    "change": "(N-01,可选)描述里明确「权限子集 ⊆ 操作人持有 且 ⊆ 目标 role 默认模板」口径，若采纳角色模板裁剪。"
+   }
+  ],
+  "newScreens": [],
+  "e2eSpecs": [
+   {
+    "file": "frontend/e2e/members.spec.ts",
+    "scenario": "PL 物业负责人进成员页，打开新增成员对话框，角色下拉显示 'PC 物业协调员'（断言文案不含「催收员」），创建后表格角色列正确渲染。",
+    "story": "US-M1-04 成员管理 / BR-M1-04a 本组织建员；矩阵:16 PC=物业协调员"
+   },
+   {
+    "file": "frontend/e2e/members.spec.ts",
+    "scenario": "VL 服务商负责人新增成员，角色下拉显示 'CO 催收员'（断言不含「服务商催收员」误文案）。",
+    "story": "BR-M1-04a 服务商负责人建 CO；矩阵:18 CO=催收员"
+   },
+   {
+    "file": "frontend/e2e/members.spec.ts",
+    "scenario": "权限子集勾选超出操作人权限集时后端返回 403，前端 ElMessage 显示越子集提示(对齐 MemberM1Controller.java:412)。",
+    "story": "BR-M1-03 负责人在权限子集内裁剪员工"
+   },
+   {
+    "file": "frontend/e2e/members.spec.ts",
+    "scenario": "CO/VL(无 member.manage)登录后侧栏无「成员」菜单、直链 /members 不渲染管理操作(验证 N-02 无只读态)。",
+    "story": "矩阵 §8 成员管理仅本组织负责人；AppLayout perms 门控"
+   }
+  ],
+  "effort": "S",
+  "risk": "低。L-01/L-02 为纯前端文案与常量抽取，零后端/契约逻辑改动，回归面小。唯一注意：若同时采纳 N-01 角色模板裁剪(净增)，会牵动后端校验，风险升至 M——建议拆为后续单独模块，本轮只做文案修正(S)。契约 RoleTemplateEnum 加 x-enum-labels 不被 codegen 消费，无破坏性。",
+  "sharedFiles": [
+   "docs/api/openapi-core.yaml (RoleTemplateEnum:1756、MemberInput:2523、MemberPatch:2588 被多模块共享，改 enum 描述需协调)",
+   "frontend/src/stores/auth.ts (若抽 ROLE_LABELS 入此处，跨模块共享)",
+   "frontend/src/layouts/AppLayout.vue (菜单门控,与全局导航模块共享,本模块不改)",
+   "frontend/e2e/navigation.spec.ts (已含「成员」菜单断言:16，新增 members.spec.ts 勿与其重复)"
+  ],
+  "prdStoryRefs": [
+   "docs/ui/02-角色操作权限矩阵.md:11-19 (六角色码定义,PC=物业协调员/CO=催收员)",
+   "US-M1-04 成员权限/数据范围调整",
+   "BR-M1-03 负责人权限子集裁剪",
+   "BR-M1-04a 本组织建员·角色匹配组织类型",
+   "BR-M1-12 负责人常驻不可降权",
+   "US-M1-05 重置密码",
+   "US-M1-09 负责人改绑交接",
+   "BR-M10-10 督导记录写审计"
+  ],
+  "_key": "成员组织 MembersOrg"
+ },
+ {
+  "module": "批次协调员/覆盖同步(净增) BatchCoord",
+  "statusSummary": "后端写端点(批次协调员/批次减免覆盖/批次手册采纳)与GET reduce-tiers source推导均已落地且在契约内；前端 BatchDetailView 完全只读，缺协调员维护、减免覆盖编辑、手册查看/采纳三块 UI；BR-M2-18b \"项目级已更新·有差异+一键同步\" 的 drift 信号在契约与后端均不存在，且 BatchView.reduceMode/playbookMode 是 toView() 里的 \"INHERIT\" 硬编码占位。",
+  "findings": [
+   {
+    "id": "BC-01",
+    "title": "批次缺协调员维护 UI（PC↔批次多对多）",
+    "stillLive": true,
+    "evidence": "BatchDetailView.vue 全文(1-63)仅渲染减免档位+案件清单，无协调员区块、无 PUT /batches/{id}/coordinators 调用。后端 setBatchCoordinators 已实现(MasterWriteController.java:263-285, @RequirePermission(\"batch.import\"), DELETE+INSERT batch_coordinators + audit \"batch.coordinators.set\")，契约 setBatchCoordinators 在 openapi-core.yaml:298-309，schema.d.ts:246/4136 已生成类型。纯前端缺口。",
+    "severity": "HIGH"
+   },
+   {
+    "id": "BC-02",
+    "title": "批次级减免覆盖只读、无编辑/覆盖/清除(恢复继承) UI",
+    "stillLive": true,
+    "evidence": "BatchDetailView.vue:45-53 仅展示 tiers + sourceLabel(INHERITED/CUSTOM)，无编辑入口，无 PUT /batches/{id}/reduce-tiers 调用，无\"传空数组清除自定义恢复继承\"操作。后端 putBatchReduceTiers 已落地(MasterWriteController.java:301-325，全量覆盖+空数组回退继承)，GET source 推导(effectiveReduceTiers 382-392：有 batch_id 记录→CUSTOM 否则 INHERITED)。契约 openapi-core.yaml:334-364。纯前端缺口。",
+    "severity": "HIGH"
+   },
+   {
+    "id": "BC-03",
+    "title": "批次级作战手册查看/采纳/清除 UI 完全缺失",
+    "stillLive": true,
+    "evidence": "BatchDetailView.vue 无 playbook 区块。契约 getBatchPlaybook/adoptBatchPlaybook 已定义(openapi-core.yaml:366-404，POST content=CUSTOM / content=null=清除恢复继承, x-permission playbook.adopt)，schema.d.ts:308/315 已生成。ProjectDetailView.vue:50-66 已有项目级手册采纳样板可镜像。批次侧 0 实现。",
+    "severity": "MEDIUM"
+   },
+   {
+    "id": "BC-04",
+    "title": "BR-M2-18b 覆盖同步核心(项目级已更新·有差异标记 + 一键同步) 在契约与后端均不存在",
+    "stillLive": true,
+    "evidence": "全仓 grep hasDiff/has_diff/项目级已更新/有差异/drift/syncFromProject/一键同步 在 docs/api/openapi-core.yaml 与 backend/.../web/ 命中 0 条。PRD BR-M2-18b(行94)要求:已覆盖批次保留自定义但系统标记\"项目级已更新·有差异\"、PL 可查看差异或一键同步为项目最新。当前 setProjectReduceTiers(MasterWriteController.java:341)仅删 batch_id IS NULL、自定义批次保留=不冲掉(部分满足)，但无任何 drift 标记/diff 比对/sync 端点。属净增能力。",
+    "severity": "HIGH"
+   },
+   {
+    "id": "BC-05",
+    "title": "BatchView.reduceMode/playbookMode 为硬编码 INHERIT 占位，未反映真实 source",
+    "stillLive": true,
+    "evidence": "BatchesM2Controller.java:163-164 final reduceMode=\"INHERIT\"/playbookMode=\"INHERIT\" 占位 + TODO(157)。即 GET /batches/{id} 返回的 reduceMode/playbookMode 恒为 INHERIT，不论该批次是否已 CUSTOM 覆盖；与 GET reduce-tiers 的 source 推导不一致。schema.d.ts:2399/2404 枚举存在但后端不填真值。",
+    "severity": "MEDIUM"
+   },
+   {
+    "id": "BC-06",
+    "title": "reduce-tiers GET 端点权限语义偏紧(reduce.policy.edit 才能查看)导致 BatchDetail 对无该权限角色降级",
+    "stillLive": true,
+    "evidence": "契约 getBatchReduceTiers x-permission=reduce.policy.edit(openapi-core.yaml:321)，后端 MasterWriteController.java:290 @RequirePermission(\"reduce.policy.edit\")。BatchDetailView.vue:23-24 据 403 设 tiersPermDenied 显示警告。设计如此(读靠 edit 权限)，非缺陷但需在协调员/服务商视角下确认减免对其展示口径(PRD §2.1 减免政策对服务商可见为催收依据)——当前 VL/CO/PC 若无 reduce.policy.edit 则看不到任何减免档位，可能与 BR-M2-03 催收依据可见冲突，需产品确认。",
+    "severity": "LOW"
+   }
+  ],
+  "feChanges": [
+   {
+    "file": "frontend/src/views/BatchDetailView.vue",
+    "change": "新增\"批次协调员\"区块：展示 b.coordinators(CoordinatorRef[])；PL/SA(auth.has('batch.import'))下提供\"维护协调员\"el-dialog，候选源拉本物业 PC 成员(GET /members 过滤 role=PC)，全量选中后 PUT /batches/{id}/coordinators body={coordinatorIds}；成功后刷新 getBatch。镜像 BC-03 的 dialog 范式。"
+   },
+   {
+    "file": "frontend/src/views/BatchDetailView.vue",
+    "change": "减免档位区块加编辑能力：auth.has('reduce.policy.edit')显\"自定义覆盖\"按钮→el-dialog 可增删档(discount/capCents/waivePenalty/decide) PUT /batches/{id}/reduce-tiers body={tiers}；当 source=CUSTOM 时显\"清除自定义·恢复继承项目\"按钮→PUT tiers=[]；保存后刷新 source 标签。注意 capCents 展示÷100 录入×100。"
+   },
+   {
+    "file": "frontend/src/views/BatchDetailView.vue",
+    "change": "新增\"批次作战手册\"区块：GET /batches/{id}/playbook 展示 source(INHERITED/CUSTOM)+version+content；auth.has('playbook.adopt')显\"采纳为批次自定义\"(POST content=...)与\"恢复继承项目\"(POST content=null)。镜像 ProjectDetailView.vue:50-66。"
+   },
+   {
+    "file": "frontend/src/views/BatchDetailView.vue",
+    "change": "覆盖同步(依赖 BC-04 契约净增)：当 batch 返回 drift 标记(如 reduceDrift/playbookDrift=true)时，在对应区块显 el-alert warning\"项目级已更新·有差异\" + \"查看差异\"/\"一键同步为项目最新\"按钮，调用新增 sync 端点。若 BC-04 本轮不落地则降级为仅 TODO 注释占位。"
+   },
+   {
+    "file": "frontend/src/views/ProjectDetailView.vue",
+    "change": "补齐项目级协调员维护 UI(当前 grep 该文件无 coordinators 编辑入口)：与 BatchCoord 共用同一 PC 选择 dialog 组件，PUT /projects/{id}/coordinators(proj.edit)。建议抽 CoordinatorPicker.vue 复用，避免与本模块重复实现。"
+   }
+  ],
+  "beChanges": [
+   {
+    "endpoint": "PUT /batches/{id}/coordinators (setBatchCoordinators)",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动。MasterWriteController.java:263-285 已实现含 audit。FE 直接对接。"
+   },
+   {
+    "endpoint": "PUT /batches/{id}/reduce-tiers (putBatchReduceTiers)",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动。MasterWriteController.java:301-325 全量覆盖+空数组恢复继承已实现。"
+   },
+   {
+    "endpoint": "GET /batches/{id}/reduce-tiers (getBatchReduceTiers)",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "无需改动。source 推导正确(effectiveReduceTiers 382-401)。"
+   },
+   {
+    "endpoint": "GET/POST /batches/{id}/playbook",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "需核验 PlaybookController.java 是否已覆盖批次级 GET/POST(本轮 grep 未深读)；若仅项目级，需补批次级实现，否则无改动。"
+   },
+   {
+    "endpoint": "GET /batches/{id} (getBatch) reduceMode/playbookMode 真值化",
+    "existsInContract": true,
+    "existsInBackend": true,
+    "change": "BatchesM2Controller.java:163-164 去掉 INHERIT 硬编码：JOIN reduce_tier(batch_id=b.id 存在→CUSTOM)与 playbook(batch 级存在→CUSTOM)推导真实 mode，消解 BC-05 与 GET reduce-tiers source 的不一致。"
+   },
+   {
+    "endpoint": "GET /batches/{id} drift 标记 + POST /batches/{id}/reduce-tiers:sync / :playbook:sync (净增 BC-04)",
+    "existsInContract": false,
+    "existsInBackend": false,
+    "change": "净增 BR-M2-18b 覆盖同步:1)项目级减免/手册需带版本或 updatedAt;2)batch CUSTOM 记录记下\"覆盖时项目版本\";3)getBatch 比对得出 reduceDrift/playbookDrift 布尔;4)新增 sync 端点放弃自定义重新继承(等价 PUT tiers=[] / playbook content=null 但语义化)。本轮允许改契约,需新 schema 字段+端点。"
+   }
+  ],
+  "contractChanges": [
+   {
+    "path": "components/schemas/BatchBase (BatchView 三变体)",
+    "change": "新增可选 reduceDrift/playbookDrift: boolean，表达 BR-M2-18b\"项目级已更新·该 CUSTOM 批次有差异\"；当前 reduceMode/playbookMode(openapi-core.yaml:1922-1923)需后端填真值而非占位。"
+   },
+   {
+    "path": "/batches/{id}/reduce-tiers:sync 与 /batches/{id}/playbook:sync (或复用 PUT 空体语义)",
+    "change": "净增\"一键同步为项目最新(放弃自定义重新继承)\"端点；x-permission=reduce.policy.edit / playbook.adopt，x-data-scope=own-org。也可不加新路径，约定 PUT reduce-tiers tiers=[] 即 sync，但需为 playbook 对称。"
+   },
+   {
+    "path": "GET /batches/{id}/reduce-diff(可选)",
+    "change": "BR-M2-18b\"查看差异\"：返回项目级 vs 批次自定义档位 diff。若 UI 仅需\"有差异+一键同步\"可不加此端点，前端用已有 GET /projects/{id}/reduce-tiers 与 GET /batches/{id}/reduce-tiers 客户端比对。"
+   },
+   {
+    "path": "getBatchReduceTiers x-permission (openapi-core.yaml:321)",
+    "change": "复核 BC-06：reduce.policy.edit 才能读减免档位是否与 BR-M2-03\"减免政策属催收依据对服务商可见\"冲突；若需对 VL/CO/PC 只读展示，应放宽为无 x-permission(仅 scope)或新增 reduce.policy.view 读权限。需产品确认后改。"
+   }
+  ],
+  "newScreens": [
+   "BatchDetailView 内嵌「批次协调员维护」对话框(PC 多选 transfer/select)",
+   "BatchDetailView 内嵌「批次减免覆盖编辑」对话框(阶梯档位增删 + 清除恢复继承)",
+   "BatchDetailView 内嵌「批次作战手册采纳/恢复继承」对话框",
+   "BatchDetailView 内「项目级已更新·有差异」告警条 + 查看差异/一键同步(依赖 BC-04)"
+  ],
+  "e2eSpecs": [
+   {
+    "file": "frontend/e2e/batch-coordinators.spec.ts",
+    "scenario": "PL 进入批次详情→维护协调员→全量选 2 名 PC 保存→刷新后 coordinators 显示 2 名；CO/VL 视角无\"维护协调员\"入口",
+    "story": "US-M2-02 / BR-M2-13 批次级协调员多对多挂载"
+   },
+   {
+    "file": "frontend/e2e/batch-reduce-override.spec.ts",
+    "scenario": "批次初始 source=INHERITED→PL 自定义覆盖增 1 档保存→source 变 CUSTOM；点\"清除自定义恢复继承\"→source 回 INHERITED；无 reduce.policy.edit 角色见 tiersPermDenied 警告",
+    "story": "BR-M2-18a/18b 批次级减免覆盖与恢复继承"
+   },
+   {
+    "file": "frontend/e2e/batch-playbook-adopt.spec.ts",
+    "scenario": "批次手册 source=INHERITED→采纳批次自定义内容→source=CUSTOM；恢复继承(content=null)→source=INHERITED",
+    "story": "BR-M2-18b / BR-M5-05a/b 批次级作战手册覆盖同步"
+   },
+   {
+    "file": "frontend/e2e/batch-sync-drift.spec.ts",
+    "scenario": "批次 CUSTOM 覆盖后，PL 修改项目级减免→重进批次详情见\"项目级已更新·有差异\"告警→点一键同步→批次回 INHERITED 且差异消失(依赖 BC-04 落地)",
+    "story": "BR-M2-18b 项目级更新·有差异标记+一键同步"
+   }
+  ],
+  "effort": "L",
+  "risk": "中高。前端三块 UI 为纯增量、低风险(BE 端点已就绪)。最大风险在 BC-04 覆盖同步净增：需后端引入项目级版本/时间戳与 batch CUSTOM 的\\\"覆盖时基线\\\"对比，触及 reduce_tier 表语义与 setProjectReduceTiers 既有逻辑，且契约要加字段+端点，跨 schema 改动易与 M2 主数据/M5 话术飞轮模块冲突。BC-05 真值化与 BC-06 权限放宽需产品确认，避免误改资金/可见性口径。建议分两批：批1=纯 FE 对接已有端点(S-M)，批2=BC-04 净增同步(M-L)。",
+  "sharedFiles": [
+   "frontend/src/views/BatchDetailView.vue",
+   "frontend/src/views/ProjectDetailView.vue (项目级协调员/同步对称，与 M2 项目主数据模块共享)",
+   "frontend/src/api/schema.d.ts (契约改字段后重生成，所有模块共享)",
+   "docs/api/openapi-core.yaml (BatchView schema + 新 sync 端点，与 M2/M9 资金双线模块共享)",
+   "backend/app/.../web/BatchesM2Controller.java (reduceMode/playbookMode 真值化，与批次读模块共享)",
+   "backend/app/.../web/MasterWriteController.java (reduce-tiers/coordinators 写聚合，与 M2 项目/批次导入模块共享)",
+   "frontend/src/views/ProjectsView.vue / BatchesView.vue (协调员列展示一致性)"
+  ],
+  "prdStoryRefs": [
+   "US-M2-02 物业负责人挂载协调员(项目级/批次级·多对多)",
+   "BR-M2-13 协调员关联多对多(项目级+批次级)",
+   "BR-M2-18a 减免政策层级=阶梯+决定权",
+   "BR-M2-18b 批次级覆盖与同步(作战手册/减免政策·项目更新·有差异·一键同步)",
+   "BR-M2-03 催收依据分区对服务商可见(关联 BC-06)",
+   "BR-M5-05a/b 作战手册分级采纳闸"
+  ],
+  "_key": "批次协调员/覆盖同步(净增) BatchCoord"
+ }
+]

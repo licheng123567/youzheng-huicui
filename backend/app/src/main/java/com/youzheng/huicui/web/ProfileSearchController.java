@@ -70,7 +70,7 @@ public class ProfileSearchController {
         if (!s.isPlatform()) {
             Long org = parseLong(s.orgId());
             if (org == null) return Map.of("items", List.of(), "meta", meta(page, size, 0));
-            if ("PROVIDER".equals(s.orgType())) { where.append(" AND b.provider_id = ?"); args.add(org); }
+            if ("PROVIDER".equals(s.orgType())) { where.append(" AND c.provider_id = ?"); args.add(org); }
             else { where.append(" AND p.org_id = ?"); args.add(org); }
         }
         String base = "FROM \"case\" c JOIN project p ON p.id = c.project_id JOIN batch b ON b.id = c.batch_id" + where;

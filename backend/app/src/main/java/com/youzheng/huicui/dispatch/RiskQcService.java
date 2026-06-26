@@ -99,9 +99,9 @@ public class RiskQcService {
         if (org == null) return false;
         String join;
         if ("PROVIDER".equals(s.orgType())) {
+            // 案件级归属唯一权威（不回落 batch.provider_id）：退回平台公海案 c.provider_id=NULL → 旧商不可见。
             join = " JOIN \"case\" c ON c.id = r.case_id"
-                    + " JOIN batch b ON b.id = c.batch_id"
-                    + " WHERE r.id = ? AND b.provider_id = ?";
+                    + " WHERE r.id = ? AND c.provider_id = ?";
         } else {  // PROPERTY 及兜底非平台
             join = " JOIN \"case\" c ON c.id = r.case_id"
                     + " JOIN project p ON p.id = c.project_id"

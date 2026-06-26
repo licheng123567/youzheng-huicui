@@ -10,6 +10,7 @@ import com.youzheng.huicui.error.BizError;
 import com.youzheng.huicui.security.CurrentSubject;
 import com.youzheng.huicui.security.RequirePermission;
 import com.youzheng.huicui.security.SubjectContext;
+import com.youzheng.huicui.web.dto.CoCommissionBatchRowM9Dto;
 import com.youzheng.huicui.web.dto.CoCommissionPersonM9Dto;
 import com.youzheng.huicui.web.dto.CoPayDocLineM9Dto;
 import com.youzheng.huicui.web.dto.CoPayDocM9Dto;
@@ -44,6 +45,7 @@ import java.util.Map;
  *
  * 端点（基路径 /v1 由 context-path 提供，注解写裸路径）：
  *   GET  /co-commissions                                  listCoCommissions   | perm=cocomm.manage    | 200 CoCommissionPersonPage
+ *   GET  /co-commissions/{collectorId}/batches            listCoCommissionBatches | perm=cocomm.manage | 200/404（穿透下钻 M-05）
  *   PUT  /co-commissions/{collectorId}/batches/{batchId}/rate setCoCommissionRate | perm=cocomm.manage | 200/422(防倒挂)
  *   GET  /co-pay-docs                                     listCoPayDocs       | perm=cocomm.manage    | 200 CoPayDocPage
  *   POST /co-pay-docs                                     createCoPayDoc      | perm=cocomm.manage 幂等| 201/409/422
@@ -126,6 +128,63 @@ public class CoCommissionM9Controller {
         long unsettled = due - settled;
         return new CoCommissionPersonM9Dto(
                 String.valueOf(collectorId), name, batchCount, due, settled, unsettled);
+    }
+
+    // ── [1b] GET /co-commissions/{collectorId}/batches ───────────────────────
+    // M-05 穿透下钻：某催收员按批次的应结/未结佣金（人聚合 → 批次级）。own-org：催收员须属本商。
+    // 复用 loadRateBatches（人×批次设过比例）+ loadActiveLinesForCollectorBatch（批次内本人持有未冲正回款）。
+    @GetMapping("/co-commissions/{collectorId}/batches")
+    @RequirePermission("cocomm.manage")
+    public List<CoCommissionBatchRowM9Dto> listCoCommissionBatches(
+            @PathVariable("collectorId") String collectorIdRaw) {
+        long providerOrgId = requireProvider();
+        long collectorId = parseId(collectorIdRaw, "催收员不存在");
+        // own-org 复核：催收员须属本商。不存在 → 404；越组织 → 403。
+        requireCollectorOfProvider(collectorId, providerOrgId);
+
+        // 单条聚合 SQL（消除 N+1）：按 cc.batch_id 分组，一次性算出每批次
+        //   dueCents / unsettledCents / unsettledLineCount。口径与原逐笔计算严格一致：
+        //   - 可计提明细 = 该批次下、本催收员持有(case.holder_id)案件、未冲正(rl.reversed=false)的回款；
+        //     用 LEFT JOIN 保证“设过比例但暂无明细”的批次仍出 due=0 行（与原 for 循环逐批出行一致）。
+        //   - 逐笔佣金 = round(amount_cents × rate)（HALF_UP 到整数分，金额/比率非负 ⇒ PG round 与 Java HALF_UP 等价），
+        //     先逐笔舍入再 SUM（绝不汇总后再舍入），完全复刻 Commission.lineCommissionCents 的求和口径。
+        //   - “已结” = 该回款明细被某 SETTLED 的 co_pay_doc 关联（co_pay_doc_line + co_pay_doc.status='SETTLED'），
+        //     不看 repay_line.settled；未结明细才计入 unsettledCents / unsettledLineCount。
+        //   ORDER BY cc.batch_id 保持原 loadRateBatches 的输出顺序。
+        String sql =
+                "SELECT cc.batch_id,"
+                        + "       b.no AS batch_name,"
+                        + "       cc.rate,"
+                        + "       COALESCE(SUM(round(rl.amount_cents * cc.rate))::bigint, 0) AS due_cents,"
+                        + "       COALESCE(SUM(CASE WHEN rl.id IS NOT NULL AND NOT EXISTS ("
+                        + "             SELECT 1 FROM co_pay_doc_line cpl"
+                        + "               JOIN co_pay_doc d ON d.id = cpl.co_pay_doc_id"
+                        + "              WHERE cpl.repay_line_id = rl.id AND d.status = 'SETTLED')"
+                        + "           THEN round(rl.amount_cents * cc.rate) ELSE 0 END)::bigint, 0)"
+                        + "         AS unsettled_cents,"
+                        + "       COALESCE(SUM(CASE WHEN rl.id IS NOT NULL AND NOT EXISTS ("
+                        + "             SELECT 1 FROM co_pay_doc_line cpl"
+                        + "               JOIN co_pay_doc d ON d.id = cpl.co_pay_doc_id"
+                        + "              WHERE cpl.repay_line_id = rl.id AND d.status = 'SETTLED')"
+                        + "           THEN 1 ELSE 0 END), 0) AS unsettled_line_count"
+                        + " FROM co_commission cc"
+                        + " JOIN batch b ON b.id = cc.batch_id"
+                        + " LEFT JOIN \"case\" c ON c.batch_id = cc.batch_id AND c.holder_id = cc.collector_id"
+                        + " LEFT JOIN repay_line rl ON rl.case_id = c.id"
+                        + "        AND rl.batch_id = cc.batch_id AND rl.reversed = false"
+                        + " WHERE cc.collector_id = ? AND b.provider_id = ?"
+                        + " GROUP BY cc.batch_id, b.no, cc.rate"
+                        + " ORDER BY cc.batch_id";
+
+        return jdbc.query(sql,
+                (rs, i) -> new CoCommissionBatchRowM9Dto(
+                        String.valueOf(rs.getLong("batch_id")),
+                        rs.getString("batch_name"),
+                        rs.getBigDecimal("rate"),
+                        rs.getLong("due_cents"),
+                        rs.getLong("unsettled_cents"),
+                        rs.getInt("unsettled_line_count")),
+                collectorId, providerOrgId);
     }
 
     // ── [2] PUT /co-commissions/{collectorId}/batches/{batchId}/rate ─────────
@@ -223,6 +282,8 @@ public class CoCommissionM9Controller {
                         rs.getLong("amount_cents"),
                         rs.getString("status"),
                         ts(rs.getTimestamp("created_at")),
+                        null,    // documentUrl 占位（文件通道 TBD）
+                        false,   // sealed 占位（电子签章 TBD）
                         null),   // list 不穿透 lines（详情端点返回）
                 pageArgs.toArray());
         return Page.of(items, pg, total == null ? 0 : total);
@@ -293,7 +354,7 @@ public class CoCommissionM9Controller {
                 rs -> rs.next() ? rs.getString("name") : null, collectorId);
 
         return new CoPayDocM9Dto(String.valueOf(docId), String.valueOf(collectorId),
-                collectorName, count, amount, "PENDING_PAY", createdAt, snapshot);
+                collectorName, count, amount, "PENDING_PAY", createdAt, null, false, snapshot);
     }
 
     // ── [5] GET /co-pay-docs/{id} ────────────────────────────────────────────
@@ -322,7 +383,7 @@ public class CoCommissionM9Controller {
         }
         return new CoPayDocM9Dto(String.valueOf(docId), String.valueOf(doc.collectorId()),
                 doc.collectorName(), doc.count(), doc.amountCents(), doc.status(),
-                ts(doc.createdAt()), lines);
+                ts(doc.createdAt()), null, false, lines);
     }
 
     // ── [6] POST /co-pay-docs/{id}/confirm-pay ───────────────────────────────

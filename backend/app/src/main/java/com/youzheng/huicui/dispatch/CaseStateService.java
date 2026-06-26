@@ -88,7 +88,9 @@ public class CaseStateService {
         try {
             return jdbc.queryForObject(
                     "SELECT c.id, c.batch_id, c.status, c.pool, c.holder_id, c.source, c.origin_pool,"
-                            + " b.provider_id, b.pay_out_rate, b.open_rate"
+                            // 案件级归属唯一权威（不 COALESCE 回落 batch）：NULL=平台公海/无归属。
+                            // 比率仍读 batch（计佣粒度=批次）。
+                            + " c.provider_id AS provider_id, b.pay_out_rate, b.open_rate"
                             + " FROM \"case\" c JOIN batch b ON b.id = c.batch_id"
                             + " WHERE c.id = ? FOR UPDATE OF c",
                     (rs, i) -> new CaseSnapshot(
@@ -145,6 +147,24 @@ public class CaseStateService {
                     caseId, t.fromStatus(), t.fromPool(), t.expectHolderId()};
         }
         return jdbc.update(sql.toString(), args);
+    }
+
+    // ── ③b 案件级 provider 归属维护（V913 引入；与状态转移配对）──────────────
+    //
+    // 派单/承接 → setCaseProvider(承接 org)；退回/释放/回平台公海 → clearCaseProvider()。
+    // 与 batch.provider_id 解耦：单案再派只改本案，不污染同批其他案件（修 codex BLOCKER）。
+    // 须在对应 transition() 成功后、同事务内调用（行锁已持有）。
+
+    /** 案件级承接 org 归属置为 providerId（派单/承接/抢单后调用）。 */
+    public void setCaseProvider(long caseId, long providerId) {
+        jdbc.update("UPDATE \"case\" SET provider_id = ?, updated_at = now() WHERE id = ?",
+                providerId, caseId);
+    }
+
+    /** 清案件级承接 org 归属（退回平台公海后调用，回到 batch 推导/无归属）。 */
+    public void clearCaseProvider(long caseId) {
+        jdbc.update("UPDATE \"case\" SET provider_id = NULL, updated_at = now() WHERE id = ?",
+                caseId);
     }
 
     // ── ④ 持有上限 ───────────────────────────────────────────────────────────

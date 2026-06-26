@@ -20,5 +20,7 @@ public record BatchPlatformView(
         String viewRole,
         java.math.BigDecimal commInRate,
         Boolean commInInherited,
-        java.math.BigDecimal payOutRate
+        java.math.BigDecimal payOutRate,
+        Boolean reduceDrift,
+        Boolean playbookDrift
 ) {}

@@ -18,5 +18,7 @@ public record BatchPropertyView(
         String playbookMode,
         String viewRole,
         java.math.BigDecimal commInRate,
-        Boolean commInInherited
+        Boolean commInInherited,
+        Boolean reduceDrift,
+        Boolean playbookDrift
 ) {}

@@ -379,7 +379,8 @@ public class FollowUpM4Controller {
     private void appendRangeScope(CurrentSubject s, StringBuilder where, List<Object> args) {
         if (s.isPlatform()) return;
         if ("PROVIDER".equals(s.orgType())) {
-            where.append(" AND b.provider_id = ?");
+            // 案件级归属唯一权威（不 COALESCE 回落 batch）。
+            where.append(" AND c.provider_id = ?");
             args.add(parseOrgId(s));
         } else {
             where.append(" AND p.org_id = ?");

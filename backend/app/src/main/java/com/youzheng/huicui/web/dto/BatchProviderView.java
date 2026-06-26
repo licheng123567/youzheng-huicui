@@ -17,5 +17,7 @@ public record BatchProviderView(
         String reduceMode,
         String playbookMode,
         String viewRole,
-        java.math.BigDecimal payOutRate
+        java.math.BigDecimal payOutRate,
+        Boolean reduceDrift,
+        Boolean playbookDrift
 ) {}

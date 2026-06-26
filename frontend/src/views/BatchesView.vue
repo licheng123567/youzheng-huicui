@@ -3,9 +3,12 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
+import { useRoleFields } from '../composables/useRoleFields'
 
 // GET /batches → BatchView(平台双线/物业只收佣/服务商只付佣)。SA 派单(M3)；物业可导入批次/作废(批次2)。
 const auth = useAuth()
+// 资金双线列可见性(H-03)：收佣=平台/物业、付佣=平台/服务商，整列裁剪而非占位串。
+const { showCommInRate, showPayOutRate, ratePct } = useRoleFields()
 const items = ref<any[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -112,11 +115,13 @@ onMounted(load)
       <el-table-column prop="id" label="ID" width="60" />
       <el-table-column label="批次号"><template #default="{row}"><el-button link type="primary" @click="$router.push(`/batches/${row.id}`)">{{ row.code }}</el-button></template></el-table-column>
       <el-table-column prop="status" label="状态" width="110" />
-      <el-table-column label="收佣比例" width="100">
-        <template #default="{ row }">{{ row.commInRate != null ? (row.commInRate * 100).toFixed(2) + '%' : '—' }}</template>
+      <!-- 收佣比例：仅平台/物业视角整列渲染(服务商视角字段级无→整列不出 H-03) -->
+      <el-table-column v-if="showCommInRate" label="收佣比例" width="100">
+        <template #default="{ row }">{{ ratePct(row.commInRate) }}</template>
       </el-table-column>
-      <el-table-column label="付佣比例" width="120">
-        <template #default="{ row }">{{ row.payOutRate != null ? (row.payOutRate * 100).toFixed(2) + '%' : '—（物业视角不可见）' }}</template>
+      <!-- 付佣比例：仅平台/服务商视角整列渲染(物业视角字段级无→整列不出，不显占位串 H-03) -->
+      <el-table-column v-if="showPayOutRate" label="付佣比例" width="120">
+        <template #default="{ row }">{{ ratePct(row.payOutRate) }}</template>
       </el-table-column>
       <el-table-column label="操作" width="280">
         <template #default="{ row }">

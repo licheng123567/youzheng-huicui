@@ -12,6 +12,7 @@ const SCREENS: { label: string; url: RegExp }[] = [
   { label: '报表', url: /\/reports/ },
   { label: '存证', url: /\/evidence/ },
   { label: '计费', url: /\/billing/ },
+  { label: '通话记录', url: /\/call-records/ },   // US-M4-12 通话记录屏可达性回归(CR)
   { label: '设置', url: /\/settings/ },
   { label: '成员', url: /\/members/ },
 ]

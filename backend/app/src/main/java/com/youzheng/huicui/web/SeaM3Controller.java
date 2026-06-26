@@ -133,7 +133,8 @@ public class SeaM3Controller {
                 // 服务商公海：平台见全量；服务商见本商；其余不可见。
                 if (s.isPlatform()) return true;
                 if ("PROVIDER".equals(s.orgType())) {
-                    where.append(" AND b.provider_id = ?");
+                    // 案件级归属唯一权威（不 COALESCE 回落 batch）。
+                    where.append(" AND c.provider_id = ?");
                     args.add(Long.valueOf(s.orgId()));
                     return true;
                 }
@@ -173,7 +174,7 @@ public class SeaM3Controller {
         if (!s.isPlatform()) {                            // range：服务商仅本商
             Long org = parseLongOrNull(s.orgId());
             if (org == null) return Page.of(List.of(), pg, 0);
-            where.append(" AND b.provider_id = ?");
+            where.append(" AND c.provider_id = ?");
             args.add(org);
         }
         String base = "FROM \"case\" c JOIN batch b ON b.id = c.batch_id" + where;
