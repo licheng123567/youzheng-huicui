@@ -45,7 +45,10 @@ test.describe('US-M2 项目维护(PL)', () => {
     const rows = page.locator('.el-table__row')
     await expect(rows.first()).toBeVisible()
     await rows.first().click()
+    // 等详情页导航完成再判按钮（行点击后立即取 count 会落在列表页→误判 0）。
+    await expect(page).toHaveURL(/\/projects\/\d+/)
     const maintBtn = page.getByRole('button', { name: '维护减免规则' })
+    await expect(maintBtn).toBeVisible()
     if (!(await maintBtn.count())) {
       test.skip(true, 'PL 无 reduce.policy.edit')
     }
@@ -60,8 +63,11 @@ test.describe('US-M2 项目维护(PL)', () => {
     await dlg.getByPlaceholder('如 9折').nth(1).fill('8折')
     await dlg.getByRole('button', { name: '保存' }).click()
     await expect(page.getByText('已保存减免阶梯')).toBeVisible()
-    // 详情减免阶梯区渲染封顶（元展示，500 元 = ¥500）
-    await expect(page.locator('.el-table').filter({ hasText: '折扣' })).toBeVisible()
+    // 详情减免阶梯区渲染封顶（元展示，500 元 = ¥500）。
+    // 详情减免表 + 可能残留的弹窗减免表均含「折扣」表头→锚定渲染了 9折/¥500 的详情表（first）。
+    await expect(
+      page.locator('.el-table').filter({ hasText: '9折' }).filter({ hasText: '¥500' }).first()
+    ).toBeVisible()
   })
 
   test('PL 维护协调员：多选两个 PC→详情显示→清空再保存为空', async ({ page }) => {

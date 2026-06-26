@@ -44,7 +44,10 @@ test.describe('BR-M2-18b 覆盖差异与一键同步(PL)', () => {
     await openFirstBatch(page)
     const drift = page.getByText('项目级作战手册已更新·当前批次自定义有差异')
     if (!(await drift.count())) {
-      test.skip(true, '当前批次无手册 drift')
+      // DDL 限制保留 skip：playbook 表仅 project_id 无 batch_id（批次手册经 project 折叠，见 PlaybookController），
+      // 批次级手册无独立存储→playbookDrift 恒 false（getBatch 端固定返 false）。
+      // 无 schema 迁移引入批次级手册存储前不可造手册 drift 数据，故据实跳过（非数据缺失，是 DDL 约束）。
+      test.skip(true, '批次级手册无独立存储(playbook 表仅 project_id)，playbookDrift 恒 false——DDL 限制保留 skip')
     }
     await expect(drift).toBeVisible()
     await page.getByRole('button', { name: '一键同步为项目最新' }).last().click()

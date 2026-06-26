@@ -14,6 +14,9 @@ test.describe('US-M3-02 平台公海再派(SA)', () => {
     // 且 "平台公海" 文案也出现在表格"来源池"列 .el-tag，故锚定 .el-radio-button__inner 最稳）。
     await page.locator('.el-radio-button__inner', { hasText: '平台公海' }).click()
     await expect(page.locator('.el-table').first()).toBeVisible()
+    // 切池触发异步 load()，旧(服务商)表恒 visible 不会等到平台池数据；
+    // 平台公海每行「来源池」列 .el-tag 文案=平台公海，等它出现确保已渲染平台池数据(再派按钮才就位)。
+    await expect(page.locator('.el-table .el-tag', { hasText: '平台公海' }).first()).toBeVisible()
   })
 
   test('退回案件再派服务商Y成功', async ({ page }) => {
