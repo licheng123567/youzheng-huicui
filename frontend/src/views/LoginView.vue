@@ -27,7 +27,7 @@ async function submit() {
   } catch (e) { ElMessage.error((e as Error).message) } finally { loading.value = false }
 }
 async function sendCode() {
-  try { await auth.requestSmsCode(phone.value); smsSent.value = true; ElMessage.success('验证码已发送（dev 固定 000000）') }
+  try { await auth.requestSmsCode(phone.value); smsSent.value = true; ElMessage.success('验证码已发送') }
   catch (e) { ElMessage.error((e as Error).message) }
 }
 async function pick(a: any) {
@@ -63,7 +63,7 @@ async function pick(a: any) {
             <el-form-item><el-input v-model="phone" placeholder="手机号（13900009000 多账号）" /></el-form-item>
             <el-form-item>
               <div style="display:flex;gap:8px;width:100%">
-                <el-input v-model="code" placeholder="验证码（dev 000000）" />
+                <el-input v-model="code" placeholder="短信验证码" />
                 <el-button @click="sendCode">{{ smsSent ? '重新获取' : '获取验证码' }}</el-button>
               </div>
             </el-form-item>

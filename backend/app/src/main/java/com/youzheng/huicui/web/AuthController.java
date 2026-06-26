@@ -36,22 +36,29 @@ public class AuthController {
     // 契约 LoginResult：单账号返 token；多账号返 loginTicket+accounts(BR-M1-11)。
     public record LoginResult(String token, String loginTicket, Object accounts) {}
 
-    // 多账号临时票据 / 短信验证码（骨架·内存；生产换 Redis 带 TTL）。
+    // 多账号临时票据 / 短信验证码（内存·带 TTL；生产换 Redis + 真实短信通道随机码）。
     private record Ticket(Set<Long> accountIds, long exp) {}
+    private record SmsCode(String code, long exp) {}
     private final Map<String, Ticket> tickets = new ConcurrentHashMap<>();
-    private final Map<String, String> smsCodes = new ConcurrentHashMap<>();
+    private final Map<String, SmsCode> smsCodes = new ConcurrentHashMap<>();
     private static final long TICKET_TTL_MS = 5 * 60 * 1000L;
-    private static final String DEV_SMS_CODE = "000000";   // 骨架：dev 固定码；真实经短信通道下发随机码
+    private static final long SMS_TTL_MS = 5 * 60 * 1000L;
+    // dev 固定码（仅 dev：DevSeeder 在跑即视为 dev）。生产务必改随机码经短信通道下发，且不得回显前端。
+    private static final String DEV_SMS_CODE = "000000";
 
     @PostMapping("/login")
     public LoginResult login(@RequestBody Map<String, Object> body) {
         String mode = str(body, "mode");
         String phone;
         if ("sms".equals(mode)) {
-            // 短信登录：phone+code（code 由 /auth/sms-code 下发；dev 固定 000000）
+            // 短信登录：phone+code（/auth/sms-code 下发）。校验 TTL + 一次性删除（防重放）。
             phone = req(body, "phone"); String code = req(body, "code");
-            String expected = smsCodes.get(phone);
-            if (expected == null || !expected.equals(code)) throw new ApiException(BizError.AUTH_401, "验证码错误或已过期");
+            SmsCode sc = smsCodes.get(phone);
+            if (sc == null || sc.exp() < System.currentTimeMillis() || !sc.code().equals(code)) {
+                smsCodes.remove(phone);   // 过期/错误即清，避免残留可猜
+                throw new ApiException(BizError.AUTH_401, "验证码错误或已过期");
+            }
+            smsCodes.remove(phone);       // 一次性：用后即焚，防重放
         } else {
             // 口令登录：username+password 认证后,取该账号 phone（一号多账号以 phone 聚合）
             String username = req(body, "username"), password = req(body, "password");
@@ -91,9 +98,9 @@ public class AuthController {
     @PostMapping("/sms-code")
     public Map<String, Object> smsCode(@RequestBody Map<String, Object> body) {
         String phone = req(body, "phone");
-        // 骨架：dev 存固定码；生产经短信通道下发随机码 + 限流(429)。不回显 code。
-        smsCodes.put(phone, DEV_SMS_CODE);
-        return Map.of("sent", true, "ttlSeconds", 300);
+        // dev 存固定码 + TTL（生产：随机码经短信通道下发 + 限流429）。绝不回显 code。
+        smsCodes.put(phone, new SmsCode(DEV_SMS_CODE, System.currentTimeMillis() + SMS_TTL_MS));
+        return Map.of("sent", true, "ttlSeconds", SMS_TTL_MS / 1000);
     }
 
     @PostMapping("/select-account")

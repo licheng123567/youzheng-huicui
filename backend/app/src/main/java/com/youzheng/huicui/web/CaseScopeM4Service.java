@@ -38,20 +38,26 @@ public class CaseScopeM4Service {
                           Long holderId, String status, long dueCents, Long reduceAfterCents,
                           String ownerName, String room) {}
 
-    /** case-actor：存在→404 优先；可见性（组织级兜底 + CO 持有）不满足→403。 */
+    /**
+     * case-actor 行级裁剪（BR-M4-01a，契约语义）：持有催收员(CO)本人 OR 关联物业负责人/协调员(PL/PC)本物业 OR 平台(SA/SE)。
+     * 存在→404 优先；越界→403。
+     * 注：CO 必须行级持有(holder_id=本人)，**不再用服务商组织级兜底**——同 org 非持有 CO 不可越权操作他人案件。
+     * VL 及其余非平台主体不属于 case-actor → 403（VL 的指派/退回走 M3 端点，非此组涉案动作）。
+     */
     public CaseRow requireCaseActor(CurrentSubject s, long caseId) {
         CaseRow c = load(caseId);                 // 不存在→404
-        if (s.isPlatform()) return c;             // 平台全量
-        // CO 本人持有该案 → 可见。
-        Long actor = parseLong(s.accountId());
-        if (actor != null && c.holderId() != null && c.holderId().equals(actor)) {
-            return c;
+        if (s.isPlatform()) return c;             // 平台(SA/SE)全量
+        String role = s.role();
+        if ("CO".equals(role)) {                  // 持有催收员本人(行级)
+            Long actor = parseLong(s.accountId());
+            if (actor != null && c.holderId() != null && c.holderId().equals(actor)) return c;
+            throw new ApiException(BizError.PERM_403, "无权操作该案件（仅持有催收员本人 case-actor）");
         }
-        // 组织级兜底（TODO：精确化关联 PL/PC、SA 代）。
-        if (!withinOrg(s, c)) {
-            throw new ApiException(BizError.PERM_403, "无权操作该案件");
+        if ("PL".equals(role) || "PC".equals(role)) {   // 关联物业负责人/协调员→本物业(project.org_id)
+            if (withinOrg(s, c)) return c;
+            throw new ApiException(BizError.PERM_403, "无权操作该案件（非本物业 case-actor）");
         }
-        return c;
+        throw new ApiException(BizError.PERM_403, "无权操作该案件（非案件相关方 case-actor）");
     }
 
     /** own-org：存在→404 优先；越组织→403。平台全量。 */

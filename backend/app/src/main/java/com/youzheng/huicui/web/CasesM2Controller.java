@@ -84,8 +84,9 @@ public class CasesM2Controller {
         StringBuilder where = new StringBuilder(" WHERE 1=1");
         List<Object> args = new ArrayList<>();
         if (batchId != null && !batchId.isBlank()) {
-            where.append(" AND c.batch_id = ?");
-            args.add(Long.valueOf(batchId));
+            // 安全解析：非数字 batchId 不抛 NumberFormatException(避免 5xx/非契约错误)，置为不可命中条件。
+            try { args.add(Long.valueOf(batchId.trim())); where.append(" AND c.batch_id = ?"); }
+            catch (NumberFormatException e) { where.append(" AND 1 = 0"); }
         }
         if (status != null && !status.isBlank()) {
             where.append(" AND c.status = ?");

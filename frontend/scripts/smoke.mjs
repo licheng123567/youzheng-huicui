@@ -201,6 +201,27 @@ const coPr = await getJson('/payment-requests?side=OUT&page=1&size=20', co)
 check('CO 看组织付佣单 → 空(US-M9-09 裁剪)', coPr.status === 200 && (coPr.body?.items?.length ?? 0) === 0)
 // ⑤ billing 只读: PL 读 usage(range 无 perm) → 200
 check('PL 读 billing/usage(range 无perm) → 200', (await getJson('/billing/usage', pl)).status === 200)
+// === codex 二轮复审修复验证 ===
+// HIGH case-actor 行级越权：非持有 CO(jx_co2) 操作他人案件(M3-S3-01 holder=jx_co1) → 403
+const coOther = await login('jx_co2', 'Admin@123')
+const s3case = (allCx.body?.items || []).find((c) => c.acctNo === 'M3-S3-01')
+if (s3case && coOther) {
+  check('非持有 CO 操作他人案件(follow-up) → 403', (await post(`/cases/${s3case.id}/follow-ups`, coOther, { content: 'x', method: 'OTHER' })).status === 403)
+  check('持有 CO 操作本案(follow-up) → 2xx(不误伤)', [200, 201].includes((await post(`/cases/${s3case.id}/follow-ups`, co, { content: '本人跟进', method: 'OTHER' })).status))
+}
+// MED ticket.handle 收回 CO：CO 处理工单 → 403(无权限)
+if (s3case) {
+  const tk = (await getJson(`/cases/${s3case.id}/tickets?page=1&size=20`, co)).body?.items?.[0]
+  if (tk) check('CO 处理工单(ticket.handle 已收回) → 403', (await post(`/tickets/${tk.id}/handle`, co, { result: 'x' })).status === 403)
+}
+// HIGH sms 一次性防重放：同 code 第二次登录 → 401
+await fetch(`${B}/auth/sms-code`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '13900009000' }) })
+const sms1 = await fetch(`${B}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'sms', phone: '13900009000', code: '000000' }) })
+const sms2 = await fetch(`${B}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'sms', phone: '13900009000', code: '000000' }) })
+check('sms code 一次性：首次 OK', sms1.ok)
+check('sms code 一次性：二次重放 → 401', sms2.status === 401)
+// MED batchId 安全解析：非数字 → 不 5xx
+check('GET /cases?batchId=abc 非数字 → 非5xx', (await getJson('/cases?batchId=abc&page=1&size=5', sa)).status < 500)
 // P1: caseIds 勾选拆派(US-M3-01) — GET /cases?batchId= 列本批案件供勾选(端点净室已验 SPLIT+caseIds→{ok:true};
 //   此处验"按批列案件"数据源可用,实际拆派会消费案件态故不在共享 smoke 重复派)
 const s0b2 = (bsSa.body?.items || []).find((b) => b.code === 'B-CH-M3-S0')

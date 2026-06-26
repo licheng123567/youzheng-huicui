@@ -37,7 +37,12 @@ async function loadMore() {
 }
 // AI 配置编辑（PUT /ai-config）
 const aiDlg = ref(false); const aiForm = ref<any>({})
-function openAiEdit() { aiForm.value = JSON.parse(JSON.stringify(aiConfig.value ?? { llm: {}, asr: {} })); aiDlg.value = true }
+function openAiEdit() {
+  const c = aiConfig.value ?? {}
+  // 后端首配可能返回 llm/asr=null，normalize 防 v-model 访问 null 嵌套崩溃
+  aiForm.value = { llm: { ...(c.llm ?? {}) }, asr: { ...(c.asr ?? {}) }, prompts: c.prompts ?? {}, flywheel: c.flywheel ?? {} }
+  aiDlg.value = true
+}
 async function saveAi() {
   const { error } = await api.PUT('/ai-config', { body: aiForm.value as any })
   if (error) { ElMessage.error('保存失败：' + ((error as any)?.message ?? '')); return }

@@ -27,12 +27,12 @@ public final class Permissions {
             case "PL", "PC" -> Set.of("proj.edit", "reduce.policy.edit", "case.follow", "case.paylink",
                     "case.repay.mark", "case.reduce", "evidence.create", "legal.create", "qc.dispose", "qc.escalate",
                     "case.close", "member.manage", "playbook.adopt", "ticket.handle");   // 协调员处理 CO 转来的工单
-            // 服务商负责人：承接/拒接/分配/退案 + 处置/上报本商催收员风险 + 管本商成员 + 处理工单
+            // 服务商负责人：承接/拒接/分配/退案 + 处置/上报本商催收员风险 + 管本商成员
             case "VL" -> Set.of("case.accept", "case.assign", "case.return", "cocomm.manage", "payreq.create",
-                    "qc.dispose", "qc.escalate", "member.manage", "ticket.handle");
-            // 催收员：抢单/释放/跟进/通话/承诺/工单/缴费链接/标回款 + 处理工单
+                    "qc.dispose", "qc.escalate", "member.manage");
+            // 催收员：抢单/释放/跟进/通话/承诺/开工单(case.ticket)/缴费链接/标回款。工单由物业处理(ticket.handle 归 PL/PC)
             case "CO" -> Set.of("case.claim", "case.release", "case.follow", "case.call",
-                    "case.promise", "case.ticket", "case.paylink", "case.repay.mark", "cocomm.self.view", "ticket.handle");
+                    "case.promise", "case.ticket", "case.paylink", "case.repay.mark", "cocomm.self.view");
             default -> Set.of();
         };
     }

@@ -103,7 +103,7 @@ async function resendLink(l: any) {
 async function voidLink(l: any) {
   const { error } = await api.POST('/pay-links/{id}/void', { params: { path: { id: String(l.id) } } } as any)
   if (error) { ElMessage.error('作废失败：' + ((error as any)?.message ?? '')); return }
-  ElMessage.success('已作废'); l.status = 'VOIDED'
+  ElMessage.success('已作废'); l.status = 'EXPIRED'   // 契约 PayLinkStatusEnum=ACTIVE/EXPIRED（无 VOIDED）
 }
 // 工单处理
 const hdlg = ref(false); const hForm = ref<any>({})
@@ -203,10 +203,10 @@ onMounted(loadAll)
           <el-divider content-position="left">缴费链接（本会话创建 · BR-M4-14 重发/作废）</el-divider>
           <el-table :data="payLinks" size="small" border>
             <el-table-column prop="token" label="token" /><el-table-column label="金额"><template #default="{row}">{{ yuan(row.amountCents) }}</template></el-table-column>
-            <el-table-column prop="status" label="状态" width="90" />
+            <el-table-column label="状态" width="90"><template #default="{row}"><el-tag size="small" :type="row.status==='ACTIVE'?'success':'info'">{{ row.status==='ACTIVE'?'有效':'已失效' }}</el-tag></template></el-table-column>
             <el-table-column label="操作" width="160"><template #default="{row}">
-              <el-button v-if="row.status!=='VOIDED' && auth.has('case.paylink')" size="small" @click="resendLink(row)">重发</el-button>
-              <el-button v-if="row.status!=='VOIDED' && auth.has('case.paylink')" size="small" text type="danger" @click="voidLink(row)">作废</el-button>
+              <el-button v-if="row.status==='ACTIVE' && auth.has('case.paylink')" size="small" @click="resendLink(row)">重发</el-button>
+              <el-button v-if="row.status==='ACTIVE' && auth.has('case.paylink')" size="small" text type="danger" @click="voidLink(row)">作废</el-button>
             </template></el-table-column>
           </el-table>
         </template>
