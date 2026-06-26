@@ -60,16 +60,30 @@ async function setOpenRate(row: any) {
 }
 
 // 批次2 导入：POST /batches/import（BatchImport: projectId/commInRate(分数)/rows[CaseImportRow]）
+// 契约 ImportResult: { batch, total, succeeded, skipped, errors: ImportError[] }
+// ImportError: { row, field, code, message }
 const impDlg = ref(false)
 const emptyRow = () => ({ acctNo: '', ownerName: '', phone: '', room: '', dueYuan: 0, arrearPeriod: '' })
 const imp = ref<any>({ projectId: '', commInRate: 0.3, rows: [emptyRow()] })
-function openImport() { imp.value = { projectId: '', commInRate: 0.3, rows: [emptyRow()] }; impDlg.value = true }
+const impResult = ref<any>(null)   // ImportResult 响应体，null=未提交
+function openImport() { imp.value = { projectId: '', commInRate: 0.3, rows: [emptyRow()] }; impResult.value = null; impDlg.value = true }
 async function submitImport() {
   if (!imp.value.projectId) { ElMessage.warning('请填项目 id'); return }
   const rows = imp.value.rows.map((r: any) => ({ acctNo: r.acctNo, ownerName: r.ownerName, phone: r.phone, room: r.room, dueCents: Math.round(r.dueYuan * 100), arrearPeriod: r.arrearPeriod }))
-  const { error } = await api.POST('/batches/import', { body: { projectId: String(imp.value.projectId), commInRate: Number(imp.value.commInRate), rows } as any })
+  // body 构造保持：projectId 字符串化、commInRate 数字、rows dueCents 单位=分
+  const { data, error } = await api.POST('/batches/import', { body: { projectId: String(imp.value.projectId), commInRate: Number(imp.value.commInRate), rows } as any })
   if (error) { ElMessage.error('导入失败：' + ((error as any)?.message ?? '')); return }
-  ElMessage.success(`已导入 ${rows.length} 件`); impDlg.value = false; load()
+  const result = data as any   // ImportResult
+  impResult.value = result
+  const hasErrors = result.errors && result.errors.length > 0
+  // 仅全量成功(skipped===0 且无错误行)时自动关闭
+  if (result.skipped === 0 && !hasErrors) {
+    ElMessage.success(`导入完成：成功 ${result.succeeded}（共 ${result.total}）`)
+    impDlg.value = false
+    load()
+  } else {
+    ElMessage.warning(`导入完成：成功 ${result.succeeded} / 跳过 ${result.skipped}（共 ${result.total}），请查看下方错误明细`)
+  }
 }
 
 // 批次2 作废：POST /batches/{id}/void（留痕）
@@ -131,7 +145,7 @@ onMounted(load)
     </el-dialog>
 
     <!-- 导入批次 -->
-    <el-dialog v-model="impDlg" title="导入批次（POST /batches/import · 创建批次+案件）" width="760px">
+    <el-dialog v-model="impDlg" title="导入批次（POST /batches/import · 创建批次+案件）" width="820px">
       <el-form :inline="true" label-width="90px">
         <el-form-item label="项目 id"><el-input v-model="imp.projectId" style="width:120px" placeholder="如 1" /></el-form-item>
         <el-form-item label="收佣比例"><el-input-number v-model="imp.commInRate" :min="0" :max="1" :step="0.01" /><span style="margin-left:6px;color:#909399">分数 0.3=30%</span></el-form-item>
@@ -146,7 +160,30 @@ onMounted(load)
         <el-table-column width="50"><template #default="{$index}"><el-button size="small" text type="danger" @click="imp.rows.splice($index,1)" :disabled="imp.rows.length<=1">×</el-button></template></el-table-column>
       </el-table>
       <el-button size="small" text type="primary" style="margin-top:6px" @click="imp.rows.push(emptyRow())">+ 添加行</el-button>
-      <template #footer><el-button @click="impDlg=false">取消</el-button><el-button type="primary" @click="submitImport">导入</el-button></template>
+
+      <!-- 导入结果区：仅提交后且有跳过/错误时显示 -->
+      <template v-if="impResult">
+        <el-divider style="margin:16px 0 10px" />
+        <div style="margin-bottom:8px">
+          <el-tag type="success" style="margin-right:6px">成功 {{ impResult.succeeded }}</el-tag>
+          <el-tag :type="impResult.skipped > 0 ? 'warning' : 'info'" style="margin-right:6px">跳过 {{ impResult.skipped }}</el-tag>
+          <el-tag type="info">共 {{ impResult.total }}</el-tag>
+        </div>
+        <template v-if="impResult.errors && impResult.errors.length > 0">
+          <div style="font-size:13px;color:#E6A23C;margin-bottom:6px">错误明细（以下行已跳过，其余行已继续导入）</div>
+          <el-table :data="impResult.errors" border size="small" max-height="220">
+            <el-table-column prop="row" label="行号" width="60" />
+            <el-table-column prop="field" label="字段" width="120" />
+            <el-table-column prop="code" label="错误码" width="140" />
+            <el-table-column prop="message" label="消息" show-overflow-tooltip />
+          </el-table>
+        </template>
+      </template>
+
+      <template #footer>
+        <el-button @click="impDlg=false; impResult=null">关闭</el-button>
+        <el-button type="primary" @click="submitImport">导入</el-button>
+      </template>
     </el-dialog>
   </el-card>
 </template>

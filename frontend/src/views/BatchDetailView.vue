@@ -8,15 +8,24 @@ import { api } from '../api/client'
 const route = useRoute(); const router = useRouter()
 const bid = String(route.params.id)
 const b = ref<any>(null); const cases = ref<any[]>([]); const tiers = ref<any[]>([])
+const tiersSource = ref<string | null>(null) // INHERITED | CUSTOM | null(无权限)
+const tiersPermDenied = ref(false)
 const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
 const pct = (r?: number) => (r == null ? '—（视角不可见）' : (r * 100).toFixed(2) + '%')
+const sourceLabel = (s: string | null) => s === 'CUSTOM' ? '批次自定义' : s === 'INHERITED' ? '继承项目默认' : ''
 
 onMounted(async () => {
   const { data, error } = await api.GET('/batches/{id}', { params: { path: { id: bid } } })
   if (error || !data) { ElMessage.error('批次加载失败'); return }
   b.value = data
   cases.value = ((await api.GET('/cases', { params: { query: { batchId: bid, page: 1, size: 100 } } as any })).data as any)?.items ?? []
-  tiers.value = ((await api.GET('/batches/{id}/reduce-tiers', { params: { path: { id: bid } } } as any)).data as any) ?? []
+  const rt = await api.GET('/batches/{id}/reduce-tiers', { params: { path: { id: bid } } } as any)
+  if ((rt.response?.status === 403) || (rt.error && (rt.error as any)?.status === 403)) {
+    tiersPermDenied.value = true
+  } else if (!rt.error && rt.data) {
+    tiers.value = (rt.data as any)?.tiers ?? []
+    tiersSource.value = (rt.data as any)?.source ?? null
+  }
 })
 function openCase(c: any) { router.push(`/cases/${c.id}`) }
 </script>
@@ -33,8 +42,12 @@ function openCase(c: any) { router.push(`/cases/${c.id}`) }
       <el-descriptions-item label="付佣比例">{{ pct(b.payOutRate) }}</el-descriptions-item>
     </el-descriptions>
 
-    <el-divider content-position="left">减免档位（GET /batches/{id}/reduce-tiers）</el-divider>
-    <el-table :data="tiers" border size="small">
+    <el-divider content-position="left">
+      减免档位（GET /batches/{id}/reduce-tiers）
+      <el-tag v-if="tiersSource" size="small" style="margin-left:8px">{{ sourceLabel(tiersSource) }}</el-tag>
+    </el-divider>
+    <el-alert v-if="tiersPermDenied" type="warning" :closable="false" title="无减免策略查看权限（需 reduce.policy.edit）" style="margin-bottom:8px" />
+    <el-table v-else :data="tiers" border size="small">
       <el-table-column prop="discount" label="折扣" /><el-table-column label="封顶"><template #default="{row}">{{ yuan(row.capCents) }}</template></el-table-column>
       <el-table-column prop="decide" label="决策" /><el-table-column label="免违约金"><template #default="{row}">{{ row.waivePenalty?'是':'否' }}</template></el-table-column>
     </el-table>

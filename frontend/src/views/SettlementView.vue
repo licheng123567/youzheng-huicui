@@ -11,6 +11,16 @@ const role = computed(() => auth.me?.role)
 // CO(催收员)不看组织级对账/支付申请单(US-M9-09 仅本人佣金只读)，只看「我的佣金」面板。
 const canViewPayReq = computed(() => role.value !== 'CO')
 const sides = computed(() => (role.value === 'PL' || role.value === 'PC') ? ['IN'] : (role.value === 'VL') ? ['OUT'] : ['IN', 'OUT'])
+// 平台角色：SA/SE；服务商角色：VL/CO
+const isPlatform = computed(() => role.value === 'SA' || role.value === 'SE')
+const isProvider = computed(() => role.value === 'VL' || role.value === 'CO')
+// 契约 x-settlement-side-rule: IN→平台(SA/SE)生成；OUT→服务商(VL)生成；generatedBy 服务端派生
+// canGenerate: 生成支付申请单权限（payreq.create + 线别与角色匹配）
+const canGenerate = computed(() => auth.has('payreq.create') && ((isPlatform.value && side.value === 'IN') || (isProvider.value && side.value === 'OUT')))
+// canRevoke: 撤销权限同口径——生成方才能撤销（与 canGenerate 同条件）
+const canRevoke = computed(() => auth.has('payreq.create') && ((isPlatform.value && side.value === 'IN') || (isProvider.value && side.value === 'OUT')))
+// canComplete: 完成恒由平台受理(契约 completePaymentRequest x-data-scope=platform)——IN=平台确认收款 / OUT=平台支付+上传凭证(BR-M9-12)；仅 SA/SE 持 payreq.complete
+const canComplete = computed(() => auth.has('payreq.complete') && isPlatform.value)
 const side = ref<'IN' | 'OUT'>('IN')
 const rollup = ref<any[]>([]); const prs = ref<any[]>([]); const loading = ref(false)
 const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
@@ -118,7 +128,7 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
     <el-radio-group v-model="side" style="margin-bottom:12px" @change="load">
       <el-radio-button v-for="s in sides" :key="s" :label="s">{{ s==='IN'?'收佣线(IN)':'付佣线(OUT)' }}</el-radio-button>
     </el-radio-group>
-    <el-button v-if="auth.has('payreq.create')" type="primary" size="small" style="margin-left:12px" @click="openGenerate">勾选明细生成支付申请单</el-button>
+    <el-button v-if="canGenerate" type="primary" size="small" style="margin-left:12px" @click="openGenerate">勾选明细生成支付申请单</el-button>
 
     <el-divider content-position="left">对账汇总（GET /recon/rollup）</el-divider>
     <el-table :data="rollup" border size="small">
@@ -138,9 +148,9 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
         <template #default="{ row }">
           <el-button size="small" text @click="openDetail(row)">详情</el-button>
           <template v-if="row.status==='PENDING'">
-            <el-button v-if="auth.has('payreq.create')" size="small" @click="send(row)">发送</el-button>
-            <el-button v-if="auth.has('payreq.complete')" size="small" type="primary" @click="openComplete(row)">{{ side==='IN'?'确认收款':'支付完成' }}</el-button>
-            <el-button v-if="auth.has('payreq.create')" size="small" @click="revoke(row)">{{ side==='IN'?'撤销':'撤回' }}</el-button>
+            <el-button v-if="canGenerate" size="small" @click="send(row)">发送</el-button>
+            <el-button v-if="canComplete" size="small" type="primary" @click="openComplete(row)">{{ side==='IN'?'确认收款':'支付完成' }}</el-button>
+            <el-button v-if="canRevoke" size="small" @click="revoke(row)">{{ side==='IN'?'撤销':'撤回' }}</el-button>
           </template>
         </template>
       </el-table-column>
@@ -179,7 +189,7 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
 
     <!-- 生成支付申请单 -->
     <el-dialog v-model="gdlg" :title="`勾选明细生成支付申请单（${side==='IN'?'收佣':'付佣'}线 POST /payment-requests）`" width="720px">
-      <el-form :inline="true"><el-form-item label="批次 id"><el-input v-model="gBatchId" style="width:140px" placeholder="如 1" /></el-form-item><el-button @click="loadLines">加载未结回款明细</el-button></el-form>
+      <el-form :inline="true"><el-form-item label="批次 id"><el-input v-model="gBatchId" style="width:200px" placeholder="批次 ID（字符串）" /></el-form-item><el-button @click="loadLines">加载未结回款明细</el-button></el-form>
       <el-table :data="gLines" border size="small" @selection-change="(v:any)=>gSel=v" max-height="320">
         <el-table-column type="selection" width="40" />
         <el-table-column prop="ownerName" label="业主" /><el-table-column prop="room" label="房号" />

@@ -219,6 +219,29 @@ if (typeof recId2 !== 'undefined' && recId2 && coOther) {
 }
 // reduce.approve 端点可达：PL 权限含 reduce.approve(不再死端点)
 check('PL 权限含 reduce.approve(端点可达)', ((await getJson('/me', pl)).body?.permissions || []).includes('reduce.approve'))
+// === 四方适配审计修复(workflow)验证 ===
+// H-01/H-02: 读入口无 x-permission(按 range) — 物业/服务商可读 projects/batches/reports
+check('H-01 PL 读 /projects(无 perm) → 200', (await getJson('/projects?page=1&size=5', pl)).status === 200)
+check('H-01 VL 读 /batches(无 perm) → 200', (await getJson('/batches?page=1&size=5', vl)).status === 200)
+check('H-02 PL 读经营报表(非平台专属) → 200', (await getJson('/reports/operation?dimension=batch', pl)).status === 200)
+check('H-02 VL 读经营报表 → 200', (await getJson('/reports/operation?dimension=batch', vl)).status === 200)
+// H-06: reduce-tiers 返 {source, tiers[]} 非裸数组
+{
+  // GET reduce-tiers 需 reduce.policy.edit(PL/PC),用 pl;取本物业批次(翠湖)
+  const plBatch = ((await getJson('/batches?page=1&size=20', pl)).body?.items || [])[0]
+  if (plBatch) {
+    const rt = await getJson(`/batches/${plBatch.id}/reduce-tiers`, pl)
+    check('H-06 reduce-tiers 返 {source,tiers[]} 结构', rt.status === 200 && Array.isArray(rt.body?.tiers) && typeof rt.body?.source === 'string', 'source=' + rt.body?.source)
+  }
+}
+// H-08: 成员编辑 PATCH /members/{id}(MemberPatch) — PL 改本组织成员权限子集
+{
+  const mem = ((await getJson('/members?page=1&size=20', pl)).body?.items || []).find((m) => m.username === 'cuihu_pc')
+  if (mem) {
+    const r = await fetch(`${B}/members/${mem.id}`, { method: 'PATCH', headers: { Authorization: `Bearer ${pl}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ permissions: ['case.follow', 'case.paylink'] }) })
+    check('H-08 PATCH /members/{id} 成员编辑 → 2xx', [200, 204].includes(r.status), 'HTTP ' + r.status)
+  }
+}
 // MED ticket.handle 收回 CO：CO 处理工单 → 403(无权限)
 if (s3case) {
   const tk = (await getJson(`/cases/${s3case.id}/tickets?page=1&size=20`, co)).body?.items?.[0]

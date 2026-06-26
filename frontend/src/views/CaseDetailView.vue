@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
@@ -9,6 +9,30 @@ import { useAuth } from '../stores/auth'
 const route = useRoute(); const router = useRouter(); const auth = useAuth()
 const id = String(route.params.id)
 const d = ref<any>(null)
+
+// M-01: availableActions SSOT — 后端按当前主体权限返回可用操作点(契约 CaseDetail.availableActions)
+// 动作名 → availableActions key 映射(契约操作点命名)
+const ACTION_KEYS: Record<string, string> = {
+  follow: 'follow', promise: 'promise', ticket: 'ticket', paylink: 'paylink',
+  repay: 'repay', legal: 'legal', evidence: 'evidence', release: 'release',
+  'return': 'return', close: 'close'
+}
+const availableActions = computed<string[]>(function() { return d.value && d.value.availableActions ? d.value.availableActions : [] })
+// 按钮显隐：availableActions 非空时以其为 SSOT；为空时回退纯权限判断(后端未返时全不隐)
+function canAct(actionKey: string, permission: string): boolean {
+  var actions = availableActions.value
+  if (actions.length === 0) return auth.has(permission)
+  return auth.has(permission) && actions.indexOf(actionKey) !== -1
+}
+
+// L-01: 通话结果标记码集中常量(对齐契约 MarkCodeEnum 描述的常见值，enabled 状态以 settings 为准)
+const MARK_CODES: Array<{ code: string; label: string }> = [
+  { code: 'PROMISED', label: '已承诺' },
+  { code: 'REFUSED', label: '拒接/拒还' },
+  { code: 'NEED_TICKET', label: '需转工单' },
+  { code: 'FOLLOW_UP', label: '待跟进' },
+  { code: 'NO_ANSWER', label: '无人接听' }
+]
 const promises = ref<any[]>([]); const tickets = ref<any[]>([]); const legalDocs = ref<any[]>([]); const repays = ref<any[]>([])
 const payLinks = ref<any[]>([])   // 本会话创建的缴费链接(契约无 per-case 列表端点,发后捕获→可重发/作废 BR-M4-14)
 const latest = ref<any>(null); const review = ref<any>(null)
@@ -171,17 +195,18 @@ onMounted(loadAll)
   <div v-if="d">
     <el-page-header @back="router.back()" :content="`案件作业台：${d.case?.ownerName} ${d.case?.room} · ${d.case?.status}`" style="margin-bottom:12px" />
     <el-card style="margin-bottom:12px">
-      <el-button v-if="auth.has('case.follow')" type="primary" size="small" @click="openAct('follow','写跟进')">写跟进</el-button>
-      <el-button v-if="auth.has('case.promise')" size="small" @click="openAct('promise','登记承诺')">登记承诺</el-button>
-      <el-button v-if="auth.has('case.ticket')" size="small" @click="openAct('ticket','转工单')">转工单</el-button>
-      <el-button v-if="auth.has('case.paylink')" size="small" @click="openAct('paylink','发缴费链接')">发缴费链接</el-button>
-      <el-button v-if="auth.has('case.repay.mark')" size="small" type="success" @click="openAct('repay','登记还款')">登记还款</el-button>
-      <el-button v-if="auth.has('case.follow')" size="small" @click="suggestLegal">建议走法务</el-button>
-      <el-button v-if="auth.has('legal.create')" size="small" @click="openAct('legal','申请法务文书')">申请法务</el-button>
-      <el-button v-if="auth.has('evidence.create')" size="small" @click="openAct('evidence','发起存证')">发起存证</el-button>
-      <el-button v-if="auth.has('case.release')" size="small" @click="lifecycle('释放','/cases/{id}/release')">释放</el-button>
-      <el-button v-if="auth.has('case.return')" size="small" @click="lifecycle('退回','/cases/{id}/return')">退回</el-button>
-      <el-button v-if="auth.has('case.close')" size="small" type="danger" plain @click="openAct('close','结案')">结案</el-button>
+      <!-- M-01: availableActions(CaseDetail.availableActions) 非空时作 SSOT；为空回退纯权限(BR-M8-04) -->
+      <el-button v-if="canAct('follow','case.follow')" type="primary" size="small" @click="openAct('follow','写跟进')">写跟进</el-button>
+      <el-button v-if="canAct('promise','case.promise')" size="small" @click="openAct('promise','登记承诺')">登记承诺</el-button>
+      <el-button v-if="canAct('ticket','case.ticket')" size="small" @click="openAct('ticket','转工单')">转工单</el-button>
+      <el-button v-if="canAct('paylink','case.paylink')" size="small" @click="openAct('paylink','发缴费链接')">发缴费链接</el-button>
+      <el-button v-if="canAct('repay','case.repay.mark')" size="small" type="success" @click="openAct('repay','登记还款')">登记还款</el-button>
+      <el-button v-if="canAct('follow','case.follow')" size="small" @click="suggestLegal">建议走法务</el-button>
+      <el-button v-if="canAct('legal','legal.create')" size="small" @click="openAct('legal','申请法务文书')">申请法务</el-button>
+      <el-button v-if="canAct('evidence','evidence.create')" size="small" @click="openAct('evidence','发起存证')">发起存证</el-button>
+      <el-button v-if="canAct('release','case.release')" size="small" @click="lifecycle('释放','/cases/{id}/release')">释放</el-button>
+      <el-button v-if="canAct('return','case.return')" size="small" @click="lifecycle('退回','/cases/{id}/return')">退回</el-button>
+      <el-button v-if="canAct('close','case.close')" size="small" type="danger" plain @click="openAct('close','结案')">结案</el-button>
     </el-card>
 
     <el-tabs>
@@ -223,7 +248,8 @@ onMounted(loadAll)
               <el-button size="small" type="primary" @click="loadReview(latest.recording.id)">看 AI 复盘</el-button>
               <el-button size="small" @click="router.push(`/cases/${id}/call/${latest.recording.id}`)">通话记录详情</el-button>
               <el-button v-if="latest.recording.status==='FAILED'" size="small" @click="reprocessRec(latest.recording.id)">重新处理</el-button>
-              <el-button v-if="auth.has('case.call')" size="small" @click="openMark(latest.recording.id)">标记结果</el-button>
+              <!-- H-05: 标记结果调 POST /recordings/{id}/ai-review x-permission=case.follow，非 case.call -->
+              <el-button v-if="auth.has('case.follow')" size="small" @click="openMark(latest.recording.id)">标记结果</el-button>
             </el-descriptions-item>
           </el-descriptions>
         </template>
@@ -336,8 +362,9 @@ onMounted(loadAll)
     </el-dialog>
 
     <!-- 通话结果标记 -->
+    <!-- L-01: 标记码由 MARK_CODES 常量驱动(对齐契约 MarkCodeEnum/CFG-MARK-CODES 常见值) -->
     <el-dialog v-model="mkdlg" title="通话结果标记（POST /recordings/{id}/ai-review）" width="400px">
-      <el-form label-width="80px"><el-form-item label="结果码"><el-select v-model="mkForm.mark"><el-option v-for="m in ['PROMISED','REFUSED','NEED_TICKET','FOLLOW_UP','NO_ANSWER']" :key="m" :label="m" :value="m" /></el-select></el-form-item></el-form>
+      <el-form label-width="80px"><el-form-item label="结果码"><el-select v-model="mkForm.mark"><el-option v-for="m in MARK_CODES" :key="m.code" :label="m.label" :value="m.code" /></el-select></el-form-item></el-form>
       <template #footer><el-button @click="mkdlg=false">取消</el-button><el-button type="primary" @click="submitMark">标记</el-button></template>
     </el-dialog>
   </div>
