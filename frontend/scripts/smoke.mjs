@@ -261,6 +261,21 @@ if (s3) {
   const ev = await getJson('/sea/events?page=1&size=5', co)
   check('公海事件日志 → items(event 枚举)', ev.status === 200 && Array.isArray(ev.body?.items))
 }
+// === v1.3.0 P2: 个人中心自助改密 + 案件搜索 ===
+{
+  // 用 jx_co2(不影响其他用 jx_co1 的检查) 跑改密全周期
+  const c2 = await login('jx_co2', 'Admin@123')
+  check('自助改密 旧密码错 → 401', (await post('/me/password', c2, { oldPassword: 'WRONG', newPassword: 'NewPass@1' })).status === 401)
+  check('自助改密 弱新密码 → 422', (await post('/me/password', c2, { oldPassword: 'Admin@123', newPassword: '123' })).status === 422)
+  check('自助改密 正常 → 200', (await post('/me/password', c2, { oldPassword: 'Admin@123', newPassword: 'NewPass@1' })).status === 200)
+  check('改密后新密码可登录', !!(await login('jx_co2', 'NewPass@1')))
+  const c2b = await login('jx_co2', 'NewPass@1')
+  check('改回原密码 → 200', (await post('/me/password', c2b, { oldPassword: 'NewPass@1', newPassword: 'Admin@123' })).status === 200)
+  // 搜索：SA 搜业主姓名命中 + 缺 q 422
+  const sr = await getJson('/search?q=' + encodeURIComponent('张') + '&type=case', sa)
+  check('案件搜索 业主姓名命中', sr.status === 200 && (sr.body?.items?.length ?? 0) >= 1 && sr.body.items[0].acctNo != null)
+  check('案件搜索 缺 q → 422', (await getJson('/search', sa)).status === 422)
+}
 // === 四方适配审计修复(workflow)验证 ===
 // H-01/H-02: 读入口无 x-permission(按 range) — 物业/服务商可读 projects/batches/reports
 check('H-01 PL 读 /projects(无 perm) → 200', (await getJson('/projects?page=1&size=5', pl)).status === 200)

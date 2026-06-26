@@ -1650,6 +1650,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 自助修改本人密码(校验旧密码·错误旧密码 401·弱密码 422·与管理员重置并存) */
+        post: operations["changeOwnPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 案件/业主搜索(业主姓名/房号/户号/电话·数据范围裁剪·未持有公海脱敏 BR-M4-22/M3-21a) */
+        get: operations["search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/notifications": {
         parameters: {
             query?: never;
@@ -3160,6 +3194,20 @@ export interface components {
          * @enum {string}
          */
         TodoCategoryEnum: "PROMISE_DUE" | "RELEASE_WARN" | "TICKET_RECEIPT" | "NEW_ASSIGNED" | "LEGAL_DELIVERY" | "REPAY_MARK" | "PAYLINK_SEND" | "REDUCE_APPROVE";
+        /** @description 案件搜索命中(BR-M4-22)。未持有公海案件 ownerName 脱敏(BR-M3-21a) */
+        SearchCaseHit: {
+            caseId: string;
+            acctNo: string;
+            ownerName?: string;
+            room?: string | null;
+            dueCents?: components["schemas"]["Money"];
+            status?: string;
+            projectName?: string | null;
+        };
+        SearchResult: {
+            items?: components["schemas"]["SearchCaseHit"][];
+            meta?: components["schemas"]["PageMeta"];
+        };
         /** @description 消息中心通知(BR-M4-23 互推闭环)。归属 recipient，read 标已读 */
         Notification: {
             id: string;
@@ -6258,6 +6306,60 @@ export interface operations {
                         holdCap?: number;
                         items?: components["schemas"]["CollectorCapacity"][];
                     };
+                };
+            };
+        };
+    };
+    changeOwnPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    oldPassword: string;
+                    newPassword: string;
+                };
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok?: boolean;
+                    };
+                };
+            };
+        };
+    };
+    search: {
+        parameters: {
+            query: {
+                q: string;
+                type?: "case";
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchResult"];
                 };
             };
         };
