@@ -10,7 +10,9 @@ test.describe('US-M3-02 平台公海再派(SA)', () => {
     await page.getByRole('menuitem', { name: '公海' }).click()
     await expect(page).toHaveURL(/\/sea/)
     // 平台公海视图
-    await page.getByText('平台公海', { exact: true }).click()
+    // 点池切换 radio 的可见 label span（el-radio 真 input 隐藏、点它被 __inner 拦截；
+    // 且 "平台公海" 文案也出现在表格"来源池"列 .el-tag，故锚定 .el-radio-button__inner 最稳）。
+    await page.locator('.el-radio-button__inner', { hasText: '平台公海' }).click()
     await expect(page.locator('.el-table').first()).toBeVisible()
   })
 
