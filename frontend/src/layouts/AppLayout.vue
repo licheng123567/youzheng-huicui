@@ -7,6 +7,8 @@ import { api } from '../api/client'
 const auth = useAuth()
 const router = useRouter()
 const unread = ref(0)   // 消息中心未读红点(BR-M4-23)
+const q = ref('')       // 全局搜索
+function doSearch() { if (q.value.trim()) router.push({ path: '/search', query: { q: q.value.trim() } }) }
 
 async function loadUnread() {
   if (!auth.isAuthed) return
@@ -45,10 +47,12 @@ function logout() {
     <el-header style="display:flex;align-items:center;justify-content:space-between;background:#1f2d3d;color:#fff">
       <strong>有证慧催 · 控制台</strong>
       <div v-if="auth.me" style="display:flex;align-items:center;gap:12px">
+        <el-input v-model="q" size="small" placeholder="搜案件/业主/房号/电话" style="width:200px" clearable
+          @keyup.enter="doSearch"><template #append><el-button @click="doSearch">搜</el-button></template></el-input>
         <el-badge :value="unread" :hidden="unread === 0" :max="99">
           <el-button size="small" @click="router.push('/notifications')">消息</el-button>
         </el-badge>
-        <span>{{ auth.me.name }}（{{ auth.me.role }}）· {{ auth.me.org?.name }}</span>
+        <el-button text style="color:#fff" @click="router.push('/profile')">{{ auth.me.name }}（{{ auth.me.role }}）· {{ auth.me.org?.name }}</el-button>
         <el-button size="small" @click="logout">退出</el-button>
       </div>
     </el-header>
