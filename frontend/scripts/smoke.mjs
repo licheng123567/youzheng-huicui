@@ -131,6 +131,10 @@ if (s3) {
   const lat2 = await getJson(`/cases/${s3.id}/recordings/latest`, co)
   const recId2 = lat2.body?.recording?.id
   if (recId2) check('CO 通话结果标记 → 2xx', [200, 201].includes((await post(`/recordings/${recId2}/ai-review`, co, { mark: 'PROMISED' })).status))
+  // P1: 独立通话记录页数据源 GET /recordings/{id}
+  if (recId2) check('GET /recordings/{id} 通话记录详情 → 200', (await getJson(`/recordings/${recId2}`, co)).body?.caseId != null)
+  // P1: 建议法务轻标(US-M4-07)=跟进记录
+  check('CO 建议走法务(轻标=跟进) → 201', (await post(`/cases/${s3.id}/follow-ups`, co, { content: '【建议走法务】', method: 'OTHER' })).status === 201)
   // 法务/存证(PL: legal.create/evidence.create)；存证 RECORDING 场景关联就绪录音
   check('PL 申请法务文书 → 2xx', [200, 201].includes((await post(`/cases/${s3.id}/legal-docs`, pl, { type: 'COLLECTION_LETTER' })).status))
   if (recId2) check('PL 发起存证(RECORDING) → 2xx', [200, 201].includes((await post(`/cases/${s3.id}/evidence`, pl, { scene: 'RECORDING', refIds: [String(recId2)] })).status))
@@ -200,7 +204,10 @@ check('PL 读 billing/usage(range 无perm) → 200', (await getJson('/billing/us
 // P1: caseIds 勾选拆派(US-M3-01) — GET /cases?batchId= 列本批案件供勾选(端点净室已验 SPLIT+caseIds→{ok:true};
 //   此处验"按批列案件"数据源可用,实际拆派会消费案件态故不在共享 smoke 重复派)
 const s0b2 = (bsSa.body?.items || []).find((b) => b.code === 'B-CH-M3-S0')
-if (s0b2) check('GET /cases?batchId= 列本批案件(供 caseIds 勾选)', (await getJson(`/cases?batchId=${s0b2.id}&page=1&size=50`, sa)).status === 200)
+if (s0b2) {
+  check('GET /cases?batchId= 列本批案件(供 caseIds 勾选)', (await getJson(`/cases?batchId=${s0b2.id}&page=1&size=50`, sa)).status === 200)
+  check('GET /batches/{id} 批次详情 → 200', (await getJson(`/batches/${s0b2.id}`, sa)).body?.code != null)
+}
 // P1: AI 写界面 — PUT ai-config / POST script-lib
 check('SA 编辑 AI配置(PUT /ai-config) → 2xx', [200, 201, 204].includes((await fetch(`${B}/ai-config`, { method: 'PUT', headers: { Authorization: `Bearer ${sa}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ llm: { provider: 'deepseek', model: 'deepseek-chat', temperature: 0.3 }, asr: { provider: 'bailian' } }) })).status))
 check('SA 新建话术(POST /script-lib) → 2xx', [200, 201].includes((await post('/script-lib', sa, { scene: '首催开场', intent: '提醒', text: '您好，关于物业费…' })).status))

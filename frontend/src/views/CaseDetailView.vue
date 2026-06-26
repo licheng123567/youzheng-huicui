@@ -142,6 +142,12 @@ async function deliverLegal(doc: any) {
   if (error) { ElMessage.error('送达登记失败：' + ((error as any)?.message ?? '')); return }
   ElMessage.success('已登记送达'); loadAll()
 }
+// US-M4-07 建议法务轻标：催收员标记"建议走法务"——不改状态、不出私海，落跟进记录留痕(轻标,区别于协调员正式法务申请)
+async function suggestLegal() {
+  const { error } = await api.POST('/cases/{id}/follow-ups', { params: { path: { id } }, body: { content: '【建议走法务】催收员建议本案进入法务程序（轻标·待协调员审）', method: 'OTHER' } as any })
+  if (error) { ElMessage.error('建议失败：' + ((error as any)?.message ?? '')); return }
+  ElMessage.success('已轻标"建议走法务"（记入跟进，待协调员法务申请）'); loadAll()
+}
 // 生命周期：释放(CO)/退回(VL)——带原因，状态机 CAS
 async function lifecycle(verb: string, path: any) {
   try {
@@ -170,6 +176,7 @@ onMounted(loadAll)
       <el-button v-if="auth.has('case.ticket')" size="small" @click="openAct('ticket','转工单')">转工单</el-button>
       <el-button v-if="auth.has('case.paylink')" size="small" @click="openAct('paylink','发缴费链接')">发缴费链接</el-button>
       <el-button v-if="auth.has('case.repay.mark')" size="small" type="success" @click="openAct('repay','登记还款')">登记还款</el-button>
+      <el-button v-if="auth.has('case.follow')" size="small" @click="suggestLegal">建议走法务</el-button>
       <el-button v-if="auth.has('legal.create')" size="small" @click="openAct('legal','申请法务文书')">申请法务</el-button>
       <el-button v-if="auth.has('evidence.create')" size="small" @click="openAct('evidence','发起存证')">发起存证</el-button>
       <el-button v-if="auth.has('case.release')" size="small" @click="lifecycle('释放','/cases/{id}/release')">释放</el-button>
@@ -214,6 +221,7 @@ onMounted(loadAll)
             <el-descriptions-item label="时长">{{ latest.recording.durationSec }}s</el-descriptions-item>
             <el-descriptions-item label="操作">
               <el-button size="small" type="primary" @click="loadReview(latest.recording.id)">看 AI 复盘</el-button>
+              <el-button size="small" @click="router.push(`/cases/${id}/call/${latest.recording.id}`)">通话记录详情</el-button>
               <el-button v-if="latest.recording.status==='FAILED'" size="small" @click="reprocessRec(latest.recording.id)">重新处理</el-button>
               <el-button v-if="auth.has('case.call')" size="small" @click="openMark(latest.recording.id)">标记结果</el-button>
             </el-descriptions-item>

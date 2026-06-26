@@ -89,7 +89,7 @@ onMounted(load)
     <el-button v-if="auth.has('batch.import')" type="primary" size="small" style="margin-bottom:10px" @click="openImport">导入批次</el-button>
     <el-table v-loading="loading" :data="items" border>
       <el-table-column prop="id" label="ID" width="60" />
-      <el-table-column prop="code" label="批次号" />
+      <el-table-column label="批次号"><template #default="{row}"><el-button link type="primary" @click="$router.push(`/batches/${row.id}`)">{{ row.code }}</el-button></template></el-table-column>
       <el-table-column prop="status" label="状态" width="110" />
       <el-table-column label="收佣比例" width="100">
         <template #default="{ row }">{{ row.commInRate != null ? (row.commInRate * 100).toFixed(2) + '%' : '—' }}</template>
