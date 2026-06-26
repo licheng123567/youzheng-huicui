@@ -57,7 +57,14 @@ async function submitAssign() {
   await act(aForm.value.id, '/cases/{id}/assign', '指派', { collectorId: String(aForm.value.collectorId) })
   adlg.value = false
 }
-onMounted(load)
+// 公海事件日志(GET /sea/events · BR-M3-22 · 轮询)
+const events = ref<any[]>([])
+const EV_LABEL: Record<string, string> = { ENTER: '入池', CLAIM: '抢单', RELEASE: '释放', RETURN: '退回', REDISPATCH: '再派', OPEN: '开放', ASSIGN: '指派' }
+async function loadEvents() {
+  const { data } = await api.GET('/sea/events', { params: { query: { page: 1, size: 15 } } as any })
+  events.value = (data as any)?.items ?? []
+}
+onMounted(() => { load(); loadEvents() })
 </script>
 
 <template>
@@ -99,6 +106,16 @@ onMounted(load)
         </template>
       </el-table-column>
     </el-table>
+
+    <!-- 实时事件日志（GET /sea/events · BR-M3-22 · 轮询非SSE） -->
+    <el-divider content-position="left">实时事件日志（近期流转 · <el-button text size="small" @click="loadEvents">刷新</el-button>）</el-divider>
+    <el-timeline v-if="events.length">
+      <el-timeline-item v-for="e in events" :key="e.id" :timestamp="String(e.at).slice(0,16).replace('T',' ')" placement="top">
+        <el-tag size="small">{{ EV_LABEL[e.event] || e.event }}</el-tag> 案件 #{{ e.caseId }}（{{ e.ownerName }}）
+      </el-timeline-item>
+    </el-timeline>
+    <el-empty v-else description="暂无事件" :image-size="40" />
+
     <el-dialog v-model="adlg" title="指派催收员（POST /cases/{id}/assign · 按余量推荐 BR-M3-23）" width="480px">
       <div style="color:#909399;font-size:12px;margin-bottom:6px">持有上限 holdCap={{ capHoldCap }}；点行选定（默认选余量最大的推荐者）</div>
       <el-table :data="caps" border size="small" highlight-current-row @row-click="(r:any)=>aForm.collectorId=r.collectorId" style="cursor:pointer">

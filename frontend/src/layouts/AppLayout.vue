@@ -1,12 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuth } from '../stores/auth'
+import { api } from '../api/client'
 
 const auth = useAuth()
 const router = useRouter()
+const unread = ref(0)   // 消息中心未读红点(BR-M4-23)
 
-onMounted(() => { if (auth.isAuthed && !auth.me) auth.fetchMe() })
+async function loadUnread() {
+  if (!auth.isAuthed) return
+  const { data } = await api.GET('/notifications/unread-count', {})
+  unread.value = (data as any)?.count ?? 0
+}
+onMounted(async () => { if (auth.isAuthed && !auth.me) await auth.fetchMe(); loadUnread() })
 
 // 导航按功能权限过滤(代表权限·any 命中即显；无 perms=所有角色可见)。服务端 x-permission/scope 才是真隔离，此为 UX 门控。
 const isPlatform = computed(() => ['SA', 'SE'].includes(auth.me?.role ?? ''))
@@ -38,6 +45,9 @@ function logout() {
     <el-header style="display:flex;align-items:center;justify-content:space-between;background:#1f2d3d;color:#fff">
       <strong>有证慧催 · 控制台</strong>
       <div v-if="auth.me" style="display:flex;align-items:center;gap:12px">
+        <el-badge :value="unread" :hidden="unread === 0" :max="99">
+          <el-button size="small" @click="router.push('/notifications')">消息</el-button>
+        </el-badge>
         <span>{{ auth.me.name }}（{{ auth.me.role }}）· {{ auth.me.org?.name }}</span>
         <el-button size="small" @click="logout">退出</el-button>
       </div>

@@ -28,6 +28,7 @@ const router = createRouter({
         { path: 'billing', name: 'billing', component: () => import('../views/BillingView.vue') },
         { path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
         { path: 'members', name: 'members', component: () => import('../views/MembersView.vue') },
+        { path: 'notifications', name: 'notifications', component: () => import('../views/NotificationsView.vue') },
       ],
     },
   ],
