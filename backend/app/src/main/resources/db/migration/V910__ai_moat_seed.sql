@@ -37,25 +37,25 @@ BEGIN
   END IF;
 
   -- (A) script_lib 若干条（飞轮全链路样本：scene/intent/source/status/uses/promise_rate/repay_rate/wilson/variant）
-  --     注：promise_rate/repay_rate/wilson 存 NUMERIC 百分比，应用层 GET 时 /100 转契约 Rate 分数。
+  --     注：promise_rate/repay_rate/variant.uplift 按契约 Rate 直存分数 0-1（V911 起，应用层不再 /100）；wilson 本即 0-1 分数。
   IF NOT EXISTS (SELECT 1 FROM script_lib) THEN
     -- 1) 专家话术·已晋升现行（EFFECTIVE，高 Wilson，飞轮第六环排名靠前）
     INSERT INTO script_lib(scene,intent,cohort,source,uses,promise_rate,repay_rate,wilson,status,variant)
-      VALUES('首催开场','建立信任','长期欠费','EXPERT',1200,52.0000,38.0000,0.341200,'EFFECTIVE',NULL);
+      VALUES('首催开场','建立信任','长期欠费','EXPERT',1200,0.5200,0.3800,0.341200,'EFFECTIVE',NULL);
     -- 2) AI 挖掘话术·现行（EFFECTIVE，带已晋升变体快照可回滚）
     INSERT INTO script_lib(scene,intent,cohort,source,uses,promise_rate,repay_rate,wilson,status,variant)
-      VALUES('催缴施压','促成承诺','高额欠费','AI_MINED',860,48.5000,40.1000,0.318700,'EFFECTIVE',
-        '{"text":"……(晋升后现行变体文案)","uplift":5.2000,"state":"PROMOTED"}'::jsonb);
+      VALUES('催缴施压','促成承诺','高额欠费','AI_MINED',860,0.4850,0.4010,0.318700,'EFFECTIVE',
+        '{"text":"……(晋升后现行变体文案)","uplift":0.0520,"state":"PROMOTED"}'::jsonb);
     -- 3) AI 挖掘话术·候选+待晋升胜出变体（CANDIDATE，variant.state=WINNER → 可走 promote 端点）
     INSERT INTO script_lib(scene,intent,cohort,source,uses,promise_rate,repay_rate,wilson,status,variant)
-      VALUES('分期引导','分期承诺','一般欠费','AI_MINED',410,44.0000,33.0000,0.276500,'CANDIDATE',
-        '{"text":"……(实验胜出变体文案)","uplift":7.8000,"state":"WINNER"}'::jsonb);
+      VALUES('分期引导','分期承诺','一般欠费','AI_MINED',410,0.4400,0.3300,0.276500,'CANDIDATE',
+        '{"text":"……(实验胜出变体文案)","uplift":0.0780,"state":"WINNER"}'::jsonb);
     -- 4) 专家话术·候选（CANDIDATE，刚录入 uses=0，飞轮第一环）
     INSERT INTO script_lib(scene,intent,cohort,source,uses,promise_rate,repay_rate,wilson,status,variant)
       VALUES('失联破冰','建立联系','失联户','EXPERT',0,NULL,NULL,NULL,'CANDIDATE',NULL);
     -- 5) 退役话术（RETIRED，低效淘汰，飞轮负反馈样本）
     INSERT INTO script_lib(scene,intent,cohort,source,uses,promise_rate,repay_rate,wilson,status,variant)
-      VALUES('强硬催收','促成缴费','钉子户','AI_MINED',300,12.0000,6.0000,0.041000,'RETIRED',NULL);
+      VALUES('强硬催收','促成缴费','钉子户','AI_MINED',300,0.1200,0.0600,0.041000,'RETIRED',NULL);
   END IF;
 
   -- (B) playbook 1 条（挂 翠湖一期 project_id；现行已发布版，物业已采纳）

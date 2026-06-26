@@ -29,7 +29,6 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -55,7 +54,7 @@ import java.util.Map;
  *   - 幂等：variant/promote 的 Idempotency-Key 由 IdempotencyInterceptor 在 header 层兜底（同键重放→409），控制器无需声明参数。
  *   - 敏感写（护城河内容/密钥/飞轮策略）经 AuditService 落 audit_log；密钥快照脱敏。
  *
- * Rate 口径（v1.0.3 统一分数）：DB promise_rate/repay_rate NUMERIC(6,4) 百分比 ↔ 契约 Rate 0-1 分数，RowMapper /100 转换。
+ * Rate 口径（v1.0.3 统一分数；V911 起 DB 亦直存分数）：DB promise_rate/repay_rate/variant.uplift = 0-1 分数，与契约 Rate 一致，无需转换。
  * 金额无关：本组无金额体。
  *
  * 不可 5xx 自律：路径/体非法 → 422；非平台/缺权限 → 403；话术不存在 → 404；无胜出变体 → 409 BizError。
@@ -64,7 +63,6 @@ import java.util.Map;
 public class ScriptAiController {
 
     private static final String MASK = "****";
-    private static final BigDecimal HUNDRED = new BigDecimal("100");
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
@@ -297,13 +295,13 @@ public class ScriptAiController {
         return found.get(0);
     }
 
-    /** DB NUMERIC 百分比（45.0000）→ 契约 Rate 0-1 分数（0.45）。null 保持 null。 */
-    private static Double rateToFraction(BigDecimal pct) {
-        if (pct == null) return null;
-        return pct.divide(HUNDRED, 6, RoundingMode.HALF_UP).doubleValue();
+    /** DB NUMERIC 现按契约口径直存分数 0-1（V911 起；如 0.4500）→ 原样透出。null 保持 null。 */
+    private static Double rateToFraction(BigDecimal frac) {
+        if (frac == null) return null;
+        return frac.doubleValue();
     }
 
-    /** variant jsonb 文本 → ScriptVariantDto；null/异常保持 null。uplift 百分比 → 分数 /100。 */
+    /** variant jsonb 文本 → ScriptVariantDto；null/异常保持 null。uplift 亦按分数 0-1 直存直出（V911 起）。 */
     private ScriptVariantDto parseVariant(String variantText) {
         if (variantText == null || variantText.isBlank()) return null;
         try {

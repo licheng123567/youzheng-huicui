@@ -232,6 +232,12 @@ if (s0b2) {
 // P1: AI 写界面 — PUT ai-config / POST script-lib
 check('SA 编辑 AI配置(PUT /ai-config) → 2xx', [200, 201, 204].includes((await fetch(`${B}/ai-config`, { method: 'PUT', headers: { Authorization: `Bearer ${sa}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ llm: { provider: 'deepseek', model: 'deepseek-chat', temperature: 0.3 }, asr: { provider: 'bailian' } }) })).status))
 check('SA 新建话术(POST /script-lib) → 2xx', [200, 201].includes((await post('/script-lib', sa, { scene: '首催开场', intent: '提醒', text: '您好，关于物业费…' })).status))
+// SSOT：script_lib Rate 为 0-1 分数(V911 去 /100 漂移；首催开场 0.52，绝不 >1)
+{
+  const sl = await getJson('/script-lib?page=1&size=50', sa)
+  const rated = (sl.body?.items || []).filter((s) => s.promiseRate != null)
+  check('script-lib Rate 为分数 0-1(无百分比漂移)', rated.length > 0 && rated.every((s) => s.promiseRate <= 1 && s.repayRate <= 1), rated.length + ' 条有率值')
+}
 // P1: playbook 采纳(US-M5-07) — PL 对翠湖一期(项目1)采纳作战手册
 check('GET /projects/1/playbook → 200', (await getJson('/projects/1/playbook', pl)).status === 200)
 check('PL 采纳作战手册(POST /projects/1/playbook) → 2xx', [200, 201].includes((await post('/projects/1/playbook', pl, { version: 'v1.1', content: '通话前策略：先核实身份…' })).status))

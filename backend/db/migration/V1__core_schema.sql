@@ -787,8 +787,8 @@ CREATE TABLE script_lib (
     cohort          TEXT,
     source          TEXT        NOT NULL DEFAULT 'EXPERT',
     uses            INTEGER     NOT NULL DEFAULT 0,
-    promise_rate    NUMERIC(6,4),   -- 承诺率%（百分比，如 45.0000=45%）
-    repay_rate      NUMERIC(6,4),   -- 回款率%
+    promise_rate    NUMERIC(6,4),   -- 承诺率(分数 0-1，如 0.4500=45% · 契约 Rate 一致，V911 起)
+    repay_rate      NUMERIC(6,4),   -- 回款率(分数 0-1)
     wilson          NUMERIC(8,6),   -- Wilson 置信下界（效果排名 BR-M5-12a）
     status          TEXT        NOT NULL DEFAULT 'CANDIDATE',
     -- 优化变体 {text, uplift, state}（自我迭代 BR-M5-12a）
