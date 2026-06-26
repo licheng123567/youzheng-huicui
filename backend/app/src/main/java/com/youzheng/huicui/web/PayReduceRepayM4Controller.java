@@ -240,7 +240,8 @@ public class PayReduceRepayM4Controller {
                                         @RequestBody(required = false) Map<String, Object> body) {
         CurrentSubject s = SubjectContext.get();
         long caseId = parseCaseId(id);
-        CaseScopeM4Service.CaseRow c = scope.requireOwnOrg(s, caseId);    // 不存在→404 / 越组织→403
+        // case-actor 行级：CO 仅持有本人/PL-PC 本物业/SA-SE 平台（防同 org 非持有 CO 越权标他案回款）。
+        CaseScopeM4Service.CaseRow c = scope.requireCaseActor(s, caseId);
 
         Long amountCents = parseRequiredLong(body, "amountCents");        // 缺/非数→422
         if (amountCents <= 0) throw new ApiException(BizError.VALIDATION_422, "amountCents 非法");
@@ -276,7 +277,8 @@ public class PayReduceRepayM4Controller {
         long repayId = parseGenericId(id);
         String reason = parseRequiredString(body, "reason");    // 缺→422
         RepayLineRow rl = lockRepayLine(repayId);               // 不存在→404
-        CaseScopeM4Service.CaseRow c = scope.requireOwnOrg(s, rl.caseId); // 越组织→403
+        // case-actor 行级（同标注口径）：CO 仅持有本人/PL-PC 本物业/SA-SE 平台。
+        CaseScopeM4Service.CaseRow c = scope.requireCaseActor(s, rl.caseId);
 
         if (Boolean.TRUE.equals(rl.reversed)) {
             return ok();                                        // 幂等：已冲正再冲正仍 200

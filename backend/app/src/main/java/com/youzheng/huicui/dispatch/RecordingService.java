@@ -73,6 +73,14 @@ public class RecordingService {
                     "SELECT count(*) FROM \"case\" WHERE id = ?", Long.class, caseId);
             return n != null && n > 0;
         }
+        // case-actor 行级（BR-M4-01a）：催收员(CO)仅持有本人案件可见，**不再服务商组织级兜底**(防同 org 非持有 CO 越权读写他人录音/AI review)。
+        if ("CO".equals(s.role())) {
+            Long acct = parseAccountId(s);
+            if (acct == null) return false;
+            Long n = jdbc.queryForObject(
+                    "SELECT count(*) FROM \"case\" WHERE id = ? AND holder_id = ?", Long.class, caseId, acct);
+            return n != null && n > 0;
+        }
         Long org = parseOrgId(s);
         if (org == null) return false;
         String sql;
@@ -275,6 +283,14 @@ public class RecordingService {
     }
 
     // ── 工具 ─────────────────────────────────────────────────────────────────
+
+    private static Long parseAccountId(CurrentSubject s) {
+        try {
+            return s.accountId() == null ? null : Long.valueOf(s.accountId());
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
 
     private static Long parseOrgId(CurrentSubject s) {
         try {

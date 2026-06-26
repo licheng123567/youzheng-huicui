@@ -383,17 +383,24 @@ public class FollowUpM4Controller {
     }
 
     /**
-     * case-actor scope（写端点）：CO 持有 + 关联 PL/PC + SA 代均可操作。
-     * 地基期以 range（own-org 三分支）兜底——同组织即视为 actor，避免存在性泄漏。
-     * TODO(M4 精确化)：CO 限 holder 本人；PL/PC 限本组织协调岗；SA 平台代。
+     * case-actor scope 行级裁剪（契约语义 BR-M4-01a）：持有催收员(CO)本人 OR 关联物业负责人/协调员(PL/PC)本物业 OR 平台(SA/SE)。
+     * CO 必须 holder_id=本人（**不再组织级兜底**——同服务商 org 非持有 CO 不可越权操作他人案件）；VL 及其余非平台主体非 case-actor→403。
      */
     private void requireCaseActor(CurrentSubject s, long caseId) {
         if (!caseExists(caseId)) {
             throw new ApiException(BizError.NOT_FOUND_404, "案件不存在: " + caseId);
         }
-        if (!visibleByRange(s, caseId)) {
-            throw new ApiException(BizError.PERM_403, "无权操作该案件");
+        if (s.isPlatform()) return;                            // 平台(SA/SE)
+        String role = s.role();
+        if ("CO".equals(role)) {                               // 持有催收员本人(行级)
+            if (isHolder(caseId, parseAccountId(s))) return;
+            throw new ApiException(BizError.PERM_403, "无权操作该案件（仅持有催收员本人 case-actor）");
         }
+        if ("PL".equals(role) || "PC".equals(role)) {          // 关联物业负责人/协调员→本物业
+            if (visibleByRange(s, caseId)) return;
+            throw new ApiException(BizError.PERM_403, "无权操作该案件（非本物业 case-actor）");
+        }
+        throw new ApiException(BizError.PERM_403, "无权操作该案件（非案件相关方 case-actor）");
     }
 
     /**

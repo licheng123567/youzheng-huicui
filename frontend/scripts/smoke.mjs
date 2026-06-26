@@ -208,7 +208,17 @@ const s3case = (allCx.body?.items || []).find((c) => c.acctNo === 'M3-S3-01')
 if (s3case && coOther) {
   check('非持有 CO 操作他人案件(follow-up) → 403', (await post(`/cases/${s3case.id}/follow-ups`, coOther, { content: 'x', method: 'OTHER' })).status === 403)
   check('持有 CO 操作本案(follow-up) → 2xx(不误伤)', [200, 201].includes((await post(`/cases/${s3case.id}/follow-ups`, co, { content: '本人跟进', method: 'OTHER' })).status))
+  // case-actor 完整闭合(R3 修):非持有 CO 在 promise/回款 主链路亦 403
+  check('非持有 CO 承诺(promise) → 403', (await post(`/cases/${s3case.id}/promises`, coOther, { amountCents: 1000, dueDate: '2026-07-01' })).status === 403)
+  check('非持有 CO 标回款(repay-line) → 403', (await post(`/cases/${s3case.id}/repay-lines`, coOther, { amountCents: 1000, channel: 'CASH', paidAt: '2026-06-25' })).status === 403)
 }
+// 录音 case-actor:非持有 CO 读他人录音 → 403；持有 CO 读本人录音 → 200(不误伤)
+if (typeof recId2 !== 'undefined' && recId2 && coOther) {
+  check('非持有 CO 读他人案件录音 → 403', (await getJson(`/recordings/${recId2}`, coOther)).status === 403)
+  check('持有 CO 读本人案件录音 → 200(不误伤)', (await getJson(`/recordings/${recId2}`, co)).status === 200)
+}
+// reduce.approve 端点可达：PL 权限含 reduce.approve(不再死端点)
+check('PL 权限含 reduce.approve(端点可达)', ((await getJson('/me', pl)).body?.permissions || []).includes('reduce.approve'))
 // MED ticket.handle 收回 CO：CO 处理工单 → 403(无权限)
 if (s3case) {
   const tk = (await getJson(`/cases/${s3case.id}/tickets?page=1&size=20`, co)).body?.items?.[0]

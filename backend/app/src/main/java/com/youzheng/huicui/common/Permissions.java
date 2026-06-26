@@ -25,8 +25,9 @@ public final class Permissions {
                     "org.manage", "ai.config", "billing.recharge", "settings.manage");   // 平台：建组织/AI配置/充值/系统设置
             // 物业负责人/协调员（+处置/上报质检 BR-M5-07a；+撤案/坏账 BR-M8；+管本组织成员；+采纳作战手册 BR-M5）
             case "PL", "PC" -> Set.of("proj.edit", "reduce.policy.edit", "case.follow", "case.paylink",
-                    "case.repay.mark", "case.reduce", "evidence.create", "legal.create", "qc.dispose", "qc.escalate",
-                    "case.close", "member.manage", "playbook.adopt", "ticket.handle");   // 协调员处理 CO 转来的工单
+                    "case.repay.mark", "case.reduce", "reduce.approve", "evidence.create", "legal.create",
+                    "qc.dispose", "qc.escalate", "case.close", "member.manage", "playbook.adopt", "ticket.handle");
+                    // 物业侧：处理 CO 转来的工单(ticket.handle) + 减免审批(reduce.approve，端点可达；线下留痕不建待办队列)
             // 服务商负责人：承接/拒接/分配/退案 + 处置/上报本商催收员风险 + 管本商成员
             case "VL" -> Set.of("case.accept", "case.assign", "case.return", "cocomm.manage", "payreq.create",
                     "qc.dispose", "qc.escalate", "member.manage");
