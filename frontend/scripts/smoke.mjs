@@ -235,6 +235,32 @@ if (vlOrg) {
   check('催收员余量 VL → holdCap+items+推荐', cap.status === 200 && cap.body?.holdCap > 0 && cap.body.items.some((c) => c.recommended))
   check('催收员余量 VL 跨服务商(999) → 403', (await getJson('/providers/999/collector-capacity', vl)).status === 403)
 }
+// === v1.2.0 P1: 消息中心(BR-M4-23 互推) + 公海事件日志 ===
+if (s3) {
+  const pcT = await login('cuihu_pc', 'Admin@123')
+  const co2T = await login('jx_co2', 'Admin@123')
+  // CO 转工单 → PC 收 TICKET_NEW
+  await post(`/cases/${s3.id}/tickets`, co, { type: '上门核实', note: 'P1通知' })
+  const pcUnread = (await getJson('/notifications/unread-count', pcT)).body?.count ?? 0
+  check('互推: CO 转工单 → PC 未读≥1(TICKET_NEW)', pcUnread >= 1)
+  const pcNotifs = (await getJson('/notifications?unreadOnly=true', pcT)).body?.items || []
+  check('PC 消息含 TICKET_NEW', pcNotifs.some((n) => n.type === 'TICKET_NEW'))
+  // PC 处理 → 持有 CO 收 TICKET_RECEIPT
+  const pend = ((await getJson(`/cases/${s3.id}/tickets?page=1&size=20`, co)).body?.items || []).find((t) => t.status === 'PENDING')
+  if (pend) {
+    await post(`/tickets/${pend.id}/handle`, pcT, { result: '已核实' })
+    check('互推: PC 回执 → 持有 CO 未读≥1(TICKET_RECEIPT)', ((await getJson('/notifications/unread-count', co)).body?.count ?? 0) >= 1)
+  }
+  // 越权: 标他人通知 → 403；本人标已读 → ok
+  const myN = pcNotifs[0]
+  if (myN) {
+    check('标他人通知 → 403', (await post(`/notifications/${myN.id}/read`, co2T, {})).status === 403)
+    check('本人标已读 → ok', [200].includes((await post(`/notifications/${myN.id}/read`, pcT, {})).status))
+  }
+  // 公海事件日志
+  const ev = await getJson('/sea/events?page=1&size=5', co)
+  check('公海事件日志 → items(event 枚举)', ev.status === 200 && Array.isArray(ev.body?.items))
+}
 // === 四方适配审计修复(workflow)验证 ===
 // H-01/H-02: 读入口无 x-permission(按 range) — 物业/服务商可读 projects/batches/reports
 check('H-01 PL 读 /projects(无 perm) → 200', (await getJson('/projects?page=1&size=5', pl)).status === 200)

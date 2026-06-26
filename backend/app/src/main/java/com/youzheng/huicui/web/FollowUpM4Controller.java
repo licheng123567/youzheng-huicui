@@ -205,6 +205,14 @@ public class FollowUpM4Controller {
                         + " VALUES (?, 'TICKET', ?, ?, 'ticket', ?)",
                 caseId, actorId, "转工单: " + type, ticketId);
 
+        // BR-M4-23 互推：通知本物业协调员(PC)「待处理工单」
+        jdbc.update(
+                "INSERT INTO notification(recipient_account_id, type, title, body, ref_type, ref_id)"
+                        + " SELECT a.id, 'TICKET_NEW', '待处理工单：' || ?, ?, 'ticket', ?"
+                        + " FROM account a JOIN \"case\" c ON c.id = ? JOIN project p ON p.id = c.project_id"
+                        + " WHERE a.org_id = p.org_id AND a.role_template = 'PC' AND a.status = 'ACTIVE'",
+                type, optStr(body, "note"), ticketId, caseId);
+
         return loadTicket(ticketId);
     }
 
@@ -278,6 +286,13 @@ public class FollowUpM4Controller {
                 "INSERT INTO activity(case_id, type, actor_id, content, ref_type, ref_id)"
                         + " VALUES (?, 'TICKET', ?, ?, 'ticket', ?)",
                 caseId, actorId, "工单已处理", ticketId);
+
+        // BR-M4-23 互推：回执通知持有催收员(CO)「工单已回执」
+        jdbc.update(
+                "INSERT INTO notification(recipient_account_id, type, title, body, ref_type, ref_id)"
+                        + " SELECT c.holder_id, 'TICKET_RECEIPT', '工单已回执', ?, 'ticket', ?"
+                        + " FROM \"case\" c WHERE c.id = ? AND c.holder_id IS NOT NULL",
+                result, ticketId, caseId);
         return loadTicket(ticketId);
     }
 

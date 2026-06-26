@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 有证慧催 · API 契约（全模块·已冻结）
-  version: 1.1.0   # v1.1.0(additive·非破坏): +GET /workbench(角色工作台 BR-M4-20)、+GET /dispatch/provider-metrics(派单决策 BR-M3-24)、+GET /providers/{id}/collector-capacity(余量推荐 BR-M3-23) | v1.0.4: ImportResult.batch→BatchForProperty
+  version: 1.2.0   # v1.2.0(additive): +消息中心 GET /notifications·POST /notifications/{id}/read·GET /notifications/unread-count(BR-M4-23)、+GET /sea/events(公海事件日志 BR-M3-22)；SeaCase 竞争态字段后端填充(viewerCount 降级) | v1.1.0: +/workbench·/dispatch/provider-metrics·/providers/{id}/collector-capacity
   contact: { name: 契约 Owner（架构师）, email: api-owner@youzheng.example }
   description: |
     从高保真原型 + PRD(BR/US) + 报告14口径抽取的全模块契约（单一事实源 SSOT）。**v1.0 已冻结（2026-06-24）**：经 codex×2 + 人工×2 共四轮独立审计、openapi-generator Spring 桩 mvn compile、Flyway 真库迁移三重验证，0 阻断/0 高。破坏性变更须升 major + 双 approve。
@@ -43,6 +43,7 @@ tags:
   - { name: ai, description: AI配置/话术库/作战手册(M5) }
   - { name: org-member, description: 组织与成员/审计(M1) }
   - { name: workbench, description: 角色工作台/待办聚合(M4·BR-M4-20) }
+  - { name: notification, description: 消息中心/互推闭环(M4·BR-M4-23) }
 
 paths:
 
@@ -1402,6 +1403,40 @@ paths:
       parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
       responses: { '200': { description: ok, content: { application/json: { schema: { type: object, properties: { holdCap: { type: integer }, items: { type: array, items: { $ref: '#/components/schemas/CollectorCapacity' } } } } } } } }
 
+  # ---- 消息中心 / 公海事件日志（M4/M3 覆盖补点 v1.2.0） ----
+  /notifications:
+    get:
+      operationId: listNotifications
+      tags: [notification]
+      summary: 消息中心·本人通知列表(互推闭环 BR-M4-23)
+      x-data-scope: case-actor
+      parameters: [ { name: unreadOnly, in: query, schema: { type: boolean } }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
+      responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationPage' } } } } }
+  /notifications/unread-count:
+    get:
+      operationId: getUnreadCount
+      tags: [notification]
+      summary: 本人未读消息数(导航红点)
+      x-data-scope: case-actor
+      responses: { '200': { description: ok, content: { application/json: { schema: { type: object, properties: { count: { type: integer } } } } } } }
+  /notifications/{id}/read:
+    post:
+      operationId: markNotificationRead
+      tags: [notification]
+      summary: 标记通知已读(仅本人·越权 403)
+      x-permission: none
+      x-data-scope: case-actor
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { description: ok, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } } } }
+  /sea/events:
+    get:
+      operationId: listSeaEvents
+      tags: [dispatch]
+      summary: 公海实时事件日志·近期流转(入池/抢/释放/退回/再派/开放 BR-M3-22·轮询非SSE)
+      x-data-scope: range
+      parameters: [ { name: pool, in: query, schema: { $ref: '#/components/schemas/PoolEnum' } }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
+      responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/SeaEventPage' } } } } }
+
   # ---- AI 配置 / 话术库 / 作战手册 M5（平台护城河·SA） ----
   /ai-config:
     get:
@@ -2343,6 +2378,40 @@ components:
       type: string
       description: 'CO:PROMISE_DUE/RELEASE_WARN/TICKET_RECEIPT/NEW_ASSIGNED；PC:LEGAL_DELIVERY/TICKET_RECEIPT/REPAY_MARK/PAYLINK_SEND/REDUCE_APPROVE(BR-M4-20a/24)'
       enum: [PROMISE_DUE, RELEASE_WARN, TICKET_RECEIPT, NEW_ASSIGNED, LEGAL_DELIVERY, REPAY_MARK, PAYLINK_SEND, REDUCE_APPROVE]
+    Notification:
+      type: object
+      description: 消息中心通知(BR-M4-23 互推闭环)。归属 recipient，read 标已读
+      required: [id, type, title, read, createdAt]
+      properties:
+        id: { type: string }
+        type: { type: string, description: 'TICKET_NEW(待处理工单)/TICKET_RECEIPT(工单回执) 等' }
+        title: { type: string }
+        body: { type: [string, 'null'] }
+        refType: { type: [string, 'null'] }
+        refId: { type: [string, 'null'] }
+        read: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    NotificationPage:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Notification' } }
+        meta: { $ref: '#/components/schemas/PageMeta' }
+    SeaEvent:
+      type: object
+      description: 公海流转事件(BR-M3-22 事件日志)
+      required: [id, event, at]
+      properties:
+        id: { type: string }
+        event: { type: string, enum: [ENTER, CLAIM, RELEASE, RETURN, REDISPATCH, OPEN, ASSIGN] }
+        caseId: { type: [string, 'null'] }
+        ownerName: { type: [string, 'null'] }
+        actor: { type: [string, 'null'], description: 操作者(脱敏可空) }
+        at: { type: string, format: date-time }
+    SeaEventPage:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/SeaEvent' } }
+        meta: { $ref: '#/components/schemas/PageMeta' }
     ProviderMetric:
       type: object
       description: 服务商客观经营指标(BR-M3-24·仅陈列不评分不加权)

@@ -1650,6 +1650,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 消息中心·本人通知列表(互推闭环 BR-M4-23) */
+        get: operations["listNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/unread-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 本人未读消息数(导航红点) */
+        get: operations["getUnreadCount"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/{id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 标记通知已读(仅本人·越权 403) */
+        post: operations["markNotificationRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sea/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 公海实时事件日志·近期流转(入池/抢/释放/退回/再派/开放 BR-M3-22·轮询非SSE) */
+        get: operations["listSeaEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ai-config": {
         parameters: {
             query?: never;
@@ -3092,6 +3160,39 @@ export interface components {
          * @enum {string}
          */
         TodoCategoryEnum: "PROMISE_DUE" | "RELEASE_WARN" | "TICKET_RECEIPT" | "NEW_ASSIGNED" | "LEGAL_DELIVERY" | "REPAY_MARK" | "PAYLINK_SEND" | "REDUCE_APPROVE";
+        /** @description 消息中心通知(BR-M4-23 互推闭环)。归属 recipient，read 标已读 */
+        Notification: {
+            id: string;
+            /** @description TICKET_NEW(待处理工单)/TICKET_RECEIPT(工单回执) 等 */
+            type: string;
+            title: string;
+            body?: string | null;
+            refType?: string | null;
+            refId?: string | null;
+            read: boolean;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        NotificationPage: {
+            items?: components["schemas"]["Notification"][];
+            meta?: components["schemas"]["PageMeta"];
+        };
+        /** @description 公海流转事件(BR-M3-22 事件日志) */
+        SeaEvent: {
+            id: string;
+            /** @enum {string} */
+            event: "ENTER" | "CLAIM" | "RELEASE" | "RETURN" | "REDISPATCH" | "OPEN" | "ASSIGN";
+            caseId?: string | null;
+            ownerName?: string | null;
+            /** @description 操作者(脱敏可空) */
+            actor?: string | null;
+            /** Format: date-time */
+            at: string;
+        };
+        SeaEventPage: {
+            items?: components["schemas"]["SeaEvent"][];
+            meta?: components["schemas"]["PageMeta"];
+        };
         /** @description 服务商客观经营指标(BR-M3-24·仅陈列不评分不加权) */
         ProviderMetric: {
             providerId: string;
@@ -6157,6 +6258,100 @@ export interface operations {
                         holdCap?: number;
                         items?: components["schemas"]["CollectorCapacity"][];
                     };
+                };
+            };
+        };
+    };
+    listNotifications: {
+        parameters: {
+            query?: {
+                unreadOnly?: boolean;
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPage"];
+                };
+            };
+        };
+    };
+    getUnreadCount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        count?: number;
+                    };
+                };
+            };
+        };
+    };
+    markNotificationRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok?: boolean;
+                    };
+                };
+            };
+        };
+    };
+    listSeaEvents: {
+        parameters: {
+            query?: {
+                pool?: components["schemas"]["PoolEnum"];
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeaEventPage"];
                 };
             };
         };

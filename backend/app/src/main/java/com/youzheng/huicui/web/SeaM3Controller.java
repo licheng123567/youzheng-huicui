@@ -150,6 +150,56 @@ public class SeaM3Controller {
         }
     }
 
+    public record SeaEventDto(String id, String event, String caseId, String ownerName, String actor, String at) {}
+
+    /**
+     * GET /sea/events —— 公海近期流转事件流（BR-M3-22·轮询非 SSE·range 裁剪）。
+     * 数据源：case 当前池态按 updated_at 倒序（地基期无独立事件表；event 由 pool 派生）。
+     * 降级说明：非实时 SSE 推送，前端定时刷新；脱敏不返完整姓名。
+     */
+    @GetMapping("/sea/events")
+    public Page<SeaEventDto> listSeaEvents(
+            @RequestParam(required = false) String pool,
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size) {
+        CurrentSubject s = SubjectContext.get();
+        Pageable pg = Pageable.of(page, size);
+        StringBuilder where = new StringBuilder(" WHERE c.pool IN ('PLATFORM_SEA','PROVIDER_SEA','OPEN_POOL','PRIVATE')");
+        List<Object> args = new ArrayList<>();
+        if (pool != null && !pool.isBlank()) {           // 可选过滤具体池（非法值→不命中而非 5xx）
+            where.append(" AND c.pool = ?");
+            args.add(mapPoolSafe(pool));
+        }
+        if (!s.isPlatform()) {                            // range：服务商仅本商
+            Long org = parseLongOrNull(s.orgId());
+            if (org == null) return Page.of(List.of(), pg, 0);
+            where.append(" AND b.provider_id = ?");
+            args.add(org);
+        }
+        String base = "FROM \"case\" c JOIN batch b ON b.id = c.batch_id" + where;
+        Long total = jdbc.queryForObject("SELECT count(*) " + base, Long.class, args.toArray());
+        List<Object> pageArgs = new ArrayList<>(args);
+        pageArgs.add(pg.size); pageArgs.add(pg.offset);
+        List<SeaEventDto> items = jdbc.query(
+                "SELECT c.id, c.owner_name, c.pool, c.updated_at " + base + " ORDER BY c.updated_at DESC LIMIT ? OFFSET ?",
+                (rs, i) -> {
+                    String p = rs.getString("pool");
+                    String ev = "PRIVATE".equals(p) ? "CLAIM" : "OPEN_POOL".equals(p) ? "OPEN" : "ENTER";
+                    Timestamp at = rs.getTimestamp("updated_at");
+                    return new SeaEventDto(String.valueOf(rs.getLong("id")), ev, String.valueOf(rs.getLong("id")),
+                            REDACTED_NAME, null, at == null ? null : ISO.format(at.toInstant()));
+                }, pageArgs.toArray());
+        return Page.of(items, pg, total == null ? 0 : total);
+    }
+
+    /** pool 别名→物理池；非法返回不可命中哨兵（避免 5xx）。 */
+    private String mapPoolSafe(String pool) {
+        try { return mapPool(pool); } catch (RuntimeException e) { return "__none__"; }
+    }
+    private static Long parseLongOrNull(String v) {
+        try { return v == null ? null : Long.valueOf(v.trim()); } catch (RuntimeException e) { return null; }
+    }
+
     /** SeaCase RowMapper：Case 基字段 + 公海视图字段，公海未持有脱敏（BR-M3-21a）。 */
     private org.springframework.jdbc.core.RowMapper<SeaCaseDto> seaRowMapper(CurrentSubject s) {
         // capacityHint：仅 CO 主体（PROVIDER + role=CO）有意义 = CFG-HOLDCAP - 本人私海持有数。
