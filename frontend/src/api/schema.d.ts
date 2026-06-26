@@ -1599,6 +1599,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workbench": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 角色工作台(一线 CO/PC=今日驾驶舱待办聚合；管理角色 PL/SA/SE/VL=仪表盘 KPI · BR-M4-20/20a/23) */
+        get: operations["getWorkbench"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dispatch/provider-metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 派单决策辅助·各服务商客观经营指标(在催数/催收员数/人均持仓/近30天回款率·仅陈列不评分 BR-M3-24) */
+        get: operations["getProviderMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/providers/{id}/collector-capacity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 服务商内催收员持仓余量+按余量推荐指派(内海池 BR-M3-23) */
+        get: operations["getCollectorCapacity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ai-config": {
         parameters: {
             query?: never;
@@ -1955,8 +2006,8 @@ export interface components {
          */
         Money: number;
         /**
-         * @description 比率·百分比
-         * @example 8
+         * @description 比率·分数(0-1，如 0.30=30%)。v1.0.3 统一为分数：DB/后端/前端一致，展示层 ×100 显示
+         * @example 0.08
          */
         Rate: number;
         /** @enum {string} */
@@ -2218,7 +2269,7 @@ export interface components {
         };
         /** @description 导入结果：成功/跳过计数 + 逐行错误(跳过错误行、其余继续) */
         ImportResult: {
-            batch?: components["schemas"]["Batch"];
+            batch?: components["schemas"]["BatchForProperty"];
             total?: number;
             succeeded?: number;
             skipped?: number;
@@ -3010,6 +3061,59 @@ export interface components {
             type: components["schemas"]["RechargeTypeEnum"];
             qty: number;
             note?: string;
+        };
+        /** @description 角色工作台聚合(BR-M4-20a)。layout=cockpit(一线 CO/PC 今日驾驶舱)|dashboard(管理 PL/SA/SE/VL 仪表盘) */
+        WorkbenchData: {
+            role: string;
+            /** @enum {string} */
+            layout: "cockpit" | "dashboard";
+            kpis: components["schemas"]["WorkbenchKpi"][];
+            todos: components["schemas"]["WorkbenchTodo"][];
+        };
+        WorkbenchKpi: {
+            label: string;
+            value: number;
+            /** @description 点击 KPI 即按此 category 过滤 todos */
+            filterKey?: string | null;
+        };
+        WorkbenchTodo: {
+            category: components["schemas"]["TodoCategoryEnum"];
+            /** @enum {string} */
+            urgency: "HIGH" | "MED" | "LOW";
+            caseId?: string | null;
+            title: string;
+            /** Format: date-time */
+            deadline?: string | null;
+            refType?: string | null;
+            refId?: string | null;
+        };
+        /**
+         * @description CO:PROMISE_DUE/RELEASE_WARN/TICKET_RECEIPT/NEW_ASSIGNED；PC:LEGAL_DELIVERY/TICKET_RECEIPT/REPAY_MARK/PAYLINK_SEND/REDUCE_APPROVE(BR-M4-20a/24)
+         * @enum {string}
+         */
+        TodoCategoryEnum: "PROMISE_DUE" | "RELEASE_WARN" | "TICKET_RECEIPT" | "NEW_ASSIGNED" | "LEGAL_DELIVERY" | "REPAY_MARK" | "PAYLINK_SEND" | "REDUCE_APPROVE";
+        /** @description 服务商客观经营指标(BR-M3-24·仅陈列不评分不加权) */
+        ProviderMetric: {
+            providerId: string;
+            providerName: string;
+            /** @description 在催案件数 */
+            activeCases?: number;
+            /** @description 催收员数 */
+            collectorCount?: number;
+            /** @description 人均持仓 */
+            avgHolding?: number;
+            recentRepayRate?: components["schemas"]["Rate"];
+        };
+        /** @description 催收员持仓余量(BR-M3-23·按余量推荐分配) */
+        CollectorCapacity: {
+            collectorId: string;
+            name: string;
+            /** @description 当前持仓 */
+            holding: number;
+            /** @description 余量=holdCap-holding */
+            remaining: number;
+            /** @description 余量最大者推荐 */
+            recommended?: boolean;
         };
         /** @description 经营报表(角色口径:物业本物业/服务商本商/平台全局;能力用量只量不金额) */
         ReportData: {
@@ -5985,6 +6089,73 @@ export interface operations {
                     "application/json": {
                         taskId?: string;
                         downloadUrl?: string | null;
+                    };
+                };
+            };
+        };
+    };
+    getWorkbench: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkbenchData"];
+                };
+            };
+        };
+    };
+    getProviderMetrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items?: components["schemas"]["ProviderMetric"][];
+                    };
+                };
+            };
+        };
+    };
+    getCollectorCapacity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        holdCap?: number;
+                        items?: components["schemas"]["CollectorCapacity"][];
                     };
                 };
             };

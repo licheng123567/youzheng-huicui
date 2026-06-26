@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 有证慧催 · API 契约（全模块·已冻结）
-  version: 1.0.4   # v1.0.4(breaking·刻意): ImportResult.batch Batch→BatchForProperty(物业导入返物业视角,未派单批次无 payOutRate + 双线 BR-M9-11)
+  version: 1.1.0   # v1.1.0(additive·非破坏): +GET /workbench(角色工作台 BR-M4-20)、+GET /dispatch/provider-metrics(派单决策 BR-M3-24)、+GET /providers/{id}/collector-capacity(余量推荐 BR-M3-23) | v1.0.4: ImportResult.batch→BatchForProperty
   contact: { name: 契约 Owner（架构师）, email: api-owner@youzheng.example }
   description: |
     从高保真原型 + PRD(BR/US) + 报告14口径抽取的全模块契约（单一事实源 SSOT）。**v1.0 已冻结（2026-06-24）**：经 codex×2 + 人工×2 共四轮独立审计、openapi-generator Spring 桩 mvn compile、Flyway 真库迁移三重验证，0 阻断/0 高。破坏性变更须升 major + 双 approve。
@@ -42,6 +42,7 @@ tags:
   - { name: reports, description: 经营报表(M10) }
   - { name: ai, description: AI配置/话术库/作战手册(M5) }
   - { name: org-member, description: 组织与成员/审计(M1) }
+  - { name: workbench, description: 角色工作台/待办聚合(M4·BR-M4-20) }
 
 paths:
 
@@ -1375,6 +1376,32 @@ paths:
       requestBody: { content: { application/json: { schema: { type: object, properties: { report: { type: string }, format: { type: string, enum: [xlsx, csv] } } } } } }
       responses: { '202': { description: 受理(异步生成), content: { application/json: { schema: { type: object, properties: { taskId: { type: string }, downloadUrl: { type: [string, 'null'] } } } } } } }
 
+  # ---- 角色工作台 / 派单决策辅助（M3/M4 覆盖补点 v1.1.0） ----
+  /workbench:
+    get:
+      operationId: getWorkbench
+      tags: [workbench]
+      summary: 角色工作台(一线 CO/PC=今日驾驶舱待办聚合；管理角色 PL/SA/SE/VL=仪表盘 KPI · BR-M4-20/20a/23)
+      x-data-scope: case-actor
+      responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/WorkbenchData' } } } } }
+  /dispatch/provider-metrics:
+    get:
+      operationId: getProviderMetrics
+      tags: [dispatch]
+      summary: 派单决策辅助·各服务商客观经营指标(在催数/催收员数/人均持仓/近30天回款率·仅陈列不评分 BR-M3-24)
+      x-permission: case.dispatch
+      x-data-scope: platform
+      responses: { '200': { description: ok, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/ProviderMetric' } } } } } } } }
+  /providers/{id}/collector-capacity:
+    get:
+      operationId: getCollectorCapacity
+      tags: [dispatch]
+      summary: 服务商内催收员持仓余量+按余量推荐指派(内海池 BR-M3-23)
+      x-permission: case.assign
+      x-data-scope: own-org
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses: { '200': { description: ok, content: { application/json: { schema: { type: object, properties: { holdCap: { type: integer }, items: { type: array, items: { $ref: '#/components/schemas/CollectorCapacity' } } } } } } } }
+
   # ---- AI 配置 / 话术库 / 作战手册 M5（平台护城河·SA） ----
   /ai-config:
     get:
@@ -2285,6 +2312,58 @@ components:
         note: { type: string }
 
     # ---------- 报表 M10 ----------
+    WorkbenchData:
+      type: object
+      description: 角色工作台聚合(BR-M4-20a)。layout=cockpit(一线 CO/PC 今日驾驶舱)|dashboard(管理 PL/SA/SE/VL 仪表盘)
+      required: [role, layout, kpis, todos]
+      properties:
+        role: { type: string }
+        layout: { type: string, enum: [cockpit, dashboard] }
+        kpis: { type: array, items: { $ref: '#/components/schemas/WorkbenchKpi' } }
+        todos: { type: array, items: { $ref: '#/components/schemas/WorkbenchTodo' } }
+    WorkbenchKpi:
+      type: object
+      required: [label, value]
+      properties:
+        label: { type: string }
+        value: { type: integer }
+        filterKey: { type: [string, 'null'], description: '点击 KPI 即按此 category 过滤 todos' }
+    WorkbenchTodo:
+      type: object
+      required: [category, urgency, title]
+      properties:
+        category: { $ref: '#/components/schemas/TodoCategoryEnum' }
+        urgency: { type: string, enum: [HIGH, MED, LOW] }
+        caseId: { type: [string, 'null'] }
+        title: { type: string }
+        deadline: { type: [string, 'null'], format: date-time }
+        refType: { type: [string, 'null'] }
+        refId: { type: [string, 'null'] }
+    TodoCategoryEnum:
+      type: string
+      description: 'CO:PROMISE_DUE/RELEASE_WARN/TICKET_RECEIPT/NEW_ASSIGNED；PC:LEGAL_DELIVERY/TICKET_RECEIPT/REPAY_MARK/PAYLINK_SEND/REDUCE_APPROVE(BR-M4-20a/24)'
+      enum: [PROMISE_DUE, RELEASE_WARN, TICKET_RECEIPT, NEW_ASSIGNED, LEGAL_DELIVERY, REPAY_MARK, PAYLINK_SEND, REDUCE_APPROVE]
+    ProviderMetric:
+      type: object
+      description: 服务商客观经营指标(BR-M3-24·仅陈列不评分不加权)
+      required: [providerId, providerName]
+      properties:
+        providerId: { type: string }
+        providerName: { type: string }
+        activeCases: { type: integer, description: 在催案件数 }
+        collectorCount: { type: integer, description: 催收员数 }
+        avgHolding: { type: number, description: 人均持仓 }
+        recentRepayRate: { $ref: '#/components/schemas/Rate' }
+    CollectorCapacity:
+      type: object
+      description: 催收员持仓余量(BR-M3-23·按余量推荐分配)
+      required: [collectorId, name, holding, remaining]
+      properties:
+        collectorId: { type: string }
+        name: { type: string }
+        holding: { type: integer, description: 当前持仓 }
+        remaining: { type: integer, description: 余量=holdCap-holding }
+        recommended: { type: boolean, description: 余量最大者推荐 }
     ReportData:
       type: object
       description: 经营报表(角色口径:物业本物业/服务商本商/平台全局;能力用量只量不金额)

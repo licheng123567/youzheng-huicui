@@ -219,6 +219,22 @@ if (typeof recId2 !== 'undefined' && recId2 && coOther) {
 }
 // reduce.approve 端点可达：PL 权限含 reduce.approve(不再死端点)
 check('PL 权限含 reduce.approve(端点可达)', ((await getJson('/me', pl)).body?.permissions || []).includes('reduce.approve'))
+// === v1.1.0 契约扩展 P0 两片 ===
+// 切片A 工作台：CO=cockpit / SA=dashboard
+const wbCo = await getJson('/workbench', co)
+check('工作台 CO → cockpit + kpis/todos 结构', wbCo.status === 200 && wbCo.body?.layout === 'cockpit' && Array.isArray(wbCo.body?.todos))
+check('工作台 SA → dashboard', (await getJson('/workbench', sa)).body?.layout === 'dashboard')
+// 切片B 派单决策：SA 看服务商指标(仅陈列,无评分字段) / CO 无 case.dispatch → 403
+const pm = await getJson('/dispatch/provider-metrics', sa)
+check('服务商指标 SA → items(在催/催收员/人均/回款率)', pm.status === 200 && (pm.body?.items?.length ?? 0) >= 1 && pm.body.items[0].activeCases != null)
+check('服务商指标 CO 无 case.dispatch → 403', (await getJson('/dispatch/provider-metrics', co)).status === 403)
+// 切片B 催收员余量：VL 看本商余量+推荐 / 跨商 403
+const vlOrg = (await getJson('/me', vl)).body?.org?.id
+if (vlOrg) {
+  const cap = await getJson(`/providers/${vlOrg}/collector-capacity`, vl)
+  check('催收员余量 VL → holdCap+items+推荐', cap.status === 200 && cap.body?.holdCap > 0 && cap.body.items.some((c) => c.recommended))
+  check('催收员余量 VL 跨服务商(999) → 403', (await getJson('/providers/999/collector-capacity', vl)).status === 403)
+}
 // === 四方适配审计修复(workflow)验证 ===
 // H-01/H-02: 读入口无 x-permission(按 range) — 物业/服务商可读 projects/batches/reports
 check('H-01 PL 读 /projects(无 perm) → 200', (await getJson('/projects?page=1&size=5', pl)).status === 200)

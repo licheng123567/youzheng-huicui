@@ -28,6 +28,13 @@ function openDispatch(id: string, redispatch = false) {
   form.value = { batchId: id, providerId: '', payOutRate: 0.2, mode: 'WHOLE', splitBy: 'count', splitCount: 10, redispatch }
   dispCases.value = []; caseSel.value = []; dlg.value = true
 }
+// 派单决策辅助：服务商客观经营指标(BR-M3-24)
+const metrics = ref<any[]>([])
+async function loadMetrics() {
+  const { data, error } = await api.GET('/dispatch/provider-metrics', {})
+  if (error) { ElMessage.error('加载服务商指标失败（需 case.dispatch）'); return }
+  metrics.value = (data as any)?.items ?? []
+}
 async function loadDispatchCases() {
   const { data } = await api.GET('/cases', { params: { query: { batchId: form.value.batchId, page: 1, size: 200 } } as any })
   dispCases.value = (data as any)?.items ?? []
@@ -138,7 +145,18 @@ onMounted(load)
             <span style="color:#606266">已选 {{ caseSel.length }} 件（US-M3-01 同批部分案件派不同服务商）</span>
           </el-form-item>
         </template>
-        <el-form-item label="服务商 org id"><el-input v-model="form.providerId" placeholder="如捷信催收的 org id" /></el-form-item>
+        <el-form-item label="服务商指标">
+          <el-button size="small" @click="loadMetrics">加载各服务商指标（决策辅助 BR-M3-24）</el-button>
+          <el-table v-if="metrics.length" :data="metrics" border size="small" style="margin-top:6px;cursor:pointer" @row-click="(r:any)=>form.providerId=r.providerId">
+            <el-table-column prop="providerName" label="服务商" />
+            <el-table-column label="在催"><template #default="{row}">{{ row.activeCases }}</template></el-table-column>
+            <el-table-column label="催收员"><template #default="{row}">{{ row.collectorCount }}</template></el-table-column>
+            <el-table-column label="人均持仓"><template #default="{row}">{{ row.avgHolding?.toFixed(1) }}</template></el-table-column>
+            <el-table-column label="近30天回款率"><template #default="{row}">{{ row.recentRepayRate!=null?(row.recentRepayRate*100).toFixed(1)+'%':'—' }}</template></el-table-column>
+          </el-table>
+          <span style="color:#909399;font-size:12px">仅客观指标陈列，不评分/不加权（BR-M3-24）。点行填服务商 id。</span>
+        </el-form-item>
+        <el-form-item label="服务商 org id"><el-input v-model="form.providerId" placeholder="点上表行或手填" /></el-form-item>
         <el-form-item label="付佣比例(小数)"><el-input-number v-model="form.payOutRate" :min="0" :max="1" :step="0.01" /><span style="margin-left:8px;color:#909399">0.2=20%（须≤收佣，防倒挂）</span></el-form-item>
       </el-form>
       <template #footer><el-button @click="dlg=false">取消</el-button><el-button type="primary" :loading="acting===form.batchId" @click="submitDispatch">{{ form.redispatch?'重派':(form.mode==='SPLIT'?'拆分派单':'整批派单') }}</el-button></template>

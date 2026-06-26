@@ -41,7 +41,17 @@ async function rejectCase(id: string) {
 }
 // VL 指派：把本商承接的案件分给某催收员（POST /cases/{id}/assign）
 const adlg = ref(false); const aForm = ref<any>({ id: '', collectorId: '' })
-function openAssign(id: string) { aForm.value = { id, collectorId: '' }; adlg.value = true }
+const caps = ref<any[]>([]); const capHoldCap = ref(0)   // 催收员余量+推荐(BR-M3-23)
+async function openAssign(id: string) {
+  aForm.value = { id, collectorId: '' }; caps.value = []; adlg.value = true
+  const orgId = auth.me?.org?.id
+  if (orgId) {
+    const { data } = await api.GET('/providers/{id}/collector-capacity', { params: { path: { id: String(orgId) } } } as any)
+    caps.value = (data as any)?.items ?? []; capHoldCap.value = (data as any)?.holdCap ?? 0
+    const rec = caps.value.find((c) => c.recommended)
+    if (rec) aForm.value.collectorId = rec.collectorId   // 默认选推荐(余量最大)
+  }
+}
 async function submitAssign() {
   if (!aForm.value.collectorId) { ElMessage.warning('请填催收员 id'); return }
   await act(aForm.value.id, '/cases/{id}/assign', '指派', { collectorId: String(aForm.value.collectorId) })
@@ -89,8 +99,16 @@ onMounted(load)
         </template>
       </el-table-column>
     </el-table>
-    <el-dialog v-model="adlg" title="指派催收员（POST /cases/{id}/assign）" width="400px">
-      <el-form label-width="90px"><el-form-item label="催收员 id"><el-input v-model="aForm.collectorId" placeholder="如 5(jx_co1)" /></el-form-item></el-form>
+    <el-dialog v-model="adlg" title="指派催收员（POST /cases/{id}/assign · 按余量推荐 BR-M3-23）" width="480px">
+      <div style="color:#909399;font-size:12px;margin-bottom:6px">持有上限 holdCap={{ capHoldCap }}；点行选定（默认选余量最大的推荐者）</div>
+      <el-table :data="caps" border size="small" highlight-current-row @row-click="(r:any)=>aForm.collectorId=r.collectorId" style="cursor:pointer">
+        <el-table-column width="40"><template #default="{row}"><el-radio :model-value="aForm.collectorId" :label="row.collectorId"><span></span></el-radio></template></el-table-column>
+        <el-table-column prop="name" label="催收员" />
+        <el-table-column label="持仓"><template #default="{row}">{{ row.holding }}</template></el-table-column>
+        <el-table-column label="余量"><template #default="{row}"><el-progress :percentage="capHoldCap?Math.round(row.remaining/capHoldCap*100):0" :stroke-width="10" /></template></el-table-column>
+        <el-table-column label="推荐" width="70"><template #default="{row}"><el-tag v-if="row.recommended" size="small" type="success">推荐</el-tag></template></el-table-column>
+      </el-table>
+      <el-form label-width="90px" style="margin-top:10px"><el-form-item label="催收员 id"><el-input v-model="aForm.collectorId" placeholder="点上表行或手填" /></el-form-item></el-form>
       <template #footer><el-button @click="adlg=false">取消</el-button><el-button type="primary" @click="submitAssign">指派</el-button></template>
     </el-dialog>
     <el-alert type="info" :closable="false" style="margin-top:12px"
