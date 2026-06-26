@@ -74,8 +74,10 @@ public class CasesM2Controller {
     // 无 x-permission（列表靠 scope 控可见性）。
     @GetMapping("/cases")
     public Page<CaseDto> listCases(
+            @RequestParam(required = false) String projectId,
             @RequestParam(required = false) String batchId,
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String q,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size) {
         CurrentSubject s = SubjectContext.get();
@@ -83,6 +85,11 @@ public class CasesM2Controller {
 
         StringBuilder where = new StringBuilder(" WHERE 1=1");
         List<Object> args = new ArrayList<>();
+        if (projectId != null && !projectId.isBlank()) {
+            // 与 batchId 同范式：非数字 projectId 不抛 NumberFormatException，置为不可命中条件。
+            try { args.add(Long.valueOf(projectId.trim())); where.append(" AND c.project_id = ?"); }
+            catch (NumberFormatException e) { where.append(" AND 1 = 0"); }
+        }
         if (batchId != null && !batchId.isBlank()) {
             // 安全解析：非数字 batchId 不抛 NumberFormatException(避免 5xx/非契约错误)，置为不可命中条件。
             try { args.add(Long.valueOf(batchId.trim())); where.append(" AND c.batch_id = ?"); }
@@ -92,6 +99,11 @@ public class CasesM2Controller {
             where.append(" AND c.status = ?");
             args.add(status);
         }
+        // q 关键字：ILIKE 命中 手机号/户号(acct_no)/业主名(owner_name)。
+        // 防侧信道(BR-M8-09)：结案脱敏行(非平台/非物业看 SETTLED/WITHDRAWN/BAD_DEBT/VOIDED)不得被明文 q 命中，
+        //   故对会被脱敏的主体在 q 子句内额外排除结案态，使脱敏案件无法被业主名/手机号探测。
+        appendKeyword(s, where, args, q);
+        // scope 裁剪始终在 WHERE 末尾追加(range 范式·不可被其他条件绕过)。
         appendRangeScope(s, where, args);
 
         // 列表 SQL：JOIN project 取 org_id（物业 scope）、JOIN batch 取 provider_id（服务商 scope）。
@@ -195,13 +207,17 @@ public class CasesM2Controller {
         // TODO：与状态机/case-holder 精细化对齐（写端点接入时收敛）。
         List<String> availableActions = computeAvailableActions(s, caseDto.status());
 
+        // markCodes：从 settings 的 MARK_CODES 域读最新版 mark_codes，仅取 enabled=true 项放入详情，
+        //   使 case-actor(CO/VL) 绕开 platform-scoped /settings 即取 CFG-MARK-CODES(M-01/BR-M4-12)。
+        List<Object> markCodes = loadEnabledMarkCodes();
+
         return new CaseDetailDto(caseDto, contacts, timeline, projectRef,
-                playbook, preCallStrategy, availableActions);
+                playbook, preCallStrategy, availableActions, markCodes);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    /** x-data-scope=range 追加到 WHERE（含前导 AND）。平台不限；物业按 p.org_id；服务商按 b.provider_id。 */
+    /** x-data-scope=range 追加到 WHERE（含前导 AND）。平台不限；物业按 p.org_id；服务商按案件级唯一权威 c.provider_id。 */
     // ── PATCH /cases/{id} patchCase（case.follow, range）：补充诉讼要素/联系方式/说明,不改案件状态(BR-M2-14/M4-18a）──
     @PatchMapping("/cases/{id}")
     @RequirePermission("case.follow")
@@ -251,10 +267,32 @@ public class CasesM2Controller {
                 caseRowMapper(s), caseId).get(0);
     }
 
+    /**
+     * q 关键字过滤：ILIKE 命中 contact.phone / c.acct_no / c.owner_name。
+     * 防侧信道(BR-M8-09)：对会触发脱敏的主体(非平台/非物业)，q 命中前先排除结案脱敏态，
+     *   使被脱敏案件无法被业主名/手机号关键字探测出来。空白 q 不追加任何条件。
+     */
+    private void appendKeyword(CurrentSubject s, StringBuilder where, List<Object> args, String q) {
+        if (q == null || q.isBlank()) return;
+        // 会被脱敏的主体：非平台 且 非物业(= PROVIDER 视角，与 RoleResponse.caseRedacted 同口径)。
+        boolean redacting = !s.isPlatform() && "PROVIDER".equals(s.orgType());
+        if (redacting) {
+            // 结案脱敏行排除在 q 命中范围外(明文姓名/手机号不得命中脱敏案件)。
+            where.append(" AND c.status NOT IN ('SETTLED','WITHDRAWN','BAD_DEBT','VOIDED')");
+        }
+        String like = "%" + q.trim() + "%";
+        where.append(" AND (c.acct_no ILIKE ? OR c.owner_name ILIKE ?"
+                + " OR EXISTS (SELECT 1 FROM contact ct WHERE ct.case_id = c.id AND ct.phone ILIKE ?))");
+        args.add(like);
+        args.add(like);
+        args.add(like);
+    }
+
     private void appendRangeScope(CurrentSubject s, StringBuilder where, List<Object> args) {
         if (s.isPlatform()) return;                       // 平台全量
         if ("PROVIDER".equals(s.orgType())) {
-            where.append(" AND b.provider_id = ?");
+            // 案件级归属唯一权威：NULL=无归属/平台公海/不可见，不再 COALESCE 回落 batch（防退回案被旧商越权可见）。
+            where.append(" AND c.provider_id = ?");
             args.add(Long.valueOf(s.orgId()));
         } else {                                          // PROPERTY（及兜底非平台/非服务商）按项目归属
             where.append(" AND p.org_id = ?");
@@ -327,6 +365,13 @@ public class CasesM2Controller {
                 addIf(actions, s, "case.call", "call");
                 addIf(actions, s, "case.release", "release");
                 addIf(actions, s, "case.ticket", "ticket");
+                // 修：原集漏发以下核心作业动作，前端 canAct 以 availableActions 为 SSOT
+                // → 进行中案件即使有权限，登记还款/发起存证/申请法务/结案/退回按钮被静默隐藏。
+                addIf(actions, s, "case.repay.mark", "repay");
+                addIf(actions, s, "evidence.create", "evidence");
+                addIf(actions, s, "legal.create", "legal");
+                addIf(actions, s, "case.close", "close");
+                addIf(actions, s, "case.return", "return");
             }
             default -> { /* 结案态：无在线操作 */ }
         }
@@ -390,5 +435,28 @@ public class CasesM2Controller {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * 读 settings 的 MARK_CODES 域最新版 mark_codes，仅返回 enabled=true 的项(结构 {code,label,enabled,connected,effectiveFollowUp})。
+     * 无配置/解析失败/无启用项 → 空列表(前端可回退兜底)。绕开 /settings platform 限制，仅暴露启用标记码给案作业方(M-01)。
+     */
+    private List<Object> loadEnabledMarkCodes() {
+        String mc = jdbc.query(
+                "SELECT mark_codes FROM settings WHERE domain = 'MARK_CODES'"
+                        + " ORDER BY version DESC LIMIT 1",
+                rs -> rs.next() ? rs.getString("mark_codes") : null);
+        if (mc == null || mc.isBlank()) return List.of();
+        List<Map<String, Object>> rows;
+        try {
+            rows = json.readValue(mc, new TypeReference<List<Map<String, Object>>>() {});
+        } catch (Exception e) {
+            return List.of();
+        }
+        List<Object> enabled = new ArrayList<>();
+        for (Map<String, Object> r : rows) {
+            if (r != null && Boolean.TRUE.equals(r.get("enabled"))) enabled.add(r);
+        }
+        return enabled;
     }
 }

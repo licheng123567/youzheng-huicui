@@ -88,6 +88,8 @@ public class HolderM3Controller {
             // 锁内复核已过却 CAS 落空 → 并发被他人占用。
             throw new ApiException(BizError.BIZ_ALREADY_CLAIMED, "案件已被占用或状态已变更: " + caseId);
         }
+        // 承接：案件级归属落到目标 CO 所属 org（前置 S2 同商，归属不变；保持与抢单/派单同口径）。
+        state.setCaseProvider(caseId, state.holderOrg(caseId));
         CaseSnapshot after = state.lockCase(caseId);
         state.audit(s, "case.assign", caseId, null, snap, after);
         return ok();
@@ -114,6 +116,8 @@ public class HolderM3Controller {
         // 已被抢→BIZ_ALREADY_CLAIMED；非 S2/S4→（claim 内对非可抢态亦抛 BIZ_ALREADY_CLAIMED）；
         // 本商公海非本商→PERM_403；超上限→BIZ_HOLD_CAP。
         CaseSnapshot after = state.claim(caseId, s, tcSeconds());
+        // 承接：案件级归属落到抢单 CO 所属 org（开放池跨商抢单时令本案归属抢单方，本商公海抢单为同 org 无变化）。
+        state.setCaseProvider(caseId, parseLong(s.orgId()));
         state.audit(s, "case.claim", caseId, null, pre, after);
         return ok();
     }
@@ -141,6 +145,11 @@ public class HolderM3Controller {
         int n = state.transition(caseId, base);
         if (n == 0) {
             throw new ApiException(BizError.STATE_409, "案件状态已变更，释放失败: " + caseId);
+        }
+        // 案件级归属维护：回服务商公海(S2) → 案件仍属本商，保留 provider_id（本商其他 CO 须可见/可再抢，claim S2 校验依赖之）；
+        //   回开放池(S4) → 案件离开本商私海，跨商开放抢单，清 provider_id=NULL（避免 range scope 仍只让旧商可见）。
+        if (CaseStateService.POOL_OPEN_POOL.equals(base.toPool())) {
+            state.clearCaseProvider(caseId);
         }
         CaseSnapshot after = state.lockCase(caseId);
         state.audit(s, "case.release", caseId, reason, snap, after);
@@ -171,9 +180,9 @@ public class HolderM3Controller {
         if (n == 0) {
             throw new ApiException(BizError.STATE_409, "案件状态已变更，退案失败: " + caseId);
         }
-        // 记本商为「原退回服务商」并清 batch 派单去向归属痕迹（供 redispatch 护栏①/频次统计）。
-        // 仅当该案为该批次最后一件离开时不强清 provider_id（批次可仍含其他案件），此处只清当前案件归属：
-        // 退案语义按案件粒度回平台，batch.provider_id 由平台 redispatch 重写，不在本端点强改。
+        // 案件级归属清空：回平台公海，case.provider_id=NULL（不动 batch.provider_id，避免污染同批）。
+        // before 快照（snap）仍保留退回前 providerId → redispatch 护栏①经 before_snap->>'providerId' 推导原退回商。
+        state.clearCaseProvider(caseId);
         CaseSnapshot after = state.lockCase(caseId);
         state.audit(s, "case.return", caseId, reason, snap, after);
         return ok();

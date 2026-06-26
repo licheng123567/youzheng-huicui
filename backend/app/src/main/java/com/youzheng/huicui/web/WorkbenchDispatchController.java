@@ -90,7 +90,7 @@ public class WorkbenchDispatchController {
                 long warn = timerSeconds("t2WarnSeconds", 86400);
                 todos.addAll(jdbc.query(
                     "SELECT c.id, c.owner_name, c.t2_deadline FROM \"case\" c JOIN batch b ON b.id = c.batch_id"
-                        + " WHERE b.provider_id = ? AND c.pool = 'PROVIDER_SEA' AND c.status = 'PROVIDER_SEA'"
+                        + " WHERE c.provider_id = ? AND c.pool = 'PROVIDER_SEA' AND c.status = 'PROVIDER_SEA'"
                         + " AND c.t2_deadline IS NOT NULL AND c.t2_deadline > now() AND c.t2_deadline < now() + (? || ' seconds')::interval"
                         + " ORDER BY c.t2_deadline", (rs, i) -> new Todo("T2_RETURN_WARN", "HIGH",
                             String.valueOf(rs.getLong("id")), "即将退回平台公海：" + rs.getString("owner_name"),
@@ -137,11 +137,11 @@ public class WorkbenchDispatchController {
         List<ProviderMetric> items = jdbc.query(
             "SELECT o.id AS pid, o.name AS pname,"
                 + " (SELECT count(*) FROM \"case\" c JOIN batch b ON b.id = c.batch_id"
-                + "    WHERE b.provider_id = o.id AND c.closed_at IS NULL) AS active_cases,"
+                + "    WHERE c.provider_id = o.id AND c.closed_at IS NULL) AS active_cases,"
                 + " (SELECT count(*) FROM account a WHERE a.org_id = o.id AND a.role_template = 'CO' AND a.status = 'ACTIVE') AS collector_cnt,"
                 + " (SELECT coalesce(sum(rl.amount_cents),0) FROM repay_line rl JOIN \"case\" c ON c.id = rl.case_id"
-                + "    JOIN batch b ON b.id = c.batch_id WHERE b.provider_id = o.id AND rl.reversed = FALSE AND rl.paid_at >= now() - interval '30 days') AS repay30,"
-                + " (SELECT coalesce(sum(c.due_cents),0) FROM \"case\" c JOIN batch b ON b.id = c.batch_id WHERE b.provider_id = o.id) AS due_total"
+                + "    JOIN batch b ON b.id = c.batch_id WHERE c.provider_id = o.id AND rl.reversed = FALSE AND rl.paid_at >= now() - interval '30 days') AS repay30,"
+                + " (SELECT coalesce(sum(c.due_cents),0) FROM \"case\" c JOIN batch b ON b.id = c.batch_id WHERE c.provider_id = o.id) AS due_total"
                 + " FROM org o WHERE o.type = 'PROVIDER' ORDER BY o.id",
             (rs, i) -> {
                 int active = rs.getInt("active_cases");

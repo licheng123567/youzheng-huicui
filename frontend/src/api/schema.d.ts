@@ -291,6 +291,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/batches/{id}/reduce-tiers:sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 一键同步批次减免阶梯为项目最新(放弃自定义重新继承·清 reduceDrift BR-M2-18b)
+         * @description 放弃批次级自定义、重新继承项目默认减免阶梯，同步后 source=INHERITED、reduceDrift=false(BR-M2-18b)。
+         *     等价于 PUT reduce-tiers tiers=[]，独立端点供"一键同步为项目最新"入口语义清晰。
+         */
+        post: operations["syncBatchReduceTiers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/batches/{id}/playbook": {
         parameters: {
             query?: never;
@@ -313,6 +336,29 @@ export interface paths {
          *     传 content 字段：设为批次自定义（CUSTOM）；content=null：清除批次自定义、重新继承项目版本。
          */
         post: operations["adoptBatchPlaybook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/batches/{id}/playbook:sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 一键同步批次作战手册为项目最新(放弃自定义重新继承·清 playbookDrift BR-M2-18b)
+         * @description 放弃批次级自定义、重新继承项目最新作战手册，同步后 source=INHERITED、playbookDrift=false(BR-M2-18b)。
+         *     与 reduce-tiers:sync 对称，供"一键同步为项目最新"入口。
+         */
+        post: operations["syncBatchPlaybook"];
         delete?: never;
         options?: never;
         head?: never;
@@ -381,7 +427,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 案件列表(按 scope+批次/状态过滤；结案对非平台/物业脱敏 BR-M8-09) */
+        /** 案件列表(按 scope+项目/批次/状态/关键字过滤；q 受脱敏+scope 裁剪、结案脱敏行排除以防侧信道；结案对非平台/物业脱敏 BR-M8-09) */
         get: operations["listCases"];
         put?: never;
         post?: never;
@@ -462,6 +508,27 @@ export interface paths {
         put?: never;
         /** 服务商负责人把本商公海案件分配给催收员(校验持有上限 CFG-HOLDCAP BR-M3-23) */
         post: operations["assignCase"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/cases/assign-batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 服务商负责人批量把本商公海案件分配给催收员(可均摊·逐案校验持有上限 CFG-HOLDCAP BR-M3-23/25)
+         * @description 批量指派：caseIds 全部分配给 collectorId；evenSplit=true 时在多催收员场景按余量均摊(BR-M3-25/06)。
+         *     逐案校验持有上限，超额度的案件进 rejected 明细(不整批回滚)，成功的进 assigned。
+         */
+        post: operations["assignCasesBatch"];
         delete?: never;
         options?: never;
         head?: never;
@@ -576,6 +643,29 @@ export interface paths {
         put?: never;
         /** 平台对退回/滞留(T2超时)案件重新派单(全局公海重分配 BR-M3-09) */
         post: operations["redispatchBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/cases/{id}/redispatch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 平台对单个退回/滞留案件再派给指定服务商(平台公海单案再派 US-M3-02)
+         * @description 与批次级 /batches/{id}/redispatch 区分：此为平台公海**单案**再派(US-M3-02)。
+         *     护栏①：目标服务商=原退回服务商或已停用 → 409 BIZ_REDISPATCH_GUARD。
+         */
+        post: operations["redispatchCase"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1224,6 +1314,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/co-commissions/{collectorId}/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collectorId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * 催收员佣金按批次下钻(穿透:某催收员各批次应结/未结·服务商内部 M-05/BR-M9-19)
+         * @description 从 listCoCommissions 按人聚合下钻到批次级，供服务商内部佣金穿透核查；平台/物业不可见(资金双线)。
+         */
+        get: operations["listCoCommissionBatches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/co-pay-docs": {
         parameters: {
             query?: never;
@@ -1472,6 +1584,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/evidence/{id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 失败存证重试(仅 FAILED→ISSUING·重新出证 BR-M6)
+         * @description 仅 status=FAILED 的存证可重试，置回 ISSUING 重新出证；非 FAILED → 409。按次计费只向物业(BR-M6-03)。
+         */
+        post: operations["retryEvidence"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/cases/{id}/evidence/package": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 案件存证打包下载(已出证存证聚合打包·占位 documentUrl BR-M6)
+         * @description 聚合本案已出证存证为打包下载(三方隔离:物业本物业/平台全局;服务商不可见)。documentUrl 为打包文件占位(文件通道 TBD)。
+         */
+        get: operations["getEvidencePackage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/cases/{id}/legal-docs": {
         parameters: {
             query?: never;
@@ -1642,6 +1798,28 @@ export interface paths {
         };
         /** 服务商内催收员持仓余量+按余量推荐指派(内海池 BR-M3-23) */
         get: operations["getCollectorCapacity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/providers/{id}/release-records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * 服务商案件释放记录(催收员主动/自动释放频次可见·VL 仅本商 BR-M3-27)
+         * @description 支撑释放频次可见(BR-M3-27)；VL 仅本服务商。地基期可由 audit_log 派生。
+         */
+        get: operations["listReleaseRecords"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2035,6 +2213,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sms-records/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 短信发送明细导出(按项目/时段/状态过滤·占位 url BR-M4-16/M9-08)
+         * @description 与 listSmsRecords 同 scope(range)同过滤参数；返回导出文件 url 占位(文件通道 TBD)。读端点·靠 scope 裁剪。
+         */
+        get: operations["exportSmsRecords"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-log": {
         parameters: {
             query?: never;
@@ -2086,9 +2284,10 @@ export interface components {
              *     BIZ_DUP_ACCT(同批户号重复 BR-M2-14) / BIZ_SMS_COOLDOWN(缴费短信冷却未过 BR-M4-14a) /
              *     BIZ_QUOTA_EXHAUSTED(短信/STT分钟余量不足；补解析时余额不足也用此码) /
              *     BIZ_ALREADY_CLAIMED(并发抢单已被他人抢占 BR-M3-07) / BIZ_HOLD_CAP(超持有上限 CFG-HOLDCAP BR-M3-06) /
+             *     BIZ_REDISPATCH_GUARD(单案再派护栏①:目标=原退回服务商/已停用 US-M3-02) /
              * @enum {string}
              */
-            code: "AUTH_401" | "PERM_403" | "NOT_FOUND_404" | "STATE_409" | "VALIDATION_422" | "BIZ_PAYOUT_INVERT" | "BIZ_CAP_EXCEEDED" | "BIZ_LINE_LOCKED" | "BIZ_PR_PAID" | "BIZ_WRONG_SETTLE_SIDE" | "BIZ_NO_VOUCHER" | "BIZ_CASE_CLOSED" | "BIZ_REDUCE_OVER_SELF" | "BIZ_NO_RECORDING" | "BIZ_TOKEN_EXPIRED" | "BIZ_OPEN_RATE_REQUIRED" | "BIZ_NOT_PENDING_DISPATCH" | "BIZ_DUP_ACCT" | "BIZ_SMS_COOLDOWN" | "BIZ_QUOTA_EXHAUSTED" | "BIZ_ALREADY_CLAIMED" | "BIZ_HOLD_CAP";
+            code: "AUTH_401" | "PERM_403" | "NOT_FOUND_404" | "STATE_409" | "VALIDATION_422" | "BIZ_PAYOUT_INVERT" | "BIZ_CAP_EXCEEDED" | "BIZ_LINE_LOCKED" | "BIZ_PR_PAID" | "BIZ_WRONG_SETTLE_SIDE" | "BIZ_NO_VOUCHER" | "BIZ_CASE_CLOSED" | "BIZ_REDUCE_OVER_SELF" | "BIZ_NO_RECORDING" | "BIZ_TOKEN_EXPIRED" | "BIZ_OPEN_RATE_REQUIRED" | "BIZ_NOT_PENDING_DISPATCH" | "BIZ_DUP_ACCT" | "BIZ_SMS_COOLDOWN" | "BIZ_QUOTA_EXHAUSTED" | "BIZ_ALREADY_CLAIMED" | "BIZ_HOLD_CAP" | "BIZ_REDISPATCH_GUARD";
             message: string;
             traceId?: string;
             details?: {
@@ -2402,6 +2601,10 @@ export interface components {
              * @enum {string}
              */
             playbookMode?: "INHERIT" | "CUSTOM";
+            /** @description 可选·项目级减免阶梯已更新而该 CUSTOM 批次有差异(供"一键同步"提示 BR-M2-18b)；仅 CUSTOM 批次有意义 */
+            reduceDrift?: boolean;
+            /** @description 可选·项目级作战手册已更新而该 CUSTOM 批次有差异(供"一键同步"提示 BR-M2-18b)；仅 CUSTOM 批次有意义 */
+            playbookDrift?: boolean;
         };
         /** @description 平台全视角(双线均含)。物业用 BatchForProperty、服务商用 BatchForProvider */
         Batch: components["schemas"]["BatchBase"] & {
@@ -2558,6 +2761,16 @@ export interface components {
             preCallStrategy?: components["schemas"]["PreCallStrategy"] | null;
             /** @description 按当前主体权限可用的操作点(驱动前端操作区显隐) */
             availableActions?: string[];
+            /** @description 案作业方可见的启用标记码(与 Settings.markCodes 同构)，使 CO/VL 无需访问 platform-scoped /settings 即取 CFG-MARK-CODES(M-01/BR-M4-12)。connected=true 接通；effectiveFollowUp=true 有效跟进(服务端据此重置 T_collector)。 */
+            markCodes?: {
+                code?: string;
+                label?: string;
+                enabled?: boolean;
+                /** @description 是否接通(true=接通) */
+                connected?: boolean;
+                /** @description 是否有效跟进；true 时服务端重置 T_collector(BR-M4-03) */
+                effectiveFollowUp?: boolean;
+            }[];
         };
         FollowUpInput: {
             content: string;
@@ -2715,6 +2928,45 @@ export interface components {
             splitCount?: number | null;
             caseIds?: string[] | null;
             payOutRate: components["schemas"]["Rate"];
+        };
+        /** @description 批量指派输入(本商公海→催收员·BR-M3-23/25) */
+        BatchAssignInput: {
+            /** @description 待指派案件 id 集 */
+            caseIds: string[];
+            /** @description 目标催收员 id */
+            collectorId: string;
+            /** @description 可选·true=多催收员场景按余量均摊(BR-M3-25) */
+            evenSplit?: boolean;
+        };
+        /** @description 批量指派结果(成功/被拒明细·不整批回滚 BR-M3-25/06) */
+        BatchAssignResult: {
+            /** @description 成功指派的案件 id 集 */
+            assigned?: string[];
+            /** @description 被拒明细(超持有上限等) */
+            rejected?: {
+                caseId?: string;
+                /** @description 拒绝原因(如 BIZ_HOLD_CAP 超持有上限) */
+                reason?: string;
+            }[];
+        };
+        /** @description 案件释放记录(释放频次可见 BR-M3-27) */
+        ReleaseRecord: {
+            collectorId?: string;
+            collectorName?: string | null;
+            caseId?: string;
+            /** @description 释放原因(MANUAL 时填) */
+            reason?: string | null;
+            /**
+             * @description MANUAL=催收员主动释放 / AUTO=系统超时自动回流
+             * @enum {string}
+             */
+            kind?: "MANUAL" | "AUTO";
+            /** Format: date-time */
+            at?: string;
+        };
+        ReleaseRecordPage: {
+            items?: components["schemas"]["ReleaseRecord"][];
+            meta?: components["schemas"]["PageMeta"];
         };
         CallRecording: {
             id?: string;
@@ -2945,6 +3197,19 @@ export interface components {
             settledCents?: components["schemas"]["Money"];
             unsettledCents?: components["schemas"]["Money"];
         };
+        /** @description 催收员佣金按批次下钻行(M-05 穿透·服务商内部) */
+        CoCommissionBatchRow: {
+            batchId?: string;
+            batchName?: string;
+            /** @description 该批催收员佣金比例(分数 0-1) */
+            rate?: components["schemas"]["Rate"];
+            /** @description 应结佣金 */
+            dueCents?: components["schemas"]["Money"];
+            /** @description 未结佣金 */
+            unsettledCents?: components["schemas"]["Money"];
+            /** @description 未结明细条数 */
+            unsettledLineCount?: number;
+        };
         CoPayDoc: {
             id?: string;
             collectorId?: string;
@@ -2954,6 +3219,10 @@ export interface components {
             status?: components["schemas"]["CoPayDocStatusEnum"];
             /** Format: date-time */
             createdAt?: string;
+            /** @description 佣金单下载 URL(文件通道 TBD·占位·对齐 PaymentRequest.documentUrl N-01) */
+            documentUrl?: string | null;
+            /** @description 电子签章状态(方案 TBD，false=未签章·对齐 PaymentRequest.sealed) */
+            sealed?: boolean;
             /** @description 明细快照：催收员→批次→案件回款穿透明细(BR-M9-19 US-M9-10) */
             lines?: {
                 lineId?: string;
@@ -3110,6 +3379,15 @@ export interface components {
             certUrl?: string | null;
             /** Format: date-time */
             issuedAt?: string | null;
+        };
+        /** @description 案件存证打包下载(已出证存证聚合·占位) */
+        EvidencePackage: {
+            caseId?: string;
+            /** @description 打包文件下载 url(文件通道 TBD·占位) */
+            documentUrl?: string | null;
+            /** @description 打包内已出证存证条数 */
+            itemCount?: number;
+            items?: components["schemas"]["EvidenceItem"][];
         };
         EvidencePage: {
             items?: components["schemas"]["EvidenceItem"][];
@@ -4224,6 +4502,37 @@ export interface operations {
             422: components["responses"]["ValidationError"];
         };
     };
+    syncBatchReduceTiers: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 写操作幂等键(防重复提交/重试双扣)。同 key 重复请求返回首次结果。支付/结算/上传/派单等有副作用端点建议必带。 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        source?: "INHERITED" | "CUSTOM";
+                        tiers?: components["schemas"]["ReduceTier"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     getBatchPlaybook: {
         parameters: {
             query?: never;
@@ -4281,6 +4590,31 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["Forbidden"];
+        };
+    };
+    syncBatchPlaybook: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 写操作幂等键(防重复提交/重试双扣)。同 key 重复请求返回首次结果。支付/结算/上传/派单等有副作用端点建议必带。 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     dispatchBatch: {
@@ -4369,8 +4703,12 @@ export interface operations {
     listCases: {
         parameters: {
             query?: {
+                /** @description 按项目过滤(与 /batches /sea 同义) */
+                projectId?: string;
                 batchId?: string;
                 status?: components["schemas"]["CaseStatusEnum"];
+                /** @description 关键字(手机号/户号/业主名)；受脱敏与 scope 裁剪，排除结案脱敏行以防侧信道 */
+                q?: string;
                 page?: components["parameters"]["Page"];
                 size?: components["parameters"]["Size"];
             };
@@ -4527,6 +4865,35 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
+    assignCasesBatch: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 写操作幂等键(防重复提交/重试双扣)。同 key 重复请求返回首次结果。支付/结算/上传/派单等有副作用端点建议必带。 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchAssignInput"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchAssignResult"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
     claimCase: {
         parameters: {
             query?: never;
@@ -4649,6 +5016,37 @@ export interface operations {
                 };
                 content?: never;
             };
+            409: components["responses"]["Conflict"];
+        };
+    };
+    redispatchCase: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 写操作幂等键(防重复提交/重试双扣)。同 key 重复请求返回首次结果。支付/结算/上传/派单等有副作用端点建议必带。 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    providerId: string;
+                };
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
         };
     };
@@ -5661,6 +6059,31 @@ export interface operations {
             422: components["responses"]["ValidationError"];
         };
     };
+    listCoCommissionBatches: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collectorId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoCommissionBatchRow"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     listCoPayDocs: {
         parameters: {
             query?: {
@@ -6026,6 +6449,58 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    retryEvidence: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 写操作幂等键(防重复提交/重试双扣)。同 key 重复请求返回首次结果。支付/结算/上传/派单等有副作用端点建议必带。 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok(出证中) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidenceItem"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getEvidencePackage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidencePackage"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     listCaseLegalDocs: {
         parameters: {
             query?: {
@@ -6308,6 +6783,33 @@ export interface operations {
                     };
                 };
             };
+        };
+    };
+    listReleaseRecords: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseRecordPage"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     changeOwnPassword: {
@@ -6975,6 +7477,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SmsSendRecordPage"];
+                };
+            };
+        };
+    };
+    exportSmsRecords: {
+        parameters: {
+            query?: {
+                /** @description 按项目过滤 */
+                projectId?: string;
+                /** @description 按案件过滤 */
+                caseId?: string;
+                status?: components["schemas"]["SmsSendStatusEnum"];
+                from?: string;
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description 导出文件下载 url(占位·TBD) */
+                        url?: string | null;
+                    };
                 };
             };
         };

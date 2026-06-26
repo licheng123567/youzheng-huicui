@@ -42,6 +42,24 @@ public class BatchesM2Controller {
 
     public BatchesM2Controller(JdbcTemplate jdbc) { this.jdbc = jdbc; }
 
+    /**
+     * 批次列表 scope 片段（按 orgType 三分支，count 与 page 共用同一 where 故只追加一次即覆盖两处查询）。
+     *   PROVIDER → b.provider_id=本组织（承接服务商，批次粒度权威为 b.provider_id）；
+     *   PROPERTY → p.org_id=本组织（项目所属物业 org）；
+     *   PLATFORM → 不追加（全量）。
+     * 注意：服务商 org_id 永不等于项目所属物业 p.org_id，绝不可叠加 p.org_id 裁剪（否则服务商列表恒空）。
+     */
+    private static void appendBatchScope(CurrentSubject s, StringBuilder where, List<Object> args) {
+        if ("PROVIDER".equals(s.orgType())) {
+            where.append(" AND b.provider_id = ?");
+            args.add(Long.valueOf(s.orgId()));
+        } else if ("PROPERTY".equals(s.orgType())) {
+            where.append(" AND p.org_id = ?");
+            args.add(Long.valueOf(s.orgId()));
+        }
+        // PLATFORM：不限。
+    }
+
     /** SQL 行投影（DB 真列名 → 字段）。比率列 NUMERIC(6,4) 映射 BigDecimal，按契约 Rate=number 原样返回。 */
     private record BatchRow(
             long id, long projectId, String code, Long providerId,
@@ -62,9 +80,6 @@ public class BatchesM2Controller {
         CurrentSubject s = SubjectContext.get();
         Pageable pg = Pageable.of(page, size);
 
-        // scope=range（经 project.org_id 关联）。M2 读阶段以 ownOrg 等价；TODO: 接 SE 三维 range。
-        DataScope.Fragment scope = DataScope.ownOrg(s, "p.org_id");
-
         StringBuilder where = new StringBuilder(" WHERE 1=1");
         List<Object> args = new ArrayList<>();
         if (projectId != null && !projectId.isBlank()) {
@@ -75,13 +90,11 @@ public class BatchesM2Controller {
             where.append(" AND b.status = ?");
             args.add(status);
         }
-        where.append(scope.sql());
-        for (Object p : scope.params()) args.add(p);
-        // 服务商主体只见已派给自己的批次（provider_id=s.orgId）。
-        if ("PROVIDER".equals(s.orgType())) {
-            where.append(" AND b.provider_id = ?");
-            args.add(Long.valueOf(s.orgId()));
-        }
+        // 批次 scope 按 orgType 分支（项目属于物业 org，故服务商绝不能叠加 p.org_id 裁剪）：
+        //   PROVIDER → b.provider_id=本组织（承接服务商，批次粒度仍用 b.provider_id）；
+        //   PROPERTY → p.org_id=本组织（项目所属物业）；
+        //   PLATFORM → 不限（全量）。
+        appendBatchScope(s, where, args);
 
         String fromWhere = " FROM batch b JOIN project p ON p.id = b.project_id" + where;
 
@@ -97,7 +110,10 @@ public class BatchesM2Controller {
 
         RoleResponse.ViewRole role = RoleResponse.of(s);
         List<Object> items = new ArrayList<>(rows.size());
-        for (BatchRow r : rows) items.add(toView(r, role, List.of()));
+        // 列表视图不逐行推导覆盖态（避免 N+1）：reduceMode/playbookMode 给 INHERIT、drift 给 false（契约该批字段可选）；
+        // 真实覆盖态/drift 由明细端点 getBatch 提供。
+        Override listOv = new Override("INHERIT", "INHERIT", false, false);
+        for (BatchRow r : rows) items.add(toView(r, role, List.of(), listOv));
         return Page.of(items, pg, total == null ? 0 : total);
     }
 
@@ -111,16 +127,12 @@ public class BatchesM2Controller {
         CurrentSubject s = SubjectContext.get();
         long batchId = Long.parseLong(id);
 
-        DataScope.Fragment scope = DataScope.ownOrg(s, "p.org_id");
+        // 与 listBatches 同口径三分支：PROVIDER→b.provider_id；PROPERTY→p.org_id；PLATFORM→不限。
+        // 修 codex MED：原 ownOrg(p.org_id)+b.provider_id 双约束使服务商列表可见但详情 false-deny 404。
         StringBuilder where = new StringBuilder(" WHERE b.id = ?");
         List<Object> args = new ArrayList<>();
         args.add(batchId);
-        where.append(scope.sql());
-        for (Object p : scope.params()) args.add(p);
-        if ("PROVIDER".equals(s.orgType())) {
-            where.append(" AND b.provider_id = ?");
-            args.add(Long.valueOf(s.orgId()));
-        }
+        appendBatchScope(s, where, args);
 
         List<BatchRow> found = jdbc.query(
                 "SELECT b.id, b.project_id, b.no, b.provider_id, b.comm_in_rate, b.comm_in_inherited, b.pay_out_rate, b.status"
@@ -138,7 +150,43 @@ public class BatchesM2Controller {
                 (rs, i) -> new BatchCoordinatorRef(String.valueOf(rs.getLong("id")), rs.getString("name")),
                 batchId);
 
-        return toView(r, RoleResponse.of(s), coordinators);
+        // BC-05 真值化：reduceMode/playbookMode 由 reduce_tier(batch_id)/playbook 关联推导，消解与 GET reduce-tiers source 不一致。
+        Override ov = deriveOverride(batchId, r.projectId());
+        return toView(r, RoleResponse.of(s), coordinators, ov);
+    }
+
+    /** 批次覆盖真值（reduceMode/playbookMode 真实 INHERIT/CUSTOM + BR-M2-18b drift 标记）。 */
+    private record Override(String reduceMode, String playbookMode, boolean reduceDrift, boolean playbookDrift) {}
+
+    /**
+     * 推导批次覆盖态（BC-05 真值化 + BC-04 覆盖同步 BR-M2-18b）。
+     * reduceMode：reduce_tier 存在 batch_id=batchId 行 → CUSTOM，否则 INHERIT。
+     * reduceDrift：CUSTOM 时比对——项目级当前 max(updated_at) > 该批次覆盖行记录的 baseline_project_updated_at
+     *             （V912 基线列）→ 项目级已更新而本批次仍持旧自定义，提示“一键同步”。
+     * playbookMode/playbookDrift：DDL playbook 仅 project_id 无 batch_id（批次手册经 project 折叠，见 PlaybookController），
+     *             当前无批次级手册存储 → 恒 INHERIT / false（V912 已预留 playbook.baseline_* 待批次级手册落地启用）。
+     */
+    private Override deriveOverride(long batchId, long projectId) {
+        // 批次自定义减免阶梯行（带基线）：取一行即足以判定 CUSTOM 与 drift。
+        List<java.sql.Timestamp> baselines = jdbc.query(
+                "SELECT baseline_project_updated_at FROM reduce_tier WHERE batch_id = ? ORDER BY id LIMIT 1",
+                (rs, i) -> rs.getTimestamp("baseline_project_updated_at"),
+                batchId);
+        boolean reduceCustom = !baselines.isEmpty();
+        boolean reduceDrift = false;
+        if (reduceCustom) {
+            // 项目级当前 max(updated_at)（同 project，batch_id IS NULL）。
+            java.sql.Timestamp projMax = jdbc.query(
+                    "SELECT max(updated_at) AS m FROM reduce_tier WHERE project_id = ? AND batch_id IS NULL",
+                    rs -> rs.next() ? rs.getTimestamp("m") : null,
+                    projectId);
+            java.sql.Timestamp baseline = baselines.get(0);
+            // 基线为 NULL（理论不应出现，回填已覆盖）按有差异处理，提示同步以补基线。
+            reduceDrift = projMax != null && (baseline == null || projMax.after(baseline));
+        }
+        String reduceMode = reduceCustom ? "CUSTOM" : "INHERIT";
+        // playbook：无批次级存储 → 恒继承。
+        return new Override(reduceMode, "INHERIT", reduceDrift, false);
     }
 
     /** 行映射：no→code，provider_id 可空。 */
@@ -153,25 +201,32 @@ public class BatchesM2Controller {
 
     /**
      * 按视角构造对应物理 record（资金双线字段级隔离 BR-M9-11）。
-     * reduceMode/playbookMode：V1 batch 表无对应列 → 先以 'INHERIT' 常量占位。
-     * TODO(M2 写阶段)：确认列或由 reduce_tier(batch_id)/playbook 关联推导 source(INHERITED/CUSTOM→INHERIT/CUSTOM)。
+     * reduceMode/playbookMode：由调用方推导的真实覆盖态（BC-05 真值化）经 Override 传入。
+     *   - reduceMode：reduce_tier(batch_id) 存在 → CUSTOM 否则 INHERIT（与 GET /batches/{id}/reduce-tiers source 一致）。
+     *   - playbookMode：DDL 无批次级手册存储 → 恒 INHERIT（见 deriveOverride 注释）。
+     * BR-M2-18b 的 reduceDrift/playbookDrift 由 ov 算出并落入三视图 record 可选字段（契约 BatchBase 定义为 optional boolean）：
+     *   - reduceDrift：CUSTOM 批次项目级减免已更新而本批未同步时 true，驱动前端“一键同步”告警 banner。
+     *   - playbookDrift：无批次级手册存储 → 恒 false（已知降级，照实传，不造假数据）。
      */
-    private static Object toView(BatchRow r, RoleResponse.ViewRole role, List<BatchCoordinatorRef> coordinators) {
+    private static Object toView(BatchRow r, RoleResponse.ViewRole role,
+                                 List<BatchCoordinatorRef> coordinators, Override ov) {
         String idStr = String.valueOf(r.id());
         String projectIdStr = String.valueOf(r.projectId());
         String providerIdStr = r.providerId() == null ? null : String.valueOf(r.providerId());
-        final String reduceMode = "INHERIT";    // TODO 占位
-        final String playbookMode = "INHERIT";   // TODO 占位
+        final String reduceMode = ov.reduceMode();
+        final String playbookMode = ov.playbookMode();
+        final Boolean reduceDrift = ov.reduceDrift();
+        final Boolean playbookDrift = ov.playbookDrift();
         return switch (role) {
             case PROVIDER -> new BatchProviderView(
                     idStr, projectIdStr, r.code(), providerIdStr, coordinators, r.status(),
-                    reduceMode, playbookMode, "PROVIDER", r.payOutRate());
+                    reduceMode, playbookMode, "PROVIDER", r.payOutRate(), reduceDrift, playbookDrift);
             case PROPERTY -> new BatchPropertyView(
                     idStr, projectIdStr, r.code(), providerIdStr, coordinators, r.status(),
-                    reduceMode, playbookMode, "PROPERTY", r.commInRate(), r.commInInherited());
+                    reduceMode, playbookMode, "PROPERTY", r.commInRate(), r.commInInherited(), reduceDrift, playbookDrift);
             case PLATFORM -> new BatchPlatformView(
                     idStr, projectIdStr, r.code(), providerIdStr, coordinators, r.status(),
-                    reduceMode, playbookMode, "PLATFORM", r.commInRate(), r.commInInherited(), r.payOutRate());
+                    reduceMode, playbookMode, "PLATFORM", r.commInRate(), r.commInInherited(), r.payOutRate(), reduceDrift, playbookDrift);
         };
     }
 
@@ -185,5 +240,7 @@ public class BatchesM2Controller {
     // batch.pay_out_rate    -> payOutRate    (平台/服务商含；物业物理不含)
     // batch.status          -> status
     // batch_coordinators(batch_id,coordinator_id) JOIN account -> coordinators[CoordinatorRef{id,name}]
-    // reduceMode/playbookMode：契约 BatchBase 有，V1 batch 表无列 → 'INHERIT' 占位 + TODO
+    // reduceMode：由 reduce_tier(batch_id) 推导真值(存在→CUSTOM 否则 INHERIT)，与 GET reduce-tiers source 一致(BC-05)。
+    // playbookMode：DDL playbook 无 batch_id → 恒 INHERIT(批次手册经 project 折叠)。
+    // reduceDrift/playbookDrift(BR-M2-18b)：deriveOverride 算出后落入三视图 record 可选字段；playbookDrift 恒 false(无批次级手册存储·已知降级)。
 }

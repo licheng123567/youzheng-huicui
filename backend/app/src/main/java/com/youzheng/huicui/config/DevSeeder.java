@@ -109,6 +109,16 @@ public class DevSeeder implements CommandLineRunner {
             }
             seedSmsRecords(cuihu, proj, caseS3Id);
         }
+
+        // 案件级 provider_id 回填（V913）：DevSeeder 经 SQL 直插案件、绕过 dispatch/accept 控制器，
+        // 故 case.provider_id 留空；而 V913 回填在 Flyway 期(种子前)执行、看不到这些行。
+        // 可见性 scope 已改为直接 c.provider_id 权威，须在此按池语义补齐，否则服务商/催收员看不到本商案件。
+        // 语义：已归属某服务商的案件(已派待接 S1/服务商公海 S2/私海 S3)→ provider_id=batch.provider_id；
+        //   平台公海(S0)与开放抢单池(S4)→ 无归属，保持 NULL。
+        jdbc.update(
+                "UPDATE \"case\" c SET provider_id = b.provider_id FROM batch b "
+                        + "WHERE c.batch_id = b.id AND b.provider_id IS NOT NULL "
+                        + "AND c.provider_id IS NULL AND c.pool NOT IN ('PLATFORM_SEA', 'OPEN_POOL')");
     }
 
     // ── M9-B 计费流水种子（recharge_log 充值/扣减流水）─────────────────────────

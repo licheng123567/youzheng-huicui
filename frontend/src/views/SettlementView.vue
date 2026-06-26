@@ -21,6 +21,8 @@ const canGenerate = computed(() => auth.has('payreq.create') && ((isPlatform.val
 const canRevoke = computed(() => auth.has('payreq.create') && ((isPlatform.value && side.value === 'IN') || (isProvider.value && side.value === 'OUT')))
 // canComplete: 完成恒由平台受理(契约 completePaymentRequest x-data-scope=platform)——IN=平台确认收款 / OUT=平台支付+上传凭证(BR-M9-12)；仅 SA/SE 持 payreq.complete
 const canComplete = computed(() => auth.has('payreq.complete') && isPlatform.value)
+// H-01：PL/PC 物业角色对收佣支付申请单为「◐只读本物业」——可见但无生成/完成/撤销(读靠后端 scope+side-rule 裁剪 IN 线)。
+const isReadonlyProperty = computed(() => role.value === 'PL' || role.value === 'PC')
 const side = ref<'IN' | 'OUT'>('IN')
 const rollup = ref<any[]>([]); const prs = ref<any[]>([]); const loading = ref(false)
 const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
@@ -109,15 +111,48 @@ async function setRate(c: any) {
     ElMessage.success('已设佣金比例'); loadCoComm()
   } catch { /* 取消 */ }
 }
-// 生成佣金支付单（POST·lineIds 为该催收员未结内催回款明细 id，从批次回款明细处获取）
-async function genCoPayDoc(c: any) {
-  try {
-    const { value } = await ElMessageBox.prompt(`为 ${c.name} 生成佣金单（输入未结明细 id，逗号分隔）`, '生成佣金支付单', { inputValidator: (v: string) => /^[\d,]+$/.test(v) || '逗号分隔的明细 id' })
-    const lineIds = String(value).split(',').map((x) => x.trim()).filter(Boolean)
-    const { error } = await api.POST('/co-pay-docs', { body: { collectorId: String(c.collectorId), lineIds } as any })
-    if (error) { ElMessage.error('生成失败：' + ((error as any)?.message ?? '')); return }
-    ElMessage.success('已生成佣金支付单（PENDING_PAY）'); loadCoComm()
-  } catch { /* 取消 */ }
+// ── M-05 内催佣金穿透组单：催收员 → 批次(比例) → 该批未结回款明细勾选 → POST /co-pay-docs ──
+// 数据源：GET /co-commissions/{collectorId}/batches 列批次；选批次后 GET /batches/{id}/repay-lines 取明细，过滤未结/未入单。
+const cdlg2 = ref(false)            // 组单弹窗
+const cCollector = ref<any>(null)   // 当前催收员
+const cBatches = ref<any[]>([])     // 该催收员各批次(含比例)
+const cBatchId = ref('')            // 选中批次
+const cLines = ref<any[]>([])       // 选中批次的未结明细
+const cSel = ref<any[]>([])         // 勾选明细
+const cLoading = ref(false)
+async function openGenCoPayDoc(c: any) {
+  cCollector.value = c; cBatchId.value = ''; cLines.value = []; cSel.value = []; cBatches.value = []
+  cdlg2.value = true
+  cLoading.value = true
+  const { data, error } = await api.GET('/co-commissions/{collectorId}/batches', { params: { path: { collectorId: String(c.collectorId) } } })
+  cLoading.value = false
+  if (error) { ElMessage.error('加载批次失败'); return }
+  cBatches.value = (data as any) ?? []
+}
+async function loadCoLines() {
+  if (!cBatchId.value) { ElMessage.warning('请先选择批次'); return }
+  cSel.value = []
+  cLoading.value = true
+  const { data, error } = await api.GET('/batches/{id}/repay-lines', { params: { path: { id: cBatchId.value }, query: { page: 1, size: 100 } } as any })
+  cLoading.value = false
+  if (error) { ElMessage.error('加载回款明细失败'); cLines.value = []; return }
+  // 仅可组单：未结清且未入单（内催佣金按未结明细组单 BR-M9-19）
+  cLines.value = ((data as any)?.items ?? []).filter((l: any) => !l.settled && !l.paymentRequestId)
+  if (!cLines.value.length) ElMessage.info('该批次无可组单的未结回款明细')
+}
+async function submitGenCoPayDoc() {
+  if (!cSel.value.length) { ElMessage.warning('请勾选明细'); return }
+  const { error } = await api.POST('/co-pay-docs', { body: { collectorId: String(cCollector.value.collectorId), lineIds: cSel.value.map((l) => String(l.id)) } as any })
+  if (error) { ElMessage.error('生成失败：' + ((error as any)?.message ?? '')); return }
+  ElMessage.success(`已生成佣金支付单（${cSel.value.length} 笔明细 · PENDING_PAY）`); cdlg2.value = false; loadCoComm()
+}
+
+// ── M-05 佣金单详情：GET /co-pay-docs/{id} 展示 lines 穿透快照 ──
+const codDlg = ref(false); const coDetail = ref<any>(null)
+async function openCoDocDetail(row: any) {
+  const { data, error } = await api.GET('/co-pay-docs/{id}', { params: { path: { id: row.id } } })
+  if (error) { ElMessage.error('佣金单详情加载失败（可能已删除）'); return }
+  coDetail.value = data; codDlg.value = true
 }
 onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
 </script>
@@ -125,16 +160,23 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
 <template>
   <el-card header="结算 · 资金双线（IN 收佣 平台↔物业 / OUT 付佣 平台↔服务商）">
    <template v-if="canViewPayReq">
+    <el-alert v-if="isReadonlyProperty" type="info" :closable="false" show-icon style="margin-bottom:12px"
+      title="只读视图" description="物业仅可查看本物业收佣线(IN)对账与支付申请单，不可生成/确认/撤销。" />
     <el-radio-group v-model="side" style="margin-bottom:12px" @change="load">
       <el-radio-button v-for="s in sides" :key="s" :label="s">{{ s==='IN'?'收佣线(IN)':'付佣线(OUT)' }}</el-radio-button>
     </el-radio-group>
     <el-button v-if="canGenerate" type="primary" size="small" style="margin-left:12px" @click="openGenerate">勾选明细生成支付申请单</el-button>
 
     <el-divider content-position="left">对账汇总（GET /recon/rollup）</el-divider>
+    <!-- M-10：契约 ReconRollup 字段 batch/proj/baseCents/repayRate/commRate/dueCents/settledCents/unsettledCents -->
     <el-table :data="rollup" border size="small">
-      <el-table-column prop="batchCode" label="批次" /><el-table-column label="回款基数"><template #default="{row}">{{ yuan(row.baseCents) }}</template></el-table-column>
-      <el-table-column label="比例"><template #default="{row}">{{ pct(row.rate ?? row.commRate) }}</template></el-table-column>
-      <el-table-column label="应结"><template #default="{row}">{{ yuan(row.commCents) }}</template></el-table-column>
+      <el-table-column prop="batch" label="批次" /><el-table-column prop="proj" label="项目" />
+      <el-table-column label="回款基数"><template #default="{row}">{{ yuan(row.baseCents) }}</template></el-table-column>
+      <el-table-column label="回款率"><template #default="{row}">{{ pct(row.repayRate) }}</template></el-table-column>
+      <el-table-column label="比例"><template #default="{row}">{{ pct(row.commRate) }}</template></el-table-column>
+      <el-table-column label="应结"><template #default="{row}">{{ yuan(row.dueCents) }}</template></el-table-column>
+      <el-table-column label="已结"><template #default="{row}">{{ yuan(row.settledCents) }}</template></el-table-column>
+      <el-table-column label="未结"><template #default="{row}">{{ yuan(row.unsettledCents) }}</template></el-table-column>
     </el-table>
 
     <el-divider content-position="left">支付申请单（GET /payment-requests?side={{side}}）</el-divider>
@@ -147,6 +189,9 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
       <el-table-column label="操作" width="280">
         <template #default="{ row }">
           <el-button size="small" text @click="openDetail(row)">详情</el-button>
+          <!-- N-01：单据下载入口(documentUrl 空则禁用·占位) -->
+          <el-link v-if="row.documentUrl" type="primary" :href="row.documentUrl" target="_blank" style="margin:0 8px;font-size:13px">下载</el-link>
+          <el-button v-else size="small" text disabled>下载</el-button>
           <template v-if="row.status==='PENDING'">
             <el-button v-if="canGenerate" size="small" @click="send(row)">发送</el-button>
             <el-button v-if="canComplete" size="small" type="primary" @click="openComplete(row)">{{ side==='IN'?'确认收款':'支付完成' }}</el-button>
@@ -167,7 +212,7 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
         <el-table-column label="未结"><template #default="{row}">{{ yuan(row.unsettledCents) }}</template></el-table-column>
         <el-table-column label="操作" width="170"><template #default="{row}">
           <el-button size="small" @click="setRate(row)">设比例</el-button>
-          <el-button size="small" type="primary" @click="genCoPayDoc(row)">生成佣金单</el-button>
+          <el-button size="small" type="primary" @click="openGenCoPayDoc(row)">生成佣金单</el-button>
         </template></el-table-column>
       </el-table>
       <div style="margin:8px 0;color:#909399;font-size:13px">佣金支付单（GET /co-pay-docs · PENDING_PAY → 确认支付 → SETTLED）</div>
@@ -175,7 +220,10 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
         <el-table-column prop="collectorName" label="催收员" /><el-table-column prop="count" label="笔数" width="70" />
         <el-table-column label="金额"><template #default="{row}">{{ yuan(row.amountCents) }}</template></el-table-column>
         <el-table-column label="状态" width="120"><template #default="{row}"><el-tag size="small" :type="row.status==='SETTLED'?'success':'warning'">{{ row.status==='SETTLED'?'已结':'待支付' }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="110"><template #default="{row}"><el-button v-if="row.status==='PENDING_PAY'" size="small" type="primary" @click="confirmPay(row)">确认支付</el-button></template></el-table-column>
+        <el-table-column label="操作" width="180"><template #default="{row}">
+          <el-button size="small" text @click="openCoDocDetail(row)">详情</el-button>
+          <el-button v-if="row.status==='PENDING_PAY'" size="small" type="primary" @click="confirmPay(row)">确认支付</el-button>
+        </template></el-table-column>
       </el-table>
     </template>
     <template v-if="mySettle">
@@ -210,6 +258,14 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
           <el-descriptions-item label="比例">{{ pct(detail.commRate) }}</el-descriptions-item>
           <el-descriptions-item label="应结佣金">{{ yuan(detail.commCents) }}</el-descriptions-item>
           <el-descriptions-item label="凭证">{{ detail.voucher?.fileUrl ?? '—' }}</el-descriptions-item>
+          <!-- N-01：单据下载 + 电子签章占位(文件通道/签章方案 TBD) -->
+          <el-descriptions-item label="单据下载">
+            <el-link v-if="detail.documentUrl" type="primary" :href="detail.documentUrl" target="_blank">下载单据</el-link>
+            <span v-else style="color:#909399">单据通道 TBD</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="电子签章">
+            <el-tag size="small" :type="detail.sealed ? 'success' : 'info'">{{ detail.sealed ? '已签章' : '未签章' }}</el-tag>
+          </el-descriptions-item>
         </el-descriptions>
         <el-divider>明细快照（lines）</el-divider>
         <el-table :data="detail.lines ?? []" border size="small" max-height="240">
@@ -228,6 +284,52 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
         <el-form-item label="版本(乐观锁)"><el-input-number v-model="cform.version" :min="1" disabled /></el-form-item>
       </el-form>
       <template #footer><el-button @click="cdlg=false">取消</el-button><el-button type="primary" @click="submitComplete">完成</el-button></template>
+    </el-dialog>
+
+    <!-- M-05 内催佣金穿透组单：催收员 → 批次(比例) → 未结明细勾选 → POST /co-pay-docs -->
+    <el-dialog v-model="cdlg2" :title="`生成佣金单 · ${cCollector?.name ?? ''}（人→批次→明细勾选 POST /co-pay-docs）`" width="760px">
+      <el-form :inline="true">
+        <el-form-item label="批次">
+          <el-select v-model="cBatchId" style="width:320px" placeholder="选择该催收员的批次" @change="loadCoLines">
+            <el-option v-for="b in cBatches" :key="b.batchId" :value="b.batchId"
+              :label="`${b.batchName ?? b.batchId}（比例 ${pct(b.rate)} · 未结 ${yuan(b.unsettledCents)} · ${b.unsettledLineCount ?? 0} 笔）`" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <el-table v-loading="cLoading" :data="cLines" border size="small" @selection-change="(v:any)=>cSel=v" max-height="320">
+        <el-table-column type="selection" width="40" />
+        <el-table-column prop="ownerName" label="业主" /><el-table-column prop="room" label="房号" />
+        <el-table-column label="回款"><template #default="{row}">{{ yuan(row.amountCents) }}</template></el-table-column>
+        <el-table-column prop="channel" label="渠道" /><el-table-column prop="paidAt" label="日期" />
+      </el-table>
+      <div style="margin-top:6px;color:#606266">已选 {{ cSel.length }} 笔，合计回款 {{ yuan(cSel.reduce((s,l)=>s+(l.amountCents||0),0)) }}</div>
+      <template #footer><el-button @click="cdlg2=false">取消</el-button><el-button type="primary" :disabled="!cSel.length" @click="submitGenCoPayDoc">生成佣金单</el-button></template>
+    </el-dialog>
+
+    <!-- M-05 佣金单详情：GET /co-pay-docs/{id} lines 穿透快照 -->
+    <el-dialog v-model="codDlg" title="佣金支付单详情（GET /co-pay-docs/{id}）" width="640px">
+      <template v-if="coDetail">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="催收员">{{ coDetail.collectorName ?? coDetail.collectorId }}</el-descriptions-item>
+          <el-descriptions-item label="笔数">{{ coDetail.count ?? (coDetail.lines?.length ?? 0) }}</el-descriptions-item>
+          <el-descriptions-item label="金额">{{ yuan(coDetail.amountCents) }}</el-descriptions-item>
+          <el-descriptions-item label="状态">{{ coDetail.status==='SETTLED'?'已结':'待支付' }}</el-descriptions-item>
+          <!-- N-01 占位：佣金单下载 + 电子签章 -->
+          <el-descriptions-item label="单据下载">
+            <el-link v-if="coDetail.documentUrl" type="primary" :href="coDetail.documentUrl" target="_blank">下载单据</el-link>
+            <span v-else style="color:#909399">单据通道 TBD</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="电子签章">
+            <el-tag size="small" :type="coDetail.sealed ? 'success' : 'info'">{{ coDetail.sealed ? '已签章' : '未签章' }}</el-tag>
+          </el-descriptions-item>
+        </el-descriptions>
+        <el-divider>明细快照（lines · 催收员→批次→案件回款）</el-divider>
+        <el-table :data="coDetail.lines ?? []" border size="small" max-height="240">
+          <el-table-column prop="ownerName" label="业主" /><el-table-column prop="room" label="房号" />
+          <el-table-column label="回款"><template #default="{row}">{{ yuan(row.repayCents) }}</template></el-table-column>
+          <el-table-column label="佣金"><template #default="{row}">{{ yuan(row.commCents) }}</template></el-table-column>
+        </el-table>
+      </template>
     </el-dialog>
   </el-card>
 </template>

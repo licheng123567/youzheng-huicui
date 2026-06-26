@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
+import { roleLabel, roleHint } from '../constants/roles'
 
 // 成员管理/督导(M1/M10·member.manage)：本组织成员 CRUD/停用启用/重置密码 + 督导记录。
 const auth = useAuth()
@@ -11,8 +12,7 @@ const sup = ref<any[]>([])
 const orgs = ref<any[]>([])
 const isPlatform = () => auth.has('org.manage')
 
-// BR-M1-04a：角色下拉按当前组织类型过滤
-const ROLE_LABELS: Record<string, string> = { SA: 'SA 平台管理员', SE: 'SE 平台执行', PL: 'PL 物业负责人', PC: 'PC 物业催收员', VL: 'VL 服务商负责人', CO: 'CO 服务商催收员' }
+// BR-M1-04a：角色下拉按当前组织类型过滤。文案/标签来自 constants/roles.ts 单一真源（L-01/L-02）。
 const roleOptions = computed<string[]>(() => {
   const orgType: string = (auth.me as any)?.org?.type ?? ''
   if (orgType === 'PLATFORM') return ['SA', 'SE']
@@ -133,7 +133,7 @@ onMounted(load)
     <el-button v-if="auth.has('member.manage')" type="primary" size="small" style="margin-bottom:10px" @click="openCreate">新增成员</el-button>
     <el-table :data="members" border size="small">
       <el-table-column prop="username" label="账号" /><el-table-column prop="name" label="姓名" />
-      <el-table-column prop="phone" label="手机" /><el-table-column prop="role" label="角色" width="80" />
+      <el-table-column prop="phone" label="手机" /><el-table-column prop="role" label="角色" width="120" :formatter="(row: any) => roleLabel(row.role)" />
       <el-table-column label="状态" width="90"><template #default="{row}"><el-tag size="small" :type="row.status==='ACTIVE'?'success':'info'">{{ row.status }}</el-tag><el-tag v-if="row.isOwner" size="small" type="warning" style="margin-left:4px">负责人</el-tag></template></el-table-column>
       <el-table-column v-if="auth.has('member.manage')" label="操作" width="300">
         <template #default="{ row }">
@@ -177,8 +177,9 @@ onMounted(load)
         <el-form-item label="手机"><el-input v-model="cForm.phone" /></el-form-item>
         <el-form-item label="角色">
           <el-select v-model="cForm.role">
-            <el-option v-for="r in roleOptions" :key="r" :label="ROLE_LABELS[r] || r" :value="r" />
+            <el-option v-for="r in roleOptions" :key="r" :label="roleLabel(r)" :value="r" />
           </el-select>
+          <div v-if="roleHint(cForm.role)" style="font-size:12px;color:#999;margin-top:4px">{{ roleHint(cForm.role) }}</div>
         </el-form-item>
         <el-form-item label="权限子集">
           <div style="font-size:12px;color:#999;margin-bottom:4px">勾选可授予的权限（上限为当前主体持有权限）</div>

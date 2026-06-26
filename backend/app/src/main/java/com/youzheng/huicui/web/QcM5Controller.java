@@ -263,7 +263,8 @@ public class QcM5Controller {
             return;
         }
         if ("PROVIDER".equals(s.orgType())) {
-            where.append(" AND b.provider_id = ?");
+            // 案件级归属唯一权威（不 COALESCE 回落 batch）。
+            where.append(" AND c.provider_id = ?");
             args.add(org);
         } else {
             where.append(" AND p.org_id = ?");

@@ -27,8 +27,8 @@ import java.util.List;
  * 基路径 /v1 由 context-path 提供。Idempotency-Key 由 IdempotencyInterceptor header 层兜底。
  *
  * 批量补解析（BR-M5-02）：
- *   目标 = call_recording JOIN case JOIN project（own-org=p.org_id=本 org）且 status∈(PENDING,QUOTA_BLOCKED)，
- *   过滤优先级 caseIds > batchId > 无过滤（本 org 全部待解析），按 recorded_at 时间顺序处理。
+ *   目标 = call_recording JOIN case JOIN project（按归属裁剪：PROVIDER=c.provider_id / 其余=p.org_id=本 org）
+ *   且 status='QUOTA_BLOCKED'，过滤优先级 caseIds > batchId > 无过滤（本归属全部待补解析），按 recorded_at 时间顺序处理。
  *   读 STT 余额（recharge_log 最新 balance WHERE org_id=? AND type='STT'），逐条按时长（分钟，向上取整）扣减：
  *     余额够 → 置 PARSING（queued++）+ 写 billing_usage(STT,分钟) + recharge_log delta=-分钟、balance 滚动；
  *     余额不足 → 剩余置 QUOTA_BLOCKED（skipped++）。
@@ -56,11 +56,19 @@ public class BillingController {
 
         // 平台主体无 org 录音池语义；own-org 端点要求按本 org 解析。平台不限制 org，但本端点语义是 own-org，
         // 故平台调用时仍按 own-org（其 org 的录音，通常为空）。非法输入不 5xx。
+        // 待补解析状态：仅 QUOTA_BLOCKED（充值后可补解析 BR-M5-02）。'PENDING' 非 DDL/CallRecStatusEnum 枚举值，已删除。
         StringBuilder where = new StringBuilder(
-                " WHERE r.status IN ('PENDING','QUOTA_BLOCKED')");
+                " WHERE r.status = 'QUOTA_BLOCKED'");
         List<Object> args = new ArrayList<>();
+        // 非平台按案件归属裁剪（与 RecordingService/RecordingsM4 录音可见性同口径）：
+        //   PROVIDER → c.provider_id=本组织（案件级承接，唯一权威，不回落 batch）；
+        //   PROPERTY → p.org_id=本组织（项目所属物业）。平台不限（own-org 语义，其 org 录音通常为空）。
         if (!s.isPlatform()) {
-            where.append(" AND p.org_id = ?");
+            if ("PROVIDER".equals(s.orgType())) {
+                where.append(" AND c.provider_id = ?");
+            } else {
+                where.append(" AND p.org_id = ?");
+            }
             args.add(myOrg);
         }
 

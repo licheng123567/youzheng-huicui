@@ -84,7 +84,7 @@ public class CaseScopeM4Service {
     private CaseRow load(long caseId) {
         try {
             return jdbc.queryForObject(
-                    "SELECT c.id, c.batch_id, c.project_id, p.org_id, b.provider_id, c.holder_id,"
+                    "SELECT c.id, c.batch_id, c.project_id, p.org_id, c.provider_id, c.holder_id,"
                             + " c.status, c.due_cents, c.reduce_after_cents, c.owner_name, c.room"
                             + " FROM \"case\" c"
                             + " JOIN project p ON p.id = c.project_id"

@@ -16,5 +16,7 @@ public record CaseDetailDto(
         CaseProjectRefDto projectRef,
         Object playbook,
         Object preCallStrategy,
-        List<String> availableActions
+        List<String> availableActions,
+        // markCodes：MARK_CODES 域启用项(enabled=true)，使 CO/VL 无需访问 platform-scoped /settings 即取 CFG-MARK-CODES(M-01/BR-M4-12)。
+        List<Object> markCodes
 ) {}

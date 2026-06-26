@@ -14,6 +14,7 @@ public enum BizError {
     BIZ_HOLD_CAP(409, "BIZ_HOLD_CAP"),                   // 催收员私海持有上限 CFG-HOLDCAP
     BIZ_OPEN_RATE_REQUIRED(409, "BIZ_OPEN_RATE_REQUIRED"), // 开放抢单前批次 open_rate 未设 BR-M9-18
     BIZ_CAP_EXCEEDED(409, "BIZ_CAP_EXCEEDED"),           // 服务商持有余量不足 BR-M3-23(CFG-HOLDCAP)
+    BIZ_REDISPATCH_GUARD(409, "BIZ_REDISPATCH_GUARD"),   // 单案再派护栏①：目标=原退回服务商/已停用 US-M3-02
     BIZ_PAYOUT_INVERT(422, "BIZ_PAYOUT_INVERT"),         // 防倒挂：付佣比例 > 收佣比例
     // ── M4 缴费链接/回款 ──
     BIZ_SMS_COOLDOWN(409, "BIZ_SMS_COOLDOWN"),           // 同案缴费短信冷却未到 BR-M4-14a

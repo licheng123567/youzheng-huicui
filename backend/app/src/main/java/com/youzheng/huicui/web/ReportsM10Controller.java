@@ -41,7 +41,7 @@ import java.util.UUID;
  * x-data-scope=range（双线/范围聚合，复用 CasesM2Controller.appendRangeScope 三分支口径）：
  *   平台(PLATFORM)   → 全量；
  *   物业(PROPERTY)   → 本物业项目口径 p.org_id = 本组织；
- *   服务商(PROVIDER) → 本商批次口径 b.provider_id = 本组织。
+ *   服务商(PROVIDER) → 本商案件口径 c.provider_id = 本组织（案件级承接，对齐案件可见性收口）。
  *
  * 设计铁律：
  *   - getOperationReport 纯聚合查询（无写），绝不 5xx；空结果返空数组合法；非法 dimension 兜底 batch。
@@ -161,12 +161,12 @@ public class ReportsM10Controller {
 
     // ── helpers ────────────────────────────────────────────────────────────────
 
-    /** x-data-scope=range 追加到 WHERE（含前导 AND）。平台不限；物业按 p.org_id；服务商按 b.provider_id。 */
+    /** x-data-scope=range 追加到 WHERE（含前导 AND）。平台不限；物业按 p.org_id；服务商按 c.provider_id（案件级承接归属）。 */
     private void appendRangeScope(CurrentSubject s, StringBuilder where, List<Object> args) {
         if (s.isPlatform()) return;                       // 平台全量
         Long org = orgIdLong(s);
         if ("PROVIDER".equals(s.orgType())) {
-            where.append(" AND b.provider_id = ?");
+            where.append(" AND c.provider_id = ?");
             args.add(org);
         } else {                                          // PROPERTY（及兜底非平台/非服务商）按项目归属
             where.append(" AND p.org_id = ?");

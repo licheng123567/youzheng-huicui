@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 有证慧催 · API 契约（全模块·已冻结）
-  version: 1.3.1   # v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
+  version: 1.4.0   # v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
   contact: { name: 契约 Owner（架构师）, email: api-owner@youzheng.example }
   description: |
     从高保真原型 + PRD(BR/US) + 报告14口径抽取的全模块契约（单一事实源 SSOT）。**v1.0 已冻结（2026-06-24）**：经 codex×2 + 人工×2 共四轮独立审计、openapi-generator Spring 桩 mvn compile、Flyway 真库迁移三重验证，0 阻断/0 高。破坏性变更须升 major + 双 approve。
@@ -363,6 +363,31 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /batches/{id}/reduce-tiers:sync:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    post:
+      operationId: syncBatchReduceTiers
+      tags: [batches]
+      summary: 一键同步批次减免阶梯为项目最新(放弃自定义重新继承·清 reduceDrift BR-M2-18b)
+      description: |
+        放弃批次级自定义、重新继承项目默认减免阶梯，同步后 source=INHERITED、reduceDrift=false(BR-M2-18b)。
+        等价于 PUT reduce-tiers tiers=[]，独立端点供"一键同步为项目最新"入口语义清晰。
+      x-permission: reduce.policy.edit
+      x-data-scope: own-org
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source: { type: string, enum: [INHERITED, CUSTOM] }
+                  tiers: { type: array, items: { $ref: '#/components/schemas/ReduceTier' } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /batches/{id}/playbook:
     parameters: [ { $ref: '#/components/parameters/Id' } ]
     get:
@@ -405,6 +430,23 @@ paths:
       responses:
         '200': { description: ok }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /batches/{id}/playbook:sync:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    post:
+      operationId: syncBatchPlaybook
+      tags: [ai]
+      summary: 一键同步批次作战手册为项目最新(放弃自定义重新继承·清 playbookDrift BR-M2-18b)
+      description: |
+        放弃批次级自定义、重新继承项目最新作战手册，同步后 source=INHERITED、playbookDrift=false(BR-M2-18b)。
+        与 reduce-tiers:sync 对称，供"一键同步为项目最新"入口。
+      x-permission: playbook.adopt
+      x-data-scope: own-org
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses:
+        '200': { description: ok }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /batches/{id}/dispatch:
     parameters: [ { $ref: '#/components/parameters/Id' } ]
@@ -454,11 +496,13 @@ paths:
     get:
       operationId: listCases
       tags: [cases]
-      summary: 案件列表(按 scope+批次/状态过滤；结案对非平台/物业脱敏 BR-M8-09)
+      summary: 案件列表(按 scope+项目/批次/状态/关键字过滤；q 受脱敏+scope 裁剪、结案脱敏行排除以防侧信道；结案对非平台/物业脱敏 BR-M8-09)
       x-data-scope: range
       parameters:
+        - { name: projectId, in: query, schema: { type: string }, description: '按项目过滤(与 /batches /sea 同义)' }
         - { name: batchId, in: query, schema: { type: string } }
         - { name: status, in: query, schema: { $ref: '#/components/schemas/CaseStatusEnum' } }
+        - { name: q, in: query, schema: { type: string }, description: '关键字(手机号/户号/业主名)；受脱敏与 scope 裁剪，排除结案脱敏行以防侧信道' }
         - { $ref: '#/components/parameters/Page' }
         - { $ref: '#/components/parameters/Size' }
       responses:
@@ -523,6 +567,23 @@ paths:
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [collectorId], properties: { collectorId: { type: string } } } } } }
       responses: { '200': { description: ok }, '403': { $ref: '#/components/responses/Forbidden' }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  /cases/assign-batch:
+    post:
+      operationId: assignCasesBatch
+      tags: [dispatch]
+      summary: 服务商负责人批量把本商公海案件分配给催收员(可均摊·逐案校验持有上限 CFG-HOLDCAP BR-M3-23/25)
+      description: |
+        批量指派：caseIds 全部分配给 collectorId；evenSplit=true 时在多催收员场景按余量均摊(BR-M3-25/06)。
+        逐案校验持有上限，超额度的案件进 rejected 明细(不整批回滚)，成功的进 assigned。
+      x-permission: case.assign
+      x-data-scope: own-org
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/BatchAssignInput' } } } }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/BatchAssignResult' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
 
   /cases/{id}/claim:
     parameters: [ { $ref: '#/components/parameters/Id' } ]
@@ -597,6 +658,24 @@ paths:
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DispatchInput' } } } }
       responses: { '200': { description: ok }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  /cases/{id}/redispatch:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    post:
+      operationId: redispatchCase
+      tags: [dispatch]
+      summary: 平台对单个退回/滞留案件再派给指定服务商(平台公海单案再派 US-M3-02)
+      description: |
+        与批次级 /batches/{id}/redispatch 区分：此为平台公海**单案**再派(US-M3-02)。
+        护栏①：目标服务商=原退回服务商或已停用 → 409 BIZ_REDISPATCH_GUARD。
+      x-permission: case.dispatch
+      x-data-scope: platform
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [providerId], properties: { providerId: { type: string } } } } } }
+      responses:
+        '200': { description: ok }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }   # 目标=原退回服务商/已停用 BIZ_REDISPATCH_GUARD
 
   /cases/{id}/follow-ups:
     parameters: [ { $ref: '#/components/parameters/Id' } ]
@@ -1111,6 +1190,25 @@ paths:
       requestBody: { content: { application/json: { schema: { type: object, properties: { rate: { $ref: '#/components/schemas/Rate' } }, required: [rate] } } } }
       responses: { '200': { description: ok }, '422': { $ref: '#/components/responses/ValidationError', description: '超付佣比例·防倒挂 BIZ_PAYOUT_INVERT' } }
 
+  /co-commissions/{collectorId}/batches:
+    parameters: [ { name: collectorId, in: path, required: true, schema: { type: string } } ]
+    get:
+      operationId: listCoCommissionBatches
+      tags: [commission]
+      summary: 催收员佣金按批次下钻(穿透:某催收员各批次应结/未结·服务商内部 M-05/BR-M9-19)
+      description: '从 listCoCommissions 按人聚合下钻到批次级，供服务商内部佣金穿透核查；平台/物业不可见(资金双线)。'
+      x-permission: cocomm.manage
+      x-data-scope: own-org
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/CoCommissionBatchRow' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /co-pay-docs:
     get:
       operationId: listCoPayDocs
@@ -1289,6 +1387,33 @@ paths:
       security: []
       x-data-scope: public
       responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/EvidenceVerify' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /evidence/{id}/retry:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    post:
+      operationId: retryEvidence
+      tags: [evidence]
+      summary: 失败存证重试(仅 FAILED→ISSUING·重新出证 BR-M6)
+      description: '仅 status=FAILED 的存证可重试，置回 ISSUING 重新出证；非 FAILED → 409。按次计费只向物业(BR-M6-03)。'
+      x-permission: evidence.create
+      x-data-scope: own-org
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses:
+        '200': { description: ok(出证中), content: { application/json: { schema: { $ref: '#/components/schemas/EvidenceItem' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }   # 非 FAILED 不可重试
+  /cases/{id}/evidence/package:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    get:
+      operationId: getEvidencePackage
+      tags: [evidence]
+      summary: 案件存证打包下载(已出证存证聚合打包·占位 documentUrl BR-M6)
+      description: '聚合本案已出证存证为打包下载(三方隔离:物业本物业/平台全局;服务商不可见)。documentUrl 为打包文件占位(文件通道 TBD)。'
+      x-data-scope: range
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/EvidencePackage' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ---- 法律文书 M4（申请→生成PDF→线下送达→签收拍照→存证·与催收并行不出私海 BR-M4-18） ----
   /cases/{id}/legal-docs:
@@ -1402,6 +1527,19 @@ paths:
       x-data-scope: own-org
       parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
       responses: { '200': { description: ok, content: { application/json: { schema: { type: object, properties: { holdCap: { type: integer }, items: { type: array, items: { $ref: '#/components/schemas/CollectorCapacity' } } } } } } } }
+  /providers/{id}/release-records:
+    parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+    get:
+      operationId: listReleaseRecords
+      tags: [dispatch]
+      summary: 服务商案件释放记录(催收员主动/自动释放频次可见·VL 仅本商 BR-M3-27)
+      description: '支撑释放频次可见(BR-M3-27)；VL 仅本服务商。地基期可由 audit_log 派生。'
+      x-data-scope: own-org
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/ReleaseRecordPage' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ---- 个人中心 / 全局搜索（M1/M4 覆盖补点 v1.3.0） ----
   /me/password:
@@ -1679,6 +1817,22 @@ paths:
       responses:
         '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/SmsSendRecordPage' } } } }
 
+  /sms-records/export:
+    get:
+      operationId: exportSmsRecords
+      tags: [settings]
+      summary: 短信发送明细导出(按项目/时段/状态过滤·占位 url BR-M4-16/M9-08)
+      description: '与 listSmsRecords 同 scope(range)同过滤参数；返回导出文件 url 占位(文件通道 TBD)。读端点·靠 scope 裁剪。'
+      x-data-scope: range
+      parameters:
+        - { name: projectId, in: query, schema: { type: string }, description: '按项目过滤' }
+        - { name: caseId, in: query, schema: { type: string }, description: '按案件过滤' }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/SmsSendStatusEnum' } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { type: object, properties: { url: { type: [string, 'null'], description: '导出文件下载 url(占位·TBD)' } } } } } }
+
   /audit-log:
     get:
       operationId: listAuditLog
@@ -1739,7 +1893,8 @@ components:
             BIZ_DUP_ACCT(同批户号重复 BR-M2-14) / BIZ_SMS_COOLDOWN(缴费短信冷却未过 BR-M4-14a) /
             BIZ_QUOTA_EXHAUSTED(短信/STT分钟余量不足；补解析时余额不足也用此码) /
             BIZ_ALREADY_CLAIMED(并发抢单已被他人抢占 BR-M3-07) / BIZ_HOLD_CAP(超持有上限 CFG-HOLDCAP BR-M3-06) /
-          enum: [AUTH_401, PERM_403, NOT_FOUND_404, STATE_409, VALIDATION_422, BIZ_PAYOUT_INVERT, BIZ_CAP_EXCEEDED, BIZ_LINE_LOCKED, BIZ_PR_PAID, BIZ_WRONG_SETTLE_SIDE, BIZ_NO_VOUCHER, BIZ_CASE_CLOSED, BIZ_REDUCE_OVER_SELF, BIZ_NO_RECORDING, BIZ_TOKEN_EXPIRED, BIZ_OPEN_RATE_REQUIRED, BIZ_NOT_PENDING_DISPATCH, BIZ_DUP_ACCT, BIZ_SMS_COOLDOWN, BIZ_QUOTA_EXHAUSTED, BIZ_ALREADY_CLAIMED, BIZ_HOLD_CAP]
+            BIZ_REDISPATCH_GUARD(单案再派护栏①:目标=原退回服务商/已停用 US-M3-02) /
+          enum: [AUTH_401, PERM_403, NOT_FOUND_404, STATE_409, VALIDATION_422, BIZ_PAYOUT_INVERT, BIZ_CAP_EXCEEDED, BIZ_LINE_LOCKED, BIZ_PR_PAID, BIZ_WRONG_SETTLE_SIDE, BIZ_NO_VOUCHER, BIZ_CASE_CLOSED, BIZ_REDUCE_OVER_SELF, BIZ_NO_RECORDING, BIZ_TOKEN_EXPIRED, BIZ_OPEN_RATE_REQUIRED, BIZ_NOT_PENDING_DISPATCH, BIZ_DUP_ACCT, BIZ_SMS_COOLDOWN, BIZ_QUOTA_EXHAUSTED, BIZ_ALREADY_CLAIMED, BIZ_HOLD_CAP, BIZ_REDISPATCH_GUARD]
         message: { type: string }
         traceId: { type: string }
         details:
@@ -1921,6 +2076,8 @@ components:
         status: { type: string }
         reduceMode: { type: string, enum: [INHERIT, CUSTOM], description: 'INHERIT=继承项目默认；CUSTOM=批次自定义覆盖(BR-M2-18b)' }
         playbookMode: { type: string, enum: [INHERIT, CUSTOM], description: 'INHERIT=继承项目；CUSTOM=批次自定义(BR-M2-18b)' }
+        reduceDrift: { type: boolean, description: '可选·项目级减免阶梯已更新而该 CUSTOM 批次有差异(供"一键同步"提示 BR-M2-18b)；仅 CUSTOM 批次有意义' }
+        playbookDrift: { type: boolean, description: '可选·项目级作战手册已更新而该 CUSTOM 批次有差异(供"一键同步"提示 BR-M2-18b)；仅 CUSTOM 批次有意义' }
     Batch:
       description: '平台全视角(双线均含)。物业用 BatchForProperty、服务商用 BatchForProvider'
       unevaluatedProperties: false   # v1.0.2: 三向 oneOf 互斥(3.1 unevaluatedProperties 透视 allOf)
@@ -2017,6 +2174,7 @@ components:
         playbook: { type: [object, 'null'], properties: { version: { type: string }, content: { type: string } } }
         preCallStrategy: { oneOf: [ { $ref: '#/components/schemas/PreCallStrategy' }, { type: 'null' } ], description: '通话前策略(AI 动态生成·来自作战手册 BR-M5-04)；通话前话术辅助入口展示' }
         availableActions: { type: array, items: { type: string }, description: '按当前主体权限可用的操作点(驱动前端操作区显隐)' }
+        markCodes: { type: array, description: '案作业方可见的启用标记码(与 Settings.markCodes 同构)，使 CO/VL 无需访问 platform-scoped /settings 即取 CFG-MARK-CODES(M-01/BR-M4-12)。connected=true 接通；effectiveFollowUp=true 有效跟进(服务端据此重置 T_collector)。', items: { type: object, properties: { code: { type: string }, label: { type: string }, enabled: { type: boolean }, connected: { type: boolean, description: '是否接通(true=接通)' }, effectiveFollowUp: { type: boolean, description: '是否有效跟进；true 时服务端重置 T_collector(BR-M4-03)' } } } }
 
     FollowUpInput:
       type: object
@@ -2108,6 +2266,31 @@ components:
       required: [mode, providerId, payOutRate]
       description: 'SPLIT 时 caseIds 与 splitCount 二选一(都传则 caseIds 优先)；只给 splitCount 则系统按入池时间序选 N 个(D3)'
       properties: { mode: { $ref: '#/components/schemas/DispatchModeEnum' }, providerId: { type: string }, splitCount: { type: [integer, 'null'] }, caseIds: { type: [array, 'null'], items: { type: string } }, payOutRate: { $ref: '#/components/schemas/Rate' } }
+    BatchAssignInput:
+      type: object
+      required: [caseIds, collectorId]
+      description: '批量指派输入(本商公海→催收员·BR-M3-23/25)'
+      properties:
+        caseIds: { type: array, items: { type: string }, description: '待指派案件 id 集' }
+        collectorId: { type: string, description: '目标催收员 id' }
+        evenSplit: { type: boolean, description: '可选·true=多催收员场景按余量均摊(BR-M3-25)' }
+    BatchAssignResult:
+      type: object
+      description: '批量指派结果(成功/被拒明细·不整批回滚 BR-M3-25/06)'
+      properties:
+        assigned: { type: array, items: { type: string }, description: '成功指派的案件 id 集' }
+        rejected: { type: array, description: '被拒明细(超持有上限等)', items: { type: object, properties: { caseId: { type: string }, reason: { type: string, description: '拒绝原因(如 BIZ_HOLD_CAP 超持有上限)' } } } }
+    ReleaseRecord:
+      type: object
+      description: '案件释放记录(释放频次可见 BR-M3-27)'
+      properties:
+        collectorId: { type: string }
+        collectorName: { type: [string, 'null'] }
+        caseId: { type: string }
+        reason: { type: [string, 'null'], description: '释放原因(MANUAL 时填)' }
+        kind: { type: string, enum: [MANUAL, AUTO], description: 'MANUAL=催收员主动释放 / AUTO=系统超时自动回流' }
+        at: { type: string, format: date-time }
+    ReleaseRecordPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/ReleaseRecord' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }
 
     CallRecording: { type: object, properties: { id: { type: string }, caseId: { type: string }, collectorId: { type: [string, 'null'], description: '持有催收员 id(与 GET /recordings collectorId 过滤呼应，ERD CALL_RECORDING.collector_id)' }, source: { type: string, enum: [APP_AUTO, MANUAL] }, status: { $ref: '#/components/schemas/CallRecStatusEnum' }, recordedAt: { type: [string, 'null'], format: date-time }, durationSec: { type: [integer, 'null'] }, phone: { type: [string, 'null'] }, transcript: { type: [string, 'null'], description: 'ASR 转写文本(READY 后填充，归 AI review；也可在录音详情直接使用 ERD CALL_RECORDING.transcript)' }, failureCode: { type: [string, 'null'], description: 'FAILED 时(音质差/格式/无声道)' }, failureMessage: { type: [string, 'null'] } } }
     CallRecordingPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/CallRecording' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }
@@ -2253,6 +2436,16 @@ components:
     CoCommissionPerson:
       type: object
       properties: { collectorId: { type: string }, name: { type: string }, batchCount: { type: integer }, dueCents: { $ref: '#/components/schemas/Money' }, settledCents: { $ref: '#/components/schemas/Money' }, unsettledCents: { $ref: '#/components/schemas/Money' } }
+    CoCommissionBatchRow:
+      type: object
+      description: '催收员佣金按批次下钻行(M-05 穿透·服务商内部)'
+      properties:
+        batchId: { type: string }
+        batchName: { type: string }
+        rate: { $ref: '#/components/schemas/Rate', description: '该批催收员佣金比例(分数 0-1)' }
+        dueCents: { $ref: '#/components/schemas/Money', description: '应结佣金' }
+        unsettledCents: { $ref: '#/components/schemas/Money', description: '未结佣金' }
+        unsettledLineCount: { type: integer, description: '未结明细条数' }
     CoPayDoc:
       type: object
       properties:
@@ -2263,6 +2456,8 @@ components:
         amountCents: { $ref: '#/components/schemas/Money' }
         status: { $ref: '#/components/schemas/CoPayDocStatusEnum' }
         createdAt: { type: string, format: date-time }
+        documentUrl: { type: [string, 'null'], description: '佣金单下载 URL(文件通道 TBD·占位·对齐 PaymentRequest.documentUrl N-01)' }
+        sealed: { type: boolean, description: '电子签章状态(方案 TBD，false=未签章·对齐 PaymentRequest.sealed)' }
         lines:
           type: array
           description: '明细快照：催收员→批次→案件回款穿透明细(BR-M9-19 US-M9-10)'
@@ -2343,6 +2538,14 @@ components:
     # ---------- 存证 M6 ----------
     EvidenceInput: { type: object, required: [scene], properties: { scene: { $ref: '#/components/schemas/EvidenceSceneEnum' }, refIds: { type: array, items: { type: string }, description: '关联录音/工单/材料 id' }, note: { type: string } } }
     EvidenceItem: { type: object, properties: { id: { type: string }, caseId: { type: string }, scene: { $ref: '#/components/schemas/EvidenceSceneEnum' }, status: { $ref: '#/components/schemas/EvidenceStatusEnum' }, certNo: { type: [string, 'null'] }, certUrl: { type: [string, 'null'] }, issuedAt: { type: [string, 'null'], format: date-time } } }
+    EvidencePackage:
+      type: object
+      description: '案件存证打包下载(已出证存证聚合·占位)'
+      properties:
+        caseId: { type: string }
+        documentUrl: { type: [string, 'null'], description: '打包文件下载 url(文件通道 TBD·占位)' }
+        itemCount: { type: integer, description: '打包内已出证存证条数' }
+        items: { type: array, items: { $ref: '#/components/schemas/EvidenceItem' } }
     EvidencePage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/EvidenceItem' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }
     EvidenceVerify: { type: object, properties: { valid: { type: boolean }, certNo: { type: string }, scene: { $ref: '#/components/schemas/EvidenceSceneEnum' }, issuedAt: { type: string, format: date-time }, hash: { type: string } } }
 
