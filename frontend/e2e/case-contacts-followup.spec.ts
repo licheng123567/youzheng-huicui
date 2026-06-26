@@ -11,7 +11,8 @@ test.describe('US-M4 联系人与跟进(CO)', () => {
     await expect(page).toHaveURL(/\/cases/)
     const rows = page.locator('.el-table__row')
     await expect(rows.first()).toBeVisible()
-    await rows.first().click()
+    // 锚定有联系人/可写跟进的私海案 M3-S3-01（避免 M5-QB-01 顶到首行）
+    await rows.filter({ hasText: 'M3-S3-01' }).first().click()
     await expect(page).toHaveURL(/\/cases\/\d+/)
     // 默认在「概览 / 联系人」tab
     await page.getByRole('tab', { name: /概览 \/ 联系人/ }).click()
@@ -30,7 +31,8 @@ test.describe('US-M4 联系人与跟进(CO)', () => {
   })
 
   test('新增联系人对话框可勾主号', async ({ page }) => {
-    const addBtn = page.getByRole('button', { name: /新增联系人|添加联系人|\+ ?联系人/ })
+    // 联系方式分区的新增入口按钮文案为「+ 新增」(CaseDetailView)，gated by case.follow
+    const addBtn = page.getByRole('button', { name: '+ 新增' })
     if (!(await addBtn.count())) {
       test.skip(true, '无新增联系人入口(权限/视图)')
     }

@@ -11,9 +11,13 @@ test.describe('US-M4 通话结果标记(CO)', () => {
     await expect(page).toHaveURL(/\/cases/)
     const rows = page.locator('.el-table__row')
     await expect(rows.first()).toBeVisible()
-    await rows.first().click()
+    // 锚定有 READY 录音的私海案 M3-S3-01（M5-QB-01 的 QUOTA_BLOCKED 录音会顶到首行）
+    await rows.filter({ hasText: 'M3-S3-01' }).first().click()
     await expect(page).toHaveURL(/\/cases\/\d+/)
     await page.getByRole('tab', { name: /通话 \/ AI 复盘/ }).click()
+    // 录音面板按需加载：先点「获取最新通话录音」拉取 latest，标记入口才渲染（getLatest 非 onMounted）
+    await page.getByRole('button', { name: '获取最新通话录音' }).click()
+    await expect(page.getByRole('button', { name: '标记结果' })).toBeVisible()
   })
 
   test('打开标记弹窗→结果码下拉非空(来自服务端 markCodes)', async ({ page }) => {

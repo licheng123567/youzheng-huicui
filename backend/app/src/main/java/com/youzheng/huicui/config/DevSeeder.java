@@ -255,6 +255,57 @@ public class DevSeeder implements CommandLineRunner {
         if (caseS3Id != null) {
             seedM4Collection(caseS3Id, projId, b2, coHolder, providerOrg);
         }
+
+        // M5 余额不足补解析（BR-M5-02）：另起 3 件 co1 私海案 M5-QB-0{1,2,3}，其最新录音均为 QUOTA_BLOCKED，
+        // 供「补解析/批量补解析」按钮渲染（与 M3-S3-01 的 READY 录音物理隔离，避免污染 AI 复盘/标记用例）。
+        // parse 桩实现会把 QUOTA_BLOCKED→PARSING（不可逆），e2e 三用例各自触发一次补解析故需各占一件，互不串味。
+        for (int i = 1; i <= 3; i++) {
+            String acct = "M5-QB-0" + i;
+            ensureSeaCase(b2, projId, "翠湖一期", acct, "郑余额" + i, "QB-10" + i, 250000L,
+                    "IN_PROGRESS", "PRIVATE", coHolder, "CLAIM", "PROVIDER_SEA", false, true /*tc*/);
+            Long caseQbId = jdbc.query(
+                    "SELECT id FROM \"case\" WHERE batch_id = ? AND acct_no = ?",
+                    rs -> rs.next() ? rs.getLong(1) : null, b2, acct);
+            if (caseQbId != null) {
+                seedQuotaBlockedRecording(caseQbId, coHolder);
+            }
+        }
+
+        // M8 结案脱敏（BR-M8-09）：一件 co1 持有、已撤案(WITHDRAWN)的私海案 M8-RD-01。
+        // 对非平台/非物业主体（VL/CO）→ redacted=true（业主名/电话脱敏、逐行明细收敛为统计卡）；
+        // 平台(SA)同案仍见完整明细。挂 1 条联系人供脱敏前/后对照。provider_id 由收尾回填(pool=PRIVATE)。
+        ensureSeaCase(b2, projId, "翠湖一期", "M8-RD-01", "韩结案", "RD-101", 200000L,
+                "WITHDRAWN", "PRIVATE", coHolder, "CLAIM", "PROVIDER_SEA", false, false);
+        Long caseRdId = jdbc.query(
+                "SELECT id FROM \"case\" WHERE batch_id = ? AND acct_no = 'M8-RD-01'",
+                rs -> rs.next() ? rs.getLong(1) : null, b2);
+        if (caseRdId != null) {
+            Integer rdContact = jdbc.queryForObject(
+                    "SELECT count(*) FROM contact WHERE case_id = ?", Integer.class, caseRdId);
+            if (rdContact == null || rdContact == 0) {
+                jdbc.update(
+                        "INSERT INTO contact(case_id, phone, label, is_primary, invalid) "
+                                + "VALUES (?, '13900000077', '本人', TRUE, FALSE)",
+                        caseRdId);
+            }
+        }
+    }
+
+    // ── M5 余额不足补解析录音种子（QUOTA_BLOCKED，供「补解析」按钮渲染）──────────────
+    //
+    // 给 co1 私海案 M5-QB-01 挂一条 QUOTA_BLOCKED 录音（无转写、无 AI 复盘——余额不足暂停态）。
+    // latest 取 ORDER BY created_at DESC,id DESC → 本案唯一录音即 latest，按钮 v-if 命中。
+    // 幂等：(case_id, source=APP_AUTO) 已存在则跳过。
+    private void seedQuotaBlockedRecording(Long caseId, Long coHolder) {
+        Long recId = jdbc.query(
+                "SELECT id FROM call_recording WHERE case_id = ? AND source = 'APP_AUTO'",
+                rs -> rs.next() ? rs.getLong(1) : null, caseId);
+        if (recId != null) return;
+        jdbc.update(
+                "INSERT INTO call_recording(case_id, collector_id, source, status, recorded_at, "
+                        + "duration_sec, phone) "
+                        + "VALUES (?, ?, 'APP_AUTO', 'QUOTA_BLOCKED', now() - interval '2 hours', 95, '13900000088')",
+                caseId, coHolder);
     }
 
     // ── M4 外围实体种子（私海案件 M3-S3-01 各挂 1 条，供 M4 GET 端点返 200）──────

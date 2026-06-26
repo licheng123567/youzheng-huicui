@@ -48,10 +48,9 @@ test.describe('BR-M6 按次存证·场景 refIds 校验(PC)', () => {
   })
 
   test('RECORDING 选中 READY 录音→提交成功', async ({ page }) => {
-    // 仅 S3 私海案件 (M3-S3-01) 种了 READY 录音；但该案归属 CO 私海，PC 在其 IN_PROGRESS 详情的
-    // availableActions 仅含 follow(后端 computeAvailableActions 不下发 evidence 动作)，故「发起存证」按钮不渲染。
-    // 当前种子下无「既具 evidence 动作入口 又 有 READY 录音」的案件 → 守卫跳过，不留红。
-    // 建议补种子：给一个 PL/PC 持有(物业自营)且 IN_PROGRESS 的案件挂 READY 录音，并令 availableActions 含 evidence。
+    // S3 私海案件 (M3-S3-01) 种了 READY 录音；computeAvailableActions 修复后 PC 在其 IN_PROGRESS 详情的
+    // availableActions 含 evidence→「发起存证」按钮渲染，本用例真正提交录音存证(dedup-safe，见末尾断言)。
+    // 守卫保留作防御：若实现回退致按钮不渲染则优雅 skip，不留红。
     await loginRole(page, 'PC')
     await page.getByRole('menuitem', { name: '案件' }).click()
     await expect(page).toHaveURL(/\/cases/)
@@ -64,7 +63,7 @@ test.describe('BR-M6 按次存证·场景 refIds 校验(PC)', () => {
     const btn = page.getByRole('button', { name: '发起存证' })
     test.skip(
       (await btn.count()) === 0,
-      'M3-S3-01(唯一有 READY 录音的案件)为 CO 私海案，PC 的 availableActions 不含 evidence→无「发起存证」入口，无法验证录音存证提交',
+      '(防御)PC 在 M3-S3-01 的 availableActions 不含 evidence→无「发起存证」入口；正常种子下不应命中',
     )
     await btn.click()
     const dlg = page.locator('.el-dialog').filter({ hasText: /存证|场景/ })
@@ -76,8 +75,13 @@ test.describe('BR-M6 按次存证·场景 refIds 校验(PC)', () => {
     // 点弹窗内「备注」输入框收起多选下拉(勿用 Esc，会连带关闭对话框)，避免遮挡提交
     await dlg.getByText('备注').click()
     await dlg.getByRole('button', { name: /确定|提交|发起/ }).click()
-    // 成功为 ElMessage「发起存证成功」并关闭弹窗(无 ISSUING 文案)
-    await expect(page.getByText(/发起存证成功/).first()).toBeVisible()
+    // 成功为 ElMessage「发起存证成功」并关闭弹窗(无 ISSUING 文案)。
+    // 实现对同案+同场景+同 refIds 幂等去重(409「同案同场景同关联的存证已发起」)：本案种子已有
+    // RECORDING 存证(ref_ids=[录音1])，选同一录音重提将命中去重。故断言「成功」或「去重提示」其一，
+    // 与同文件 MATERIAL_PACK 用例一致，使用例可重复执行(dedup-safe)。
+    await expect(
+      page.getByText(/发起存证成功|同案同场景同关联的存证已发起/).first(),
+    ).toBeVisible()
   })
 
   test('DELIVERY 未选 SIGNED 文书→提交被挡并提示', async ({ page }) => {

@@ -5,13 +5,14 @@ import { loginRole } from './helpers'
 // VL/CO 打开已结案(redacted)案件→联系人电话脱敏占位、明细被统计卡替代；
 // 平台同案仍见完整明细。
 test.describe('US-M8 结案脱敏(VL/CO 收敛 / 平台全见)', () => {
-  // 在案件列表里找一条已结案/脱敏案件并打开
-  async function openSomeCase(page: any) {
+  // 打开案件列表里指定户号的案件（缺省取首行）。
+  // M8-RD-01 = co1 持有的 WITHDRAWN 私海案（对 VL/CO 触发 BR-M8-09 脱敏；SA 见全量明细）。
+  async function openSomeCase(page: any, acctNo = 'M8-RD-01') {
     await page.getByRole('menuitem', { name: '案件' }).click()
     await expect(page).toHaveURL(/\/cases/)
     const rows = page.locator('.el-table__row')
     await expect(rows.first()).toBeVisible()
-    await rows.first().click()
+    await rows.filter({ hasText: acctNo }).first().click()
     await expect(page).toHaveURL(/\/cases\/\d+/)
   }
 
