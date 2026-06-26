@@ -6,3 +6,8 @@ dist/
 src/**/*.js
 src/**/*.vue.js
 *.tsbuildinfo
+
+# Playwright
+test-results/
+playwright-report/
+.playwright/
