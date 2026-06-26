@@ -13,6 +13,10 @@ const acting = ref('')
 const pool = ref<'platform' | 'provider' | 'open'>('provider') // /sea 必填池筛选
 const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
 const poolName = (p: string) => ({ PLATFORM_SEA: '平台公海', PROVIDER_SEA: '服务商公海', OPEN_POOL: '开放抢单池', PRIVATE: '私海' } as any)[p] ?? p
+// T2 倒计时（基于 t2DeadlineAt）：剩余天/时；<24h 标红(BR-M3-13a 预警提前量)
+function t2Hours(at: string) { return (new Date(at).getTime() - Date.now()) / 3_600_000 }
+function t2Countdown(at: string) { const h = t2Hours(at); if (h <= 0) return '已到期'; return h >= 24 ? `${Math.floor(h / 24)}天` : `${Math.ceil(h)}小时` }
+function t2Urgent(at: string) { const h = t2Hours(at); return h > 0 && h < 24 }
 
 async function load() {
   loading.value = true
@@ -80,13 +84,17 @@ onMounted(() => { load(); loadEvents() })
       <el-table-column prop="projectName" label="项目" />
       <el-table-column label="应收" width="100"><template #default="{ row }">{{ yuan(row.dueCents) }}</template></el-table-column>
       <el-table-column label="来源池" width="120"><template #default="{ row }"><el-tag size="small">{{ poolName(row.sourceBadge ?? row.pool) }}</el-tag></template></el-table-column>
-      <el-table-column label="竞争态" width="130">
+      <el-table-column label="竞争态" width="110">
         <template #default="{ row }">
           <el-tag size="small" :type="row.competitionState==='CLAIMED'?'info':row.competitionState==='VIEWING'?'warning':'success'">
             {{ row.competitionState==='CLAIMED'?'已抢':row.competitionState==='VIEWING'?`查看中 ${row.viewerCount??0} 人`:'待抢' }}
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="距退回(T2)" width="120"><template #default="{ row }">
+        <el-tag v-if="row.t2DeadlineAt" size="small" :type="t2Urgent(row.t2DeadlineAt)?'danger':'info'">{{ t2Countdown(row.t2DeadlineAt) }}</el-tag>
+        <span v-else>—</span>
+      </template></el-table-column>
       <el-table-column label="操作" width="220">
         <template #default="{ row }">
           <!-- CO：抢单（本商公海/开放池可抢） -->

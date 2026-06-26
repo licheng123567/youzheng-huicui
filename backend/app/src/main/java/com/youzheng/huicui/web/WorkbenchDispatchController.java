@@ -83,13 +83,46 @@ public class WorkbenchDispatchController {
                             String.valueOf(rs.getLong("case_id")), "待处理工单：" + rs.getString("type"),
                             null, "ticket", String.valueOf(rs.getLong("id"))), org));
             }
+        } else if ("VL".equals(role)) {
+            Long org = parseLong(s.orgId());
+            if (org != null) {
+                // T2_RETURN_WARN：本商服务商公海案件临近退回平台公海（BR-M3-13a，向 VL 预警）
+                long warn = timerSeconds("t2WarnSeconds", 86400);
+                todos.addAll(jdbc.query(
+                    "SELECT c.id, c.owner_name, c.t2_deadline FROM \"case\" c JOIN batch b ON b.id = c.batch_id"
+                        + " WHERE b.provider_id = ? AND c.pool = 'PROVIDER_SEA' AND c.status = 'PROVIDER_SEA'"
+                        + " AND c.t2_deadline IS NOT NULL AND c.t2_deadline > now() AND c.t2_deadline < now() + (? || ' seconds')::interval"
+                        + " ORDER BY c.t2_deadline", (rs, i) -> new Todo("T2_RETURN_WARN", "HIGH",
+                            String.valueOf(rs.getLong("id")), "即将退回平台公海：" + rs.getString("owner_name"),
+                            String.valueOf(rs.getObject("t2_deadline")), "case", String.valueOf(rs.getLong("id"))), org, warn));
+            }
+        } else if (s.isPlatform()) {
+            // T1_DISPATCH_WARN：待派单(平台公海未派)超 CFG-T1 仍未派（BR-M3-01，向平台预警）
+            long t1 = timerSeconds("t1Seconds", 172800);
+            todos.addAll(jdbc.query(
+                "SELECT c.id, c.owner_name, b.created_at FROM \"case\" c JOIN batch b ON b.id = c.batch_id"
+                    + " WHERE c.pool = 'PLATFORM_SEA' AND c.status = 'PENDING_DISPATCH' AND b.provider_id IS NULL"
+                    + " AND b.created_at < now() - (? || ' seconds')::interval ORDER BY b.created_at LIMIT 50",
+                (rs, i) -> new Todo("T1_DISPATCH_WARN", "MED", String.valueOf(rs.getLong("id")),
+                    "待派单超时：" + rs.getString("owner_name"), null, "case", String.valueOf(rs.getLong("id"))), t1));
         }
         // KPI：按 category 汇总（可点即筛）
         kpis.add(new Kpi("待办合计", todos.size(), null));
         addCountKpi(kpis, todos, "PROMISE_DUE", "承诺到期");
         addCountKpi(kpis, todos, "RELEASE_WARN", "临近释放");
         addCountKpi(kpis, todos, "TICKET_RECEIPT", "工单回执");
+        addCountKpi(kpis, todos, "T2_RETURN_WARN", "临近退回");
+        addCountKpi(kpis, todos, "T1_DISPATCH_WARN", "待派超时");
         return new WorkbenchData(role, cockpit ? "cockpit" : "dashboard", kpis, todos);
+    }
+
+    /** settings TIMERS.<key> 秒值，缺省 dflt（不致 5xx）。 */
+    private long timerSeconds(String key, long dflt) {
+        try {
+            Long v = jdbc.query("SELECT timers ->> ? AS v FROM settings WHERE domain = 'TIMERS' ORDER BY version DESC LIMIT 1",
+                rs -> { if (!rs.next()) return null; String r = rs.getString("v"); try { return r == null ? null : Long.valueOf(r.trim()); } catch (NumberFormatException e) { return null; } }, key);
+            return v == null ? dflt : v;
+        } catch (RuntimeException e) { return dflt; }
     }
 
     private void addCountKpi(List<Kpi> kpis, List<Todo> todos, String cat, String label) {

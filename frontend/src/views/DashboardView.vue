@@ -15,6 +15,7 @@ const CAT_LABEL: Record<string, string> = {
   PROMISE_DUE: '承诺到期', RELEASE_WARN: '临近释放', TICKET_RECEIPT: '工单回执',
   NEW_ASSIGNED: '新分配', LEGAL_DELIVERY: '法务待送达', REPAY_MARK: '回款待标',
   PAYLINK_SEND: '链接待发', REDUCE_APPROVE: '减免待批',
+  T2_RETURN_WARN: '即将退回平台', T1_DISPATCH_WARN: '待派单超时',
 }
 const urgType = (u: string) => (u === 'HIGH' ? 'danger' : u === 'MED' ? 'warning' : 'info')
 const todos = computed<any[]>(() => {

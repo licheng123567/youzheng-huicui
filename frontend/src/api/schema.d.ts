@@ -3190,10 +3190,10 @@ export interface components {
             refId?: string | null;
         };
         /**
-         * @description CO:PROMISE_DUE/RELEASE_WARN/TICKET_RECEIPT/NEW_ASSIGNED；PC:LEGAL_DELIVERY/TICKET_RECEIPT/REPAY_MARK/PAYLINK_SEND/REDUCE_APPROVE(BR-M4-20a/24)
+         * @description CO:PROMISE_DUE/RELEASE_WARN/TICKET_RECEIPT/NEW_ASSIGNED；PC:LEGAL_DELIVERY/TICKET_RECEIPT/REPAY_MARK/PAYLINK_SEND/REDUCE_APPROVE；VL:T2_RETURN_WARN(临近退回 BR-M3-13a)；平台:T1_DISPATCH_WARN(待派单超时 BR-M3-01)
          * @enum {string}
          */
-        TodoCategoryEnum: "PROMISE_DUE" | "RELEASE_WARN" | "TICKET_RECEIPT" | "NEW_ASSIGNED" | "LEGAL_DELIVERY" | "REPAY_MARK" | "PAYLINK_SEND" | "REDUCE_APPROVE";
+        TodoCategoryEnum: "PROMISE_DUE" | "RELEASE_WARN" | "TICKET_RECEIPT" | "NEW_ASSIGNED" | "LEGAL_DELIVERY" | "REPAY_MARK" | "PAYLINK_SEND" | "REDUCE_APPROVE" | "T2_RETURN_WARN" | "T1_DISPATCH_WARN";
         /** @description 案件搜索命中(BR-M4-22)。未持有公海案件 ownerName 脱敏(BR-M3-21a) */
         SearchCaseHit: {
             caseId: string;
