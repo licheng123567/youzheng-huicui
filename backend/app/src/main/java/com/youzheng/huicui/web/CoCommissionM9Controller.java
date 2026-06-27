@@ -744,16 +744,24 @@ public class CoCommissionM9Controller {
             throw new ApiException(BizError.VALIDATION_422, "缺少 lineIds 或为空");
         }
         List<Long> out = new ArrayList<>();
+        // MED·显式拒重复 lineId（解析阶段 HashSet 检重 → 422），与 PaymentRequest.parseLineIds 同口径，
+        //   不再靠 co_pay_doc_line DB 主键 409 回滚兜底（重复会令 amount/count 重复计费再触 PK 冲突）。
+        java.util.Set<Long> seen = new java.util.HashSet<>();
         for (Object o : list) {
             if (o == null || String.valueOf(o).isBlank()) {
                 throw new ApiException(BizError.VALIDATION_422, "lineIds 含空项");
             }
+            long id;
             try {
-                if (o instanceof Number n) out.add(n.longValue());
-                else out.add(Long.parseLong(String.valueOf(o).trim()));
+                if (o instanceof Number n) id = n.longValue();
+                else id = Long.parseLong(String.valueOf(o).trim());
             } catch (RuntimeException e) {
                 throw new ApiException(BizError.VALIDATION_422, "lineIds 含非法项: " + o);
             }
+            if (!seen.add(id)) {
+                throw new ApiException(BizError.VALIDATION_422, "lineIds 含重复 id: " + id);
+            }
+            out.add(id);
         }
         return out;
     }
