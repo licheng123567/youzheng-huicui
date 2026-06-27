@@ -107,7 +107,14 @@ public class PaymentRequestM9Controller {
         BigDecimal commRate = resolveCommRate(side, batch);              // 缺率→422
 
         // 事务内逐笔 FOR UPDATE 行锁校验未结（BR-M9-12a 手动组单）。
-        List<LineRow> lines = lockAndValidateLines(lineIds, batchId);    // 不存在→404/已占→409/越权(批次不符)→403
+        // BLOCKER-2·OUT 付佣按到账归属快照：OUT 线要求所选 line 全部属本商快照(provider_id_at_repay==orgId)，
+        //   与已修的 Recon OUT 汇总口径一致（不按 batch.provider_id——单案再派后到账归属不漂移）。IN 线不受此约束。
+        Long providerSnapshot = SIDE_OUT.equals(side) ? orgIdLong(s) : null;
+        List<LineRow> lines = lockAndValidateLines(lineIds, batchId, providerSnapshot); // 不存在→404/已占→409/越权(批次/快照不符)→403
+
+        // HIGH-2·SE 写端范围复核：受限 SE 不得创建范围外单（锁定 selected lines 后做 count-equality，
+        //   所选 lines 须全部落 SE data_range 内，否则 403）。SA 放行；非 SE 平台/物业/服务商既有口径不动。
+        assertSeLinesInRangeByLineIds(s, lineIds);
 
         // 佣金算法（BR-M9-01b/02·逐笔×比率·分数，HALF_UP）。base=Σamount；comm=Σ round(amount×rate)。
         long baseCents = 0L;
@@ -198,7 +205,7 @@ public class PaymentRequestM9Controller {
         long prId = parsePrId(id);
         PrCore core = loadCore(prId);                      // 不存在→404
         assertSideVisible(s, core.side);                   // 跨线主体→403
-        if (!visibleByScope(s, core.side, core.batchId)) { // 组织级越 scope→403
+        if (!visibleByScope(s, core.side, prId)) {         // 单据级越 scope→403（按 pr.id 精确复核）
             throw new ApiException(BizError.PERM_403, "无权查看该支付申请单");
         }
         return loadDto(prId);
@@ -214,7 +221,8 @@ public class PaymentRequestM9Controller {
         long prId = parsePrId(id);
         PrRow pr = lockPr(prId);                            // 不存在→404
         BatchRow batch = loadBatch(pr.batchId);
-        assertGeneratorSide(s, pr.side, batch);             // 错线→403 BIZ_WRONG_SETTLE_SIDE
+        assertOperatorSide(s, pr, batch);                   // 错线→403；OUT 按到账归属快照复核归属
+        assertSeLinesInRange(s, pr.id);                     // HIGH-2·SE 越范围不得发送（PR 绑定 lines count-equality）→403
         if (!ST_PENDING.equals(pr.status)) {
             throw new ApiException(BizError.STATE_409, "仅待付(PENDING)单可发送，当前状态: " + pr.status);
         }
@@ -238,7 +246,8 @@ public class PaymentRequestM9Controller {
 
         PrRow pr = lockPr(prId);                               // 不存在→404
         BatchRow batch = loadBatch(pr.batchId);
-        assertGeneratorSide(s, pr.side, batch);                // 错线→403（revoker==generator）
+        assertOperatorSide(s, pr, batch);                      // 错线→403；OUT 按到账归属快照复核归属
+        assertSeLinesInRange(s, pr.id);                        // HIGH-2·SE 越范围不得撤销/释放 line（count-equality）→403
 
         if (ST_PAID.equals(pr.status)) {
             throw new ApiException(BizError.STATE_409, "已支付单不可撤销(BIZ_PR_PAID)，须走冲正流程");
@@ -289,6 +298,9 @@ public class PaymentRequestM9Controller {
         VoucherInput v = parseVoucher(body);
 
         PrRow pr = lockPr(prId);                               // 不存在→404
+        // BLOCKER-3·complete 是资金落地，SE 不得越权完成任意单：锁 PR 后 SA 放行，
+        //   SE 按 data_range 对该单精确复核（该 pr 绑定 lines 的 provider/property 须落 SE 范围内），越范围→403。
+        assertCompleteScope(s, pr);
         if (ST_PAID.equals(pr.status)) {
             throw new ApiException(BizError.STATE_409, "单已完成(BIZ_PR_PAID)，不可重复完成");
         }
@@ -305,6 +317,9 @@ public class PaymentRequestM9Controller {
             throw new ApiException(BizError.VALIDATION_422,
                     "version 不匹配（乐观锁），当前 version=" + pr.version);
         }
+        // BLOCKER-1·冲正时序（complete 侧防护）：锁定该单绑定 lines 并校验全部 reversed=false。
+        //   若有已冲正 line（绕过 reverse 侧防护或时序竞态注入）→ 409，不可把含已冲正明细的单结算为 PAID。
+        assertNoReversedLines(pr.id);
 
         Long actorId = actorId(s);
         int rows = jdbc.update(
@@ -341,18 +356,45 @@ public class PaymentRequestM9Controller {
         return id;
     }
 
-    /** 生成方线别校验（create/send/revoke 共用）：IN 须平台；OUT 须本商(provider_id==orgId)。错线→403。 */
+    /**
+     * 生成方线别校验（create 用；send/revoke 走 assertOperatorSide）。
+     * IN 须平台。OUT（BLOCKER-2）：只校验主体 orgType=PROVIDER——归属完全交给逐 line 的
+     *   provider_id_at_repay 快照校验（lockAndValidateLines 已做），不再用 batch.provider_id 预门，
+     *   否则单案再派后 provider_id_at_repay 属新服务商但 batch.provider_id 仍旧 → 新服务商建不了单。
+     */
     private void assertGeneratorSide(CurrentSubject s, String side, BatchRow batch) {
         if (SIDE_IN.equals(side)) {
             if (!s.isPlatform()) {
                 throw new ApiException(BizError.BIZ_WRONG_SETTLE_SIDE, "收佣线(IN)仅平台可生成/操作");
             }
         } else { // OUT
-            if (!"PROVIDER".equals(s.orgType())
-                    || batch.providerId == null
-                    || !batch.providerId.equals(orgIdLong(s))) {
+            if (!"PROVIDER".equals(s.orgType()) || orgIdLong(s) == null) {
                 throw new ApiException(BizError.BIZ_WRONG_SETTLE_SIDE, "付佣线(OUT)仅承接服务商可生成/操作");
             }
+        }
+    }
+
+    /**
+     * 既有单的写操作方校验（send/revoke）。IN：仅平台（同 generatorSide）。
+     * OUT（BLOCKER-2·到账归属快照）：须 PROVIDER 且该单含本商快照(provider_id_at_repay==orgId)绑定明细，
+     *   不再按 batch.provider_id——单案再派后到账归属不漂移。错线/越权→403。
+     */
+    private void assertOperatorSide(CurrentSubject s, PrRow pr, BatchRow batch) {
+        if (SIDE_IN.equals(pr.side)) {
+            assertGeneratorSide(s, pr.side, batch);
+            return;
+        }
+        // OUT
+        Long orgId = orgIdLong(s);
+        if (!"PROVIDER".equals(s.orgType()) || orgId == null) {
+            throw new ApiException(BizError.BIZ_WRONG_SETTLE_SIDE, "付佣线(OUT)仅承接服务商可操作");
+        }
+        Long n = jdbc.queryForObject(
+                "SELECT count(*) FROM repay_line rl"
+                        + " WHERE rl.payment_request_id = ? AND rl.provider_id_at_repay = ?",
+                Long.class, pr.id, orgId);
+        if (n == null || n == 0) {
+            throw new ApiException(BizError.PERM_403, "付佣单到账归属非本服务商，无权操作");
         }
     }
 
@@ -374,24 +416,88 @@ public class PaymentRequestM9Controller {
 
     /** 读端点组织级 scope（在 assertSideVisible 之后，复核单据归属本组织）。 */
     private void appendOrgScope(CurrentSubject s, String side, StringBuilder where, List<Object> args) {
-        if (s.isPlatform()) return;                            // 平台全量
+        if (s.isPlatform()) {
+            // SA 全量；SE 按 data_range 三维裁剪（B-01）。
+            // HIGH-1·count-equality（整单在范围内）：旧实现对 providers 维用 EXISTS-any——只要任一绑定 line
+            //   的 provider 快照 ∈ SE.providers 即放整单，混合 provider 的 IN 单会向只授权 provider A 的 SE
+            //   泄露 provider B 明细。改：要求该单**全部**绑定 lines 均落 SE data_range 内，用
+            //   「NOT EXISTS(该单存在落 SE 范围外的绑定 line)」表达——provider 维 rl.provider_id_at_repay、
+            //   物业 p.org_id、区域 p.area；列表/详情同口径。
+            appendSeFullScope(s, where, args);
+            return;
+        }
         // 催收员(CO)不见组织级支付申请单(US-M9-09 本人佣金只读,走 /me/settlement)→裁剪为空。
         if ("CO".equals(s.role())) { where.append(" AND 1 = 0"); return; }
         if (SIDE_IN.equals(side)) {                            // 物业：按 batch→project.org_id
             where.append(" AND p.org_id = ?");
             args.add(orgIdLong(s));
-        } else {                                               // 服务商：按 batch.provider_id
-            where.append(" AND b.provider_id = ?");
+        } else {                                               // 服务商：OUT 付佣按到账归属快照
+            // BLOCKER-2·OUT 可见性按快照：单据须含至少一条本商快照(provider_id_at_repay==orgId)绑定明细，
+            //   与 Recon OUT 汇总 / create OUT 组单口径一致（不按 batch.provider_id——再派后归属不漂移）。
+            where.append(" AND EXISTS (SELECT 1 FROM repay_line rl"
+                    + " WHERE rl.payment_request_id = pr.id AND rl.provider_id_at_repay = ?)");
             args.add(orgIdLong(s));
         }
     }
 
-    /** 详情可见性：组织级裁剪命中即可见。 */
-    private boolean visibleByScope(CurrentSubject s, String side, long batchId) {
-        if (s.isPlatform()) return true;
-        StringBuilder where = new StringBuilder(" WHERE pr.id IS NOT NULL AND pr.batch_id = ?");
+    /**
+     * HIGH-1·SE 读端整单范围裁剪（count-equality·全部绑定 lines 在范围内）。
+     *   表达为「NOT EXISTS(该单存在一条落 SE data_range 范围外的绑定 repay_line)」——任一绑定 line 越任一
+     *   已配维度 ⇒ 整单不可见。provider 维 rl.provider_id_at_repay、物业维 p.org_id、区域维 p.area；
+     *   未配的维度不参与「越范围」判定。UNRESTRICTED → 不裁剪；RESTRICTED_EMPTY → fail-closed 1=0。
+     *   列表(appendOrgScope)与详情(visibleByScope)均经此口径，整单粒度一致。
+     */
+    private void appendSeFullScope(CurrentSubject s, StringBuilder where, List<Object> args) {
+        if (!s.isSE()) return;
+        com.youzheng.huicui.security.DataRange r = s.dataRange();
+        if (r == null || r.isUnrestricted()) return;           // SE 未收窄=全平台
+        if (r.isRestrictedEmpty()) { where.append(" AND 1=0"); return; }  // fail-closed
+        // 任一维度均未配（仅可能 hasAreas/hasProperties/hasProviders 三皆空，已被 isUnrestricted 排除）→ 防御性返回。
+        boolean anyDim = r.hasProviders() || r.hasProperties() || r.hasAreas();
+        if (!anyDim) return;
+
+        // 构造「绑定 line 越范围」的析取：对每个已配维度，line 的对应值 NOT IN 该维集合 即越范围。
+        StringBuilder oor = new StringBuilder();                // out-of-range predicate
+        List<Object> oorArgs = new ArrayList<>();
+        if (r.hasProviders()) {
+            // provider_id_at_repay 为 NULL 视为不属任一授权 provider → 越范围（IS NULL OR NOT IN）。
+            oor.append("(rl2.provider_id_at_repay IS NULL OR rl2.provider_id_at_repay NOT IN (")
+               .append(inPlaceholders(r.providers().size())).append("))");
+            oorArgs.addAll(r.providers());
+        }
+        if (r.hasProperties()) {
+            if (oor.length() > 0) oor.append(" OR ");
+            oor.append("p2.org_id NOT IN (").append(inPlaceholders(r.properties().size())).append(')');
+            oorArgs.addAll(r.properties());
+        }
+        if (r.hasAreas()) {
+            if (oor.length() > 0) oor.append(" OR ");
+            oor.append("(p2.area IS NULL OR p2.area NOT IN (")
+               .append(inPlaceholders(r.areas().size())).append("))");
+            oorArgs.addAll(r.areas());
+        }
+        // (a) 整单全部绑定 line 在范围内：不存在任何越范围绑定 line。
+        // (b) 防 0-line 单 fail-open（如 VOIDED 已解绑明细）：要求至少存在一条绑定 line 命中范围
+        //     （NOT EXISTS 对空集恒真，故须叠加 EXISTS 兜底，restricted SE 看不到与本范围无明细关联的单）。
+        where.append(" AND NOT EXISTS (SELECT 1 FROM repay_line rl2"
+                + " JOIN batch b2 ON b2.id = rl2.batch_id"
+                + " JOIN project p2 ON p2.id = b2.project_id"
+                + " WHERE rl2.payment_request_id = pr.id AND (").append(oor).append("))"
+                + " AND EXISTS (SELECT 1 FROM repay_line rl3 WHERE rl3.payment_request_id = pr.id)");
+        args.addAll(oorArgs);
+    }
+
+    /**
+     * 详情可见性（BLOCKER-1·按 pr.id 精确复核当前单据归属，不用 batchId 代替单据 id）：
+     *   旧实现按 pr.batch_id 数同批单，OUT 同批多服务商时一个服务商只要同批有自己的单就能读别人的 PR 详情。
+     *   改：固定 pr.id = ?，OUT 须该 pr 绑定 lines 的 provider_id_at_repay 含本商（appendOrgScope 的 EXISTS
+     *   子查询已锚定 rl.payment_request_id = pr.id）。SA 全量直通；SE 仍须过 data_range 裁剪（B-01）。
+     */
+    private boolean visibleByScope(CurrentSubject s, String side, long prId) {
+        if (s.isPlatform() && !s.isSE()) return true;          // SA 全量；SE 落入下方 data_range 裁剪
+        StringBuilder where = new StringBuilder(" WHERE pr.id = ?");
         List<Object> args = new ArrayList<>();
-        args.add(batchId);
+        args.add(prId);
         appendOrgScope(s, side, where, args);
         Long n = jdbc.queryForObject(
                 "SELECT count(*) FROM payment_request pr"
@@ -399,6 +505,110 @@ public class PaymentRequestM9Controller {
                         + " JOIN project p ON p.id = b.project_id" + where,
                 Long.class, args.toArray());
         return n != null && n > 0;
+    }
+
+    /**
+     * BLOCKER-1·complete 前锁定并校验绑定 lines 全部未冲正。FOR UPDATE 锁住绑定行（与 reverse 侧
+     *   lockRepayLine 互斥），存在任一 reversed=true → 409（不可完成含已冲正明细的单）。
+     */
+    private void assertNoReversedLines(long prId) {
+        // 先 FOR UPDATE 锁住绑定 lines（与 reverse 侧 lockRepayLine 互斥；PG 不允许 FOR UPDATE 用于聚合/子查询，
+        //   故先取被锁行的 reversed 标志，再在内存判定）。
+        List<Boolean> reversedFlags = jdbc.query(
+                "SELECT rl.reversed FROM repay_line rl WHERE rl.payment_request_id = ? FOR UPDATE OF rl",
+                (rs, i) -> rs.getBoolean("reversed"),
+                prId);
+        for (Boolean reversed : reversedFlags) {
+            if (Boolean.TRUE.equals(reversed)) {
+                throw new ApiException(BizError.STATE_409,
+                        "支付申请单含已冲正明细，不可完成（须先撤销该单并重新组单）");
+            }
+        }
+    }
+
+    /**
+     * complete 资金落地的范围复核（BLOCKER-3）：仅平台可完成（外层已挡非平台）。
+     *   SA → 放行；SE → 该 pr 绑定 lines 的 provider/property/area 须全部落 SE data_range 内，
+     *   任一条越范围 → 403。复核口径：以 SE data_range 裁剪绑定 lines 的命中数须等于总绑定数。
+     *   provider 维按 OUT 到账归属快照 rl.provider_id_at_repay；物业/区域按 batch→project。
+     */
+    private void assertCompleteScope(CurrentSubject s, PrRow pr) {
+        assertSeLinesInRange(s, pr.id);
+    }
+
+    /**
+     * HIGH-2·SE 范围复核（PR-bound-lines·count-equality）。complete/send/revoke 复用。
+     *   口径：该 pr 绑定 lines（repay_line WHERE payment_request_id=pr.id）须**全部**落 SE data_range 内
+     *   —— in-range 命中数 == 总绑定数，否则 403。provider 维按到账归属快照 rl.provider_id_at_repay；
+     *   物业/区域/项目/批次维按 batch→project（与 complete 历史口径一致）。
+     *   SA（及其它平台角色）放行；SE UNRESTRICTED=全平台放行；RESTRICTED_EMPTY=fail-closed 403。
+     */
+    private void assertSeLinesInRange(CurrentSubject s, long prId) {
+        if (!s.isSE()) return;                                 // SA（及其它平台角色）全量放行
+        if (s.dataRange() != null && s.dataRange().isRestrictedEmpty()) {
+            throw new ApiException(BizError.PERM_403, "数据范围非法（fail-closed），无权操作该支付申请单");
+        }
+        if (s.dataRange() == null || s.dataRange().isUnrestricted()) return;  // SE 未收窄=全平台
+
+        Long bound = jdbc.queryForObject(
+                "SELECT count(*) FROM repay_line rl"
+                        + " JOIN batch b ON b.id = rl.batch_id"
+                        + " JOIN project p ON p.id = b.project_id"
+                        + " WHERE rl.payment_request_id = ?",
+                Long.class, prId);
+        long boundN = bound == null ? 0L : bound;
+
+        // 在绑定 lines 上叠加 SE data_range 裁剪；in-range 命中数 < 总绑定数 ⇒ 有 line 越范围 → 403。
+        StringBuilder where = new StringBuilder(" WHERE rl.payment_request_id = ?");
+        List<Object> args = new ArrayList<>();
+        args.add(prId);
+        com.youzheng.huicui.common.DataScope.appendRange(
+                s, where, args, "rl.provider_id_at_repay", "p.org_id", "p.area", "b.project_id", "rl.batch_id");
+        Long inRange = jdbc.queryForObject(
+                "SELECT count(*) FROM repay_line rl"
+                        + " JOIN batch b ON b.id = rl.batch_id"
+                        + " JOIN project p ON p.id = b.project_id" + where,
+                Long.class, args.toArray());
+        long inRangeN = inRange == null ? 0L : inRange;
+        if (inRangeN < boundN) {
+            throw new ApiException(BizError.PERM_403, "支付申请单超出本人数据范围，无权操作");
+        }
+    }
+
+    /**
+     * HIGH-2·SE create 范围复核（按 selected lineIds·count-equality，lines 尚未绑定 PR 时用）。
+     *   口径同 {@link #assertSeLinesInRange}：所选 lines 须全部落 SE data_range 内，否则 403。
+     *   调用方须已 FOR UPDATE 锁住这些 line（create 在 lockAndValidateLines 后调用）。
+     */
+    private void assertSeLinesInRangeByLineIds(CurrentSubject s, List<Long> lineIds) {
+        if (!s.isSE()) return;
+        if (s.dataRange() != null && s.dataRange().isRestrictedEmpty()) {
+            throw new ApiException(BizError.PERM_403, "数据范围非法（fail-closed），无权创建该支付申请单");
+        }
+        if (s.dataRange() == null || s.dataRange().isUnrestricted()) return;
+        if (lineIds == null || lineIds.isEmpty()) return;      // 空已在 parseLineIds 拦为 422
+
+        String in = inPlaceholders(lineIds.size());
+        StringBuilder where = new StringBuilder(" WHERE rl.id IN (").append(in).append(')');
+        List<Object> args = new ArrayList<>(lineIds);
+        com.youzheng.huicui.common.DataScope.appendRange(
+                s, where, args, "rl.provider_id_at_repay", "p.org_id", "p.area", "b.project_id", "rl.batch_id");
+        Long inRange = jdbc.queryForObject(
+                "SELECT count(*) FROM repay_line rl"
+                        + " JOIN batch b ON b.id = rl.batch_id"
+                        + " JOIN project p ON p.id = b.project_id" + where,
+                Long.class, args.toArray());
+        long inRangeN = inRange == null ? 0L : inRange;
+        if (inRangeN < lineIds.size()) {
+            throw new ApiException(BizError.PERM_403, "所选明细超出本人数据范围，无权创建支付申请单");
+        }
+    }
+
+    /** n 个 "?" 逗号分隔（n>=1）。 */
+    private static String inPlaceholders(int n) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < n; i++) { if (i > 0) b.append(','); b.append('?'); }
+        return b.toString();
     }
 
     // ════════════════════════════ 比率 / 佣金 ════════════════════════════════
@@ -431,23 +641,25 @@ public class PaymentRequestM9Controller {
 
     /**
      * 逐笔 FOR UPDATE 行锁校验未结（BR-M9-12a）：每个 lineId 要求
-     *  (a) 属于 batchId 且未 reversed；(b) payment_request_id IS NULL & settled=FALSE。
-     * 不存在→404；批次不符（越权占用别批明细）→403；已占（结算/已纳入其他单/已冲正）→409 BIZ_LINE_LOCKED(用 STATE_409 承载)。
+     *  (a) 属于 batchId 且未 reversed；(b) payment_request_id IS NULL & settled=FALSE；
+     *  (c) OUT 线（providerSnapshot 非空）须 provider_id_at_repay==本商快照（BLOCKER-2·到账归属）。
+     * 不存在→404；批次/快照不符（越权占用别批/别商明细）→403；已占（结算/已纳入其他单/已冲正）→409 BIZ_LINE_LOCKED(用 STATE_409 承载)。
      */
-    private List<LineRow> lockAndValidateLines(List<Long> lineIds, long batchId) {
+    private List<LineRow> lockAndValidateLines(List<Long> lineIds, long batchId, Long providerSnapshot) {
         List<LineRow> out = new ArrayList<>();
         for (Long lineId : lineIds) {
             RepayLineLock rl;
             try {
                 rl = jdbc.queryForObject(
                         "SELECT rl.id, rl.case_id, rl.batch_id, rl.amount_cents, rl.settled, rl.reversed, rl.payment_request_id,"
-                                + " c.owner_name, c.room"
+                                + " rl.provider_id_at_repay, c.owner_name, c.room"
                                 + " FROM repay_line rl JOIN \"case\" c ON c.id = rl.case_id"
                                 + " WHERE rl.id = ? FOR UPDATE OF rl",
                         (rs, i) -> new RepayLineLock(
                                 rs.getLong("id"), rs.getLong("case_id"), rs.getLong("batch_id"),
                                 rs.getLong("amount_cents"), rs.getBoolean("settled"), rs.getBoolean("reversed"),
                                 (Long) rs.getObject("payment_request_id"),
+                                (Long) rs.getObject("provider_id_at_repay"),
                                 rs.getString("owner_name"), rs.getString("room")),
                         lineId);
             } catch (EmptyResultDataAccessException e) {
@@ -455,6 +667,11 @@ public class PaymentRequestM9Controller {
             }
             if (rl.batchId != batchId) {
                 throw new ApiException(BizError.PERM_403, "明细不属于该批次: " + lineId);
+            }
+            // OUT 付佣按到账归属快照：所选 line 须全部属本商（provider_id_at_repay==orgId）。
+            if (providerSnapshot != null
+                    && (rl.providerIdAtRepay == null || !rl.providerIdAtRepay.equals(providerSnapshot))) {
+                throw new ApiException(BizError.PERM_403, "明细到账归属非本服务商，不可组单: " + lineId);
             }
             if (rl.reversed) {
                 throw new ApiException(BizError.STATE_409, "明细已冲正不可组单: " + lineId);
@@ -469,7 +686,7 @@ public class PaymentRequestM9Controller {
 
     private record RepayLineLock(long id, long caseId, long batchId, long amountCents,
                                  boolean settled, boolean reversed, Long paymentRequestId,
-                                 String ownerName, String room) {}
+                                 Long providerIdAtRepay, String ownerName, String room) {}
 
     private long nextSeq(long batchId, String side) {
         Long cnt = jdbc.queryForObject(
@@ -664,14 +881,22 @@ public class PaymentRequestM9Controller {
             throw new ApiException(BizError.VALIDATION_422, "缺少 lineIds（至少勾选一条未结明细）");
         }
         List<Long> ids = new ArrayList<>();
+        // BLOCKER-2·拒重复 lineId：同一回款行重复传入会被 base/comm 重复计费，却只锁一条明细（资金虚增）。
+        //   解析阶段用 Set 去重检测，任一重复 → 422，绝不静默去重。
+        java.util.Set<Long> seen = new java.util.HashSet<>();
         for (Object o : raw) {
             if (o == null) throw new ApiException(BizError.VALIDATION_422, "lineIds 含空值");
+            long id;
             try {
-                if (o instanceof Number n) ids.add(n.longValue());
-                else ids.add(Long.parseLong(String.valueOf(o).trim()));
+                if (o instanceof Number n) id = n.longValue();
+                else id = Long.parseLong(String.valueOf(o).trim());
             } catch (RuntimeException e) {
                 throw new ApiException(BizError.VALIDATION_422, "lineIds 含非法 id: " + o);
             }
+            if (!seen.add(id)) {
+                throw new ApiException(BizError.VALIDATION_422, "lineIds 含重复 id: " + id);
+            }
+            ids.add(id);
         }
         return ids;
     }

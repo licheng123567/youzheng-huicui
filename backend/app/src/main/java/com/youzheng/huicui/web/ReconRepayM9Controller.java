@@ -77,9 +77,16 @@ public class ReconRepayM9Controller {
         boolean in = "IN".equals(sideVal);
         String commRateCol = in ? "b.comm_in_rate" : "b.pay_out_rate";
 
-        StringBuilder where = new StringBuilder(" WHERE 1=1");
+        // B-03 OUT 付佣按到账归属快照（resp 资金正确性·阻断）：服务商可见/聚合一律按 repay_line.provider_id_at_repay，
+        //   不再按 batch.provider_id——否则单案再派(只改 case.provider_id)后付佣仍结给旧服务商。
+        //   providerSnapshotId 非空 ⇒ 本次汇总须按该服务商快照裁剪 base/settled 聚合（见 buildRollup）。
+        Long providerSnapshotId = (!in && "PROVIDER".equals(s.orgType())) ? Long.valueOf(s.orgId()) : null;
+
+        // MEDIUM·空汇总行修复：batch 列表/total 须与 buildRollup 同口径只计未冲正(reversed=false)明细，
+        //   否则纯冲正批次在分页/计数里出现，却被 buildRollup 全过滤 → 空汇总行。
+        StringBuilder where = new StringBuilder(" WHERE rl.reversed = false");
         List<Object> args = new ArrayList<>();
-        appendRangeScope(s, where, args);            // 组织级裁剪
+        appendRangeScope(s, where, args, in);        // 组织级裁剪（OUT 服务商按快照）
         if (periodKey != null) {
             // period 按 paid_at 月份过滤（date_trunc 月对齐 yyyy-MM-01）。
             where.append(" AND date_trunc('month', rl.paid_at) = date_trunc('month', CAST(? AS DATE))");
@@ -119,39 +126,66 @@ public class ReconRepayM9Controller {
             long batchId = idHolder.get(i)[0];
             String batchNo = nameHolder.get(i)[0];
             String projName = nameHolder.get(i)[1];
-            items.add(buildRollup(batchId, batchNo, projName, periodKey, commRateCol, periodArgs(periodKey)));
+            items.add(buildRollup(s, batchId, batchNo, projName, periodKey, commRateCol,
+                    periodArgs(periodKey), providerSnapshotId));
         }
         return Page.of(items, pg, total == null ? 0 : total);
     }
 
     /** 单 batch 行的聚合 + 佣金/结算/回款率计算（逐笔 × 固化比率·分数·HALF_UP）。 */
-    private ReconRollupM9Dto buildRollup(long batchId, String batchNo, String projName,
-                                         String periodKey, String commRateCol, Object[] periodArg) {
-        // 基数 / 笔数 / 已结算基数（未冲正）。
-        StringBuilder agg = new StringBuilder(
-                "SELECT COALESCE(SUM(rl.amount_cents),0) AS base,"
-                        + " COUNT(*) AS cnt,"
-                        + " COALESCE(SUM(CASE WHEN rl.settled THEN rl.amount_cents ELSE 0 END),0) AS settled_base"
-                        + " FROM repay_line rl WHERE rl.batch_id = ? AND rl.reversed = false");
-        List<Object> aggArgs = new ArrayList<>();
-        aggArgs.add(batchId);
-        if (periodKey != null) {
-            agg.append(" AND date_trunc('month', rl.paid_at) = date_trunc('month', CAST(? AS DATE))");
-            aggArgs.add(periodArg[0]);
-        }
-        long[] sums = jdbc.query(agg.toString(), rs -> {
-            if (!rs.next()) return new long[]{0, 0, 0};
-            return new long[]{rs.getLong("base"), rs.getLong("cnt"), rs.getLong("settled_base")};
-        }, aggArgs.toArray());
-        long baseCents = sums[0];
-        int cnt = (int) sums[1];
-        long settledBase = sums[2];
-
+    private ReconRollupM9Dto buildRollup(CurrentSubject s, long batchId, String batchNo, String projName,
+                                         String periodKey, String commRateCol, Object[] periodArg,
+                                         Long providerSnapshotId) {
         // 固化比率快照（分数 0-1）。批次比率可能为 null（付佣未设）→ 视作 0。
         BigDecimal commRate = jdbc.query(
                 "SELECT " + commRateCol + " AS r FROM batch b WHERE b.id = ?",
                 rs -> rs.next() ? rs.getBigDecimal("r") : null, batchId);
         if (commRate == null) commRate = BigDecimal.ZERO;
+
+        // B-04 逐笔舍入再求和（resp 资金正确性）：dueCents/settledCents 由 SUM(round(amount×rate)) 得出，
+        //   与 domain/Commission.lineCommissionCents、PaymentRequest 单据算法严格一致；不再 round(SUM(amount)×rate)。
+        //   金额/比率非负 ⇒ PG round() 半数进位与 BigDecimal HALF_UP 等价。
+        // B-03 OUT 服务商按到账归属快照裁剪：providerSnapshotId 非空时仅计入 provider_id_at_repay=本商的明细。
+        // HIGH-2·SE 越范围聚合修复：buildRollup 聚合此前只按 batch/reversed/providerSnapshotId 裁剪，
+        //   SE（按 data_range·非整批 provider）聚合会把整批越范围明细一并求和。改：JOIN batch/project 后对
+        //   CurrentSubject 追加 DataScope.appendRange（provider 维按 rl.provider_id_at_repay、property 按 p.org_id、
+        //   area 按 p.area），与列表/明细同口径。SA 全量不追加；PROVIDER 由 providerSnapshotId 已裁剪。
+        StringBuilder agg = new StringBuilder(
+                "SELECT COALESCE(SUM(rl.amount_cents),0) AS base,"
+                        + " COUNT(*) AS cnt,"
+                        + " COALESCE(SUM(round(rl.amount_cents * ?))::bigint, 0) AS due_cents,"
+                        + " COALESCE(SUM(CASE WHEN rl.settled THEN round(rl.amount_cents * ?) ELSE 0 END)::bigint, 0)"
+                        + "   AS settled_cents"
+                        + " FROM repay_line rl"
+                        + " JOIN batch b ON b.id = rl.batch_id"
+                        + " JOIN project p ON p.id = b.project_id"
+                        + " WHERE rl.batch_id = ? AND rl.reversed = false");
+        List<Object> aggArgs = new ArrayList<>();
+        aggArgs.add(commRate);
+        aggArgs.add(commRate);
+        aggArgs.add(batchId);
+        if (providerSnapshotId != null) {
+            agg.append(" AND rl.provider_id_at_repay = ?");
+            aggArgs.add(providerSnapshotId);
+        }
+        // SE data_range 三维裁剪（provider 维按到账归属快照·与外层 appendRangeScope 同口径）；
+        //   SA/PROVIDER/PROPERTY 在 appendRange 内各自处理（SA 全量；非平台已被列表层裁剪到本批可见）。
+        com.youzheng.huicui.common.DataScope.appendRange(
+                s, agg, aggArgs, "rl.provider_id_at_repay", "p.org_id", "p.area", "b.project_id", "rl.batch_id");
+        if (periodKey != null) {
+            agg.append(" AND date_trunc('month', rl.paid_at) = date_trunc('month', CAST(? AS DATE))");
+            aggArgs.add(periodArg[0]);
+        }
+        long[] sums = jdbc.query(agg.toString(), rs -> {
+            if (!rs.next()) return new long[]{0, 0, 0, 0};
+            return new long[]{rs.getLong("base"), rs.getLong("cnt"),
+                    rs.getLong("due_cents"), rs.getLong("settled_cents")};
+        }, aggArgs.toArray());
+        long baseCents = sums[0];
+        int cnt = (int) sums[1];
+        long dueCents = sums[2];
+        long settledCents = sums[3];
+        long unsettledCents = dueCents - settledCents;
 
         // 应收口径（回款率分母）：批次内未冲正案件应收（减免后优先），活跃明细对应案件。
         Long dueBase = jdbc.queryForObject(
@@ -159,11 +193,6 @@ public class ReconRepayM9Controller {
                         + " FROM \"case\" c WHERE c.batch_id = ?",
                 Long.class, batchId);
         long denom = dueBase == null ? 0L : dueBase;
-
-        // dueCents = round(baseCents × commRate)；settledCents = round(settledBase × commRate)。
-        long dueCents = commCents(baseCents, commRate);
-        long settledCents = commCents(settledBase, commRate);
-        long unsettledCents = dueCents - settledCents;
 
         // 回款率·分数(0-1)：base / 应收；无应收口径(0)时给 null（避免除零·展示层自处理）。
         BigDecimal repayRate = denom > 0
@@ -186,31 +215,36 @@ public class ReconRepayM9Controller {
         CurrentSubject s = SubjectContext.get();
         long batchId = parseBatchId(id);                 // 非法形态 → 404
         BatchRow b = loadBatch(batchId);                 // 不存在 → 404
-        requireBatchVisible(s, b);                       // 越组织/跨线 → 403
+        requirePropertySideAccess(s, b);                 // 物业/PC 越组织/越协调 → 403（OUT 服务商不在此挡，按明细快照裁剪）
         Pageable pg = Pageable.of(page, size);
+
+        // HIGH-1·明细按 side 区分 + 默认只列 reversed=false（与 rollup 同口径）：
+        //   OUT 服务商 → rl.provider_id_at_repay = 本商（到账归属快照，不按 batch.provider_id，单案再派后不漂移）；
+        //   SE → data_range 三维裁剪；SA → 全量；物业/PC → 已由 requirePropertySideAccess 限定本物业(+协调集)。
+        StringBuilder where = new StringBuilder(" WHERE rl.batch_id = ? AND rl.reversed = false");
+        List<Object> args = new ArrayList<>();
+        args.add(batchId);
+        appendRepayLineScope(s, where, args);
 
         String base = "FROM repay_line rl"
                 + " JOIN \"case\" c ON c.id = rl.case_id"
-                + " WHERE rl.batch_id = ?";
+                + " JOIN batch b ON b.id = rl.batch_id"
+                + " JOIN project p ON p.id = b.project_id"
+                + where;
 
-        Long total = jdbc.queryForObject("SELECT count(*) " + base, Long.class, batchId);
+        Long total = jdbc.queryForObject("SELECT count(*) " + base, Long.class, args.toArray());
 
+        List<Object> pageArgs = new ArrayList<>(args);
+        pageArgs.add(pg.size);
+        pageArgs.add(pg.offset);
         String listSql = "SELECT rl.id, rl.case_id, c.owner_name, c.room, rl.amount_cents,"
                 + " rl.channel, rl.paid_at, rl.settled, rl.payment_request_id"
                 + " " + base + " ORDER BY rl.id DESC LIMIT ? OFFSET ?";
-        List<RepayLineDto> items = jdbc.query(listSql, repayLineRowMapper(), batchId, pg.size, pg.offset);
+        List<RepayLineDto> items = jdbc.query(listSql, repayLineRowMapper(), pageArgs.toArray());
         return Page.of(items, pg, total == null ? 0 : total);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
-
-    /** round(base_cents × rate)·BigDecimal HALF_UP scale 0（佣金算法 BR-M9-01b/02）。 */
-    private static long commCents(long baseCents, BigDecimal rate) {
-        return BigDecimal.valueOf(baseCents)
-                .multiply(rate)
-                .setScale(0, RoundingMode.HALF_UP)
-                .longValueExact();
-    }
 
     private static Object[] periodArgs(String periodKey) {
         return periodKey == null ? new Object[]{null} : new Object[]{periodKey + "-01"};
@@ -255,16 +289,18 @@ public class ReconRepayM9Controller {
         return null;
     }
 
-    /** x-data-scope=range 追加到 WHERE（含前导 AND）。平台全量；物业按 p.org_id；服务商按 b.provider_id。 */
-    private void appendRangeScope(CurrentSubject s, StringBuilder where, List<Object> args) {
-        if (s.isPlatform()) return;
-        if ("PROVIDER".equals(s.orgType())) {
-            where.append(" AND b.provider_id = ?");
-            args.add(Long.valueOf(s.orgId()));
-        } else {                                          // PROPERTY（及兜底非平台/非服务商）按项目归属
-            where.append(" AND p.org_id = ?");
-            args.add(Long.valueOf(s.orgId()));
-        }
+    /**
+     * x-data-scope=range 追加到 WHERE（含前导 AND）。平台全量；物业按 p.org_id；
+     * 服务商：IN 线（理论被 side 双线挡掉）仍按 b.provider_id；OUT 付佣线按到账归属快照 rl.provider_id_at_repay
+     *   （B-03：单案再派只改 case.provider_id 不动 batch，故须按到账时点快照裁剪服务商可见批次）。
+     */
+    private void appendRangeScope(CurrentSubject s, StringBuilder where, List<Object> args, boolean in) {
+        // 服务商裁剪列：IN 线按 batch.provider_id；OUT 付佣线按到账归属快照 rl.provider_id_at_repay（B-03）。
+        // 此列同时用于 SE data_range providers 维（OUT 线亦按快照，口径一致）。
+        String providerCol = in ? "b.provider_id" : "rl.provider_id_at_repay";
+        // batch 维汇总（无 case 别名）：PC 协调集按 batch.project_id / rl.batch_id 判定。
+        com.youzheng.huicui.common.DataScope.appendRange(
+                s, where, args, providerCol, "p.org_id", "p.area", "b.project_id", "rl.batch_id");
     }
 
     private record BatchRow(long id, Long providerId, long projectId, Long projectOrgId) {}
@@ -284,19 +320,56 @@ public class ReconRepayM9Controller {
         return rows.get(0);
     }
 
-    /** range scope 复核：物业按 project.org_id、服务商按 batch.provider_id；平台全量。越权→403。 */
-    private void requireBatchVisible(CurrentSubject s, BatchRow b) {
-        if (s.isPlatform()) return;
-        long orgId = Long.parseLong(s.orgId());
-        if ("PROVIDER".equals(s.orgType())) {
-            if (b.providerId() == null || b.providerId() != orgId) {
-                throw new ApiException(BizError.PERM_403, "无权查看该批次回款明细");
-            }
-        } else {                                          // PROPERTY 及兜底
-            if (b.projectOrgId() == null || b.projectOrgId() != orgId) {
-                throw new ApiException(BizError.PERM_403, "无权查看该批次回款明细");
-            }
+    /**
+     * 物业线（IN）访问门（HIGH-1）：PROPERTY 须 project.org_id=本组织；PC 还须该批次 ∈ 本人协调集，否则 403。
+     *   服务商(PROVIDER·OUT)不在此挡——其可见性按明细到账归属快照(rl.provider_id_at_repay)由 appendRepayLineScope
+     *   裁剪（不按 batch.provider_id，单案再派后归属不漂移）；平台(SA/SE)放行，行级裁剪交 appendRepayLineScope。
+     */
+    private void requirePropertySideAccess(CurrentSubject s, BatchRow b) {
+        if (s.isPlatform()) return;                       // SA/SE 放行（SE 由 appendRepayLineScope 行级裁剪）
+        if ("PROVIDER".equals(s.orgType())) return;       // OUT 服务商按快照裁剪，不在此门
+        long orgId = Long.parseLong(s.orgId());           // PROPERTY 及兜底
+        if (b.projectOrgId() == null || b.projectOrgId() != orgId) {
+            throw new ApiException(BizError.PERM_403, "无权查看该批次回款明细");
         }
+        if (s.isPC() && !pcCoordinatesBatch(s, b)) {      // PC 须协调该批次/项目
+            throw new ApiException(BizError.PERM_403, "无权查看该批次回款明细（非协调范围）");
+        }
+    }
+
+    /**
+     * 回款明细行级裁剪（HIGH-1·与 rollup 同口径）：
+     *   SA → 不追加（全量）；SE → data_range 三维（provider 维按到账归属快照 rl.provider_id_at_repay）；
+     *   PROVIDER → rl.provider_id_at_repay = 本商（OUT 快照）；PROPERTY/PC → 已由 requirePropertySideAccess 限定，
+     *     此处不再追加（PC 协调集已在门处复核）。
+     */
+    private void appendRepayLineScope(CurrentSubject s, StringBuilder where, List<Object> args) {
+        if (s.isPlatform()) {
+            if (!s.isSE()) return;                        // SA 全量
+            // SE：provider 维按到账归属快照；物业/区域按 batch→project；PC 维 null（SE 非 PC）。
+            com.youzheng.huicui.common.DataScope.appendRange(
+                    s, where, args, "rl.provider_id_at_repay", "p.org_id", "p.area", null, null);
+            return;
+        }
+        if ("PROVIDER".equals(s.orgType())) {             // OUT 服务商按到账归属快照
+            where.append(" AND rl.provider_id_at_repay = ?");
+            args.add(Long.valueOf(s.orgId()));
+        }
+        // PROPERTY/PC：门处已限定 project.org_id(+协调集)，行级无需再叠加。
+    }
+
+    /** PC 协调集（B-02·batch 维）：批次 id ∈ batch_coordinators 或 批次 project_id ∈ project_coordinators。 */
+    private boolean pcCoordinatesBatch(CurrentSubject s, BatchRow b) {
+        Long acct;
+        try { acct = s.accountId() == null ? null : Long.valueOf(s.accountId()); }
+        catch (RuntimeException e) { acct = null; }
+        if (acct == null) return false;
+        Long n = jdbc.queryForObject(
+                "SELECT count(*) FROM (SELECT 1) x"
+                        + " WHERE ? IN (SELECT batch_id FROM batch_coordinators WHERE coordinator_id = ?)"
+                        + "    OR ? IN (SELECT project_id FROM project_coordinators WHERE coordinator_id = ?)",
+                Long.class, b.id(), acct, b.projectId(), acct);
+        return n != null && n > 0;
     }
 
     private static org.springframework.jdbc.core.RowMapper<RepayLineDto> repayLineRowMapper() {

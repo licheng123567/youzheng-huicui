@@ -344,16 +344,9 @@ public class RecordingsM4Controller {
 
     /** range scope（与 CasesM2Controller 同口径）：平台全量；服务商 b.provider_id；其余 p.org_id。 */
     private void appendRangeScope(CurrentSubject s, StringBuilder where, List<Object> args) {
-        if (s.isPlatform()) return;
-        Long org = parseOrgIdOrThrow(s);
-        if ("PROVIDER".equals(s.orgType())) {
-            // 案件级归属唯一权威（不 COALESCE 回落 batch）。
-            where.append(" AND c.provider_id = ?");
-            args.add(org);
-        } else {
-            where.append(" AND p.org_id = ?");
-            args.add(org);
-        }
+        if (!s.isPlatform()) parseOrgIdOrThrow(s);   // 非平台主体须有合法 org（保留原 422 校验语义）
+        com.youzheng.huicui.common.DataScope.appendRange(
+                s, where, args, "c.provider_id", "p.org_id", "p.area", "c.project_id", "c.batch_id");
     }
 
     private void validateFile(MultipartFile file) {

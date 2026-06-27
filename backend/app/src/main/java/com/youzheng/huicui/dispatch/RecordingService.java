@@ -68,9 +68,19 @@ public class RecordingService {
      * 返回该 case 对当前主体是否可见（不存在亦返回 false，由调用方先判存在性区分 404/403）。
      */
     public boolean caseVisible(CurrentSubject s, long caseId) {
+        // SA 全量；SE 三维 data_range。
         if (s.isPlatform()) {
+            StringBuilder where = new StringBuilder(" WHERE c.id = ?");
+            java.util.List<Object> args = new java.util.ArrayList<>();
+            args.add(caseId);
+            // SE(平台员工) 走 data_range；SA 不追加（appendRange 内部判定）。
+            com.youzheng.huicui.common.DataScope.appendRange(
+                    s, where, args, "c.provider_id", "p.org_id", "p.area", "c.project_id", "c.batch_id");
             Long n = jdbc.queryForObject(
-                    "SELECT count(*) FROM \"case\" WHERE id = ?", Long.class, caseId);
+                    "SELECT count(*) FROM \"case\" c"
+                            + " JOIN project p ON p.id = c.project_id"
+                            + " JOIN batch b ON b.id = c.batch_id" + where,
+                    Long.class, args.toArray());
             return n != null && n > 0;
         }
         // case-actor 行级（BR-M4-01a）：催收员(CO)仅持有本人案件可见，**不再服务商组织级兜底**(防同 org 非持有 CO 越权读写他人录音/AI review)。
@@ -83,16 +93,17 @@ public class RecordingService {
         }
         Long org = parseOrgId(s);
         if (org == null) return false;
-        String sql;
-        if ("PROVIDER".equals(s.orgType())) {
-            // 案件级归属唯一权威（不回落 batch.provider_id）。
-            sql = "SELECT count(*) FROM \"case\" c"
-                    + " WHERE c.id = ? AND c.provider_id = ?";
-        } else {
-            sql = "SELECT count(*) FROM \"case\" c JOIN project p ON p.id = c.project_id"
-                    + " WHERE c.id = ? AND p.org_id = ?";
-        }
-        Long n = jdbc.queryForObject(sql, Long.class, caseId, org);
+        // PROVIDER 案件级 provider_id；PL 本物业全量；PC 行级协调集（B-02，统一收口）。
+        StringBuilder where = new StringBuilder(" WHERE c.id = ?");
+        java.util.List<Object> args = new java.util.ArrayList<>();
+        args.add(caseId);
+        com.youzheng.huicui.common.DataScope.appendRange(
+                s, where, args, "c.provider_id", "p.org_id", "p.area", "c.project_id", "c.batch_id");
+        Long n = jdbc.queryForObject(
+                "SELECT count(*) FROM \"case\" c"
+                        + " JOIN project p ON p.id = c.project_id"
+                        + " JOIN batch b ON b.id = c.batch_id" + where,
+                Long.class, args.toArray());
         return n != null && n > 0;
     }
 

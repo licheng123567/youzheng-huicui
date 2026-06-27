@@ -126,7 +126,8 @@ public class AuthController {
         Map<String, Object> row;
         try {
             row = jdbc.queryForMap(
-                    "SELECT a.id, a.name, a.role_template, a.permissions::text AS perms_json, a.status,"
+                    "SELECT a.id, a.name, a.role_template, a.permissions::text AS perms_json,"
+                            + " a.data_range::text AS data_range_json, a.status,"
                             + " o.id AS oid, o.type AS otype, o.name AS oname"
                             + " FROM account a JOIN org o ON a.org_id = o.id WHERE a.id = ?", accountId);
         } catch (EmptyResultDataAccessException e) {
@@ -137,7 +138,8 @@ public class AuthController {
                 String.valueOf(row.get("id")), (String) row.get("name"),
                 String.valueOf(row.get("oid")), (String) row.get("otype"), (String) row.get("oname"),
                 (String) row.get("role_template"),
-                effectivePerms((String) row.get("role_template"), (String) row.get("perms_json")));
+                effectivePerms((String) row.get("role_template"), (String) row.get("perms_json")),
+                com.youzheng.huicui.security.DataRange.parse((String) row.get("data_range_json")));
         return jwt.issue(s);
     }
 

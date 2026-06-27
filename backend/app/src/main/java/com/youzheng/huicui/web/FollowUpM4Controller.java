@@ -78,6 +78,7 @@ public class FollowUpM4Controller {
 
     // ── [1] POST /cases/{id}/follow-ups  createFollowUp ──────────────────────────
     // BR-M4-03a：手记不改案件状态；仅写 activity(type='NOTE')。scope=case-holder（仅 holder 本人）。
+    // 是 holder 本人 → 重置 T_collector（BR-M4-03/12 有效跟进，与 promise 同口径；SA 平台代登记不重置）。
     @PostMapping("/cases/{id}/follow-ups")
     @RequirePermission("case.follow")
     @ResponseStatus(HttpStatus.CREATED)
@@ -97,6 +98,10 @@ public class FollowUpM4Controller {
                 "INSERT INTO activity(case_id, type, actor_id, content, method, attachments)"
                         + " VALUES (?, 'NOTE', ?, ?, ?, ?::jsonb) RETURNING id",
                 Long.class, caseId, actorId, content, method, attachmentsJson);
+
+        // BR-M4-03/12：仅 holder 本人有效跟进重置 T_collector；PL/PC 代登记不重置。
+        if (isHolder(caseId, actorId)) resetTCollector(caseId);
+
         return loadActivity(actId);
     }
 
@@ -377,15 +382,8 @@ public class FollowUpM4Controller {
      * 调用方须已 JOIN \"case\" c / project p / batch b。
      */
     private void appendRangeScope(CurrentSubject s, StringBuilder where, List<Object> args) {
-        if (s.isPlatform()) return;
-        if ("PROVIDER".equals(s.orgType())) {
-            // 案件级归属唯一权威（不 COALESCE 回落 batch）。
-            where.append(" AND c.provider_id = ?");
-            args.add(parseOrgId(s));
-        } else {
-            where.append(" AND p.org_id = ?");
-            args.add(parseOrgId(s));
-        }
+        com.youzheng.huicui.common.DataScope.appendRange(
+                s, where, args, "c.provider_id", "p.org_id", "p.area", "c.project_id", "c.batch_id");
     }
 
     /** range 可见性（GET 端点）：不存在→404，越范围→403。 */
@@ -460,16 +458,17 @@ public class FollowUpM4Controller {
         return n != null && n > 0;
     }
 
-    /** handleTicket own-org：返回工单 case_id，越组织/不存在→404（避免存在性泄漏）。 */
+    /** handleTicket own-org：返回工单 case_id，越组织/不存在→404（避免存在性泄漏）。PC 须协调该案(B-02)。 */
     private Long ticketCaseIdForOwnOrg(CurrentSubject s, long ticketId) {
         Long[] row = jdbc.query(
-                "SELECT t.case_id, p.org_id FROM ticket t"
+                "SELECT t.case_id, p.org_id, c.project_id, c.batch_id FROM ticket t"
                         + " JOIN \"case\" c ON c.id = t.case_id"
                         + " JOIN project p ON p.id = c.project_id"
                         + " WHERE t.id = ?",
                 rs -> {
                     if (!rs.next()) return null;
-                    return new Long[]{ rs.getLong("case_id"), rs.getLong("org_id") };
+                    return new Long[]{ rs.getLong("case_id"), rs.getLong("org_id"),
+                            rs.getLong("project_id"), rs.getLong("batch_id") };
                 }, ticketId);
         if (row == null) {
             throw new ApiException(BizError.NOT_FOUND_404, "工单不存在: " + ticketId);
@@ -479,8 +478,24 @@ public class FollowUpM4Controller {
             if (org == null || !org.equals(row[1])) {
                 throw new ApiException(BizError.NOT_FOUND_404, "工单不存在: " + ticketId);
             }
+            // PC 行级（B-02）：仅协调的项目/批次案件工单可处理；非协调→404（不泄存在性）。
+            if (s.isPC() && !pcCoordinates(s, row[2], row[3])) {
+                throw new ApiException(BizError.NOT_FOUND_404, "工单不存在: " + ticketId);
+            }
         }
         return row[0];
+    }
+
+    /** PC 协调集行级判定（B-02）：案件 project_id 或 batch_id ∈ 本人协调的项目/批次。 */
+    private boolean pcCoordinates(CurrentSubject s, long projectId, long batchId) {
+        Long acct = parseAccountIdOrNull(s);
+        if (acct == null) return false;
+        Long n = jdbc.queryForObject(
+                "SELECT count(*) FROM (SELECT 1) x"
+                        + " WHERE ? IN (SELECT project_id FROM project_coordinators WHERE coordinator_id = ?)"
+                        + "    OR ? IN (SELECT batch_id FROM batch_coordinators WHERE coordinator_id = ?)",
+                Long.class, projectId, acct, batchId, acct);
+        return n != null && n > 0;
     }
 
     /** BR-M4-03/12：重置 case.t_collector_deadline = now() + CFG-TC。 */
@@ -630,6 +645,14 @@ public class FollowUpM4Controller {
     private static Long parseOrgId(CurrentSubject s) {
         try {
             return s.orgId() == null ? null : Long.valueOf(s.orgId());
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static Long parseAccountIdOrNull(CurrentSubject s) {
+        try {
+            return s.accountId() == null ? null : Long.valueOf(s.accountId());
         } catch (RuntimeException e) {
             return null;
         }

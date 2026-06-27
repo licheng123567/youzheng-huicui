@@ -81,6 +81,8 @@ public class EvidenceM6Controller {
     private static final Set<String> EVIDENCE_SCENES = Set.of("DELIVERY", "RECORDING", "MATERIAL_PACK");
     private static final Set<String> LEGAL_TYPES = Set.of("COLLECTION_LETTER", "LAWYER_LETTER", "LITIGATION");
 
+    private static final long DEFAULT_TC_SECONDS = 7L * 24 * 3600;   // CFG-TC 缺省（与 FollowUpM4/HolderM3 同量级）
+
     // ── [1] POST /cases/{id}/evidence  createEvidence ────────────────────────────
     // perm=evidence.create（仅 PL/PC 物业角色有；VL/CO 服务商无→拦截器 403）。
     // scope=own-org：校验 case 所属项目 project.org_id = 本组织（平台不限；越组织→403）。
@@ -95,7 +97,7 @@ public class EvidenceM6Controller {
 
         // case 主体：取 project_id/org_id（存在性 404 优先于可见性 403）。
         CaseOrg co = loadCaseOrg(caseId);                       // 不存在→404
-        requireOwnOrg(s, co.orgId);                             // 越组织→403 PERM_403
+        requireOwnOrg(s, co.orgId, caseId);                    // 越组织→403；PC 须协调该案(B-02)
 
         String scene = parseScene(body);                        // 缺/非枚举→422
         List<String> refIds = parseRefIds(body);                // 可选 string[]
@@ -140,7 +142,12 @@ public class EvidenceM6Controller {
         addEqLong(where, args, "e.case_id", caseId);
         appendEvidenceScope(s, where, args);
 
-        String base = "FROM evidence e" + where;
+        // JOIN case/project/batch 供 SE data_range（p.area/p.org_id/c.provider_id）与 PC 协调集（c.project_id/c.batch_id）裁剪。
+        String base = "FROM evidence e"
+                + " JOIN \"case\" c ON c.id = e.case_id"
+                + " JOIN project p ON p.id = c.project_id"
+                + " JOIN batch b ON b.id = c.batch_id"
+                + where;
         Long total = jdbc.queryForObject("SELECT count(*) " + base, Long.class, args.toArray());
 
         List<Object> pageArgs = new ArrayList<>(args);
@@ -195,7 +202,7 @@ public class EvidenceM6Controller {
         CurrentSubject s = SubjectContext.get();
         long evidenceId = parseId(id, "存证");
         EvidenceLock lock = lockEvidence(evidenceId);          // 不存在→404
-        requireOwnOrg(s, lock.orgId);                          // 越组织→403 PERM_403
+        requireOwnOrg(s, lock.orgId, lock.caseId);            // 越组织→403；PC 须协调该案(B-02)
 
         // 仅 FAILED 可重试。已 ISSUING/ISSUED 重试→409（非失败态不可重发）。
         if (!"FAILED".equals(lock.status)) {
@@ -234,7 +241,11 @@ public class EvidenceM6Controller {
         appendEvidenceScope(s, where, args);
 
         List<EvidenceItemDto> items = jdbc.query(
-                "SELECT e.* FROM evidence e" + where + " ORDER BY e.id DESC",
+                "SELECT e.* FROM evidence e"
+                        + " JOIN \"case\" c ON c.id = e.case_id"
+                        + " JOIN project p ON p.id = c.project_id"
+                        + " JOIN batch b ON b.id = c.batch_id"
+                        + where + " ORDER BY e.id DESC",
                 evidenceMapper(), args.toArray());
 
         // documentUrl 占位 null（文件打包通道 TBD）；itemCount = 聚合条数。
@@ -306,6 +317,10 @@ public class EvidenceM6Controller {
                 "INSERT INTO legal_doc(case_id, type, template_id, status, note, created_by)"
                         + " VALUES (?, ?, ?, 'GENERATING', ?, ?) RETURNING id",
                 Long.class, caseId, type, templateId, note, actorId);
+
+        // BR-M4-03/12：建议法务为有效跟进，仅持有催收员(holder)本人发起时重置 T_collector；
+        // PL/PC 等其他角色发起不重置（与 promise/手记同口径）。
+        if (isHolder(caseId, actorId)) resetTCollector(caseId);
 
         return loadLegalDoc(legalDocId);
     }
@@ -403,28 +418,36 @@ public class EvidenceM6Controller {
 
     // ── scope 助手 ────────────────────────────────────────────────────────────
 
-    /** 存证列表 scope（三方隔离 BR-M6）：平台全量；服务商恒空(1=0)；其余(物业)按 e.org_id。 */
+    /**
+     * 存证列表 scope（三方隔离 BR-M6 + SE/PC 收口 B-01/B-02）。要求查询已 JOIN case c/project p/batch b：
+     *   - 服务商(PROVIDER) → 恒空(1=0)：存证三方隔离，服务商不可见（保留，不走 provider_id 口径）。
+     *   - 平台 SA → 全量；平台 SE → account.data_range 三维裁剪（areas/properties/providers，B-01）。
+     *   - 物业 PL → e.org_id=本组织全量；物业 PC → e.org_id=本组织 AND 案件 ∈ 本人协调集（B-02）。
+     */
     private void appendEvidenceScope(CurrentSubject s, StringBuilder where, List<Object> args) {
-        if (s.isPlatform()) return;                       // 平台全量
         if ("PROVIDER".equals(s.orgType())) {
-            where.append(" AND 1=0");                     // 服务商不可见存证 → 恒空页
+            where.append(" AND 1=0");                     // 服务商不可见存证 → 恒空页（不放 provider_id 口径）
             return;
         }
-        where.append(" AND e.org_id = ?");                // 物业本组织
+        if (s.isPlatform()) {                             // 平台：SA 全量；SE 按 data_range 三维（无 PC 维，传 null）
+            com.youzheng.huicui.common.DataScope.appendRange(
+                    s, where, args, "c.provider_id", "p.org_id", "p.area", null, null);
+            return;
+        }
+        // 物业：本组织 + PC 行级协调集。e.org_id 即物业归属（= p.org_id）。
+        where.append(" AND e.org_id = ?");
         args.add(orgIdOrThrow(s));
+        if (s.isPC()) {
+            com.youzheng.huicui.common.DataScope.appendPcCoordinatorSet(
+                    s, where, args, "c.project_id", "c.batch_id");
+        }
     }
 
     /** range scope（与 CasesM2Controller 同口径）：平台全量；服务商 b.provider_id；其余 p.org_id。 */
     private void appendRangeScope(CurrentSubject s, StringBuilder where, List<Object> args) {
-        if (s.isPlatform()) return;
-        if ("PROVIDER".equals(s.orgType())) {
-            // 案件级归属唯一权威（不 COALESCE 回落 batch）。
-            where.append(" AND c.provider_id = ?");
-            args.add(orgIdOrThrow(s));
-        } else {
-            where.append(" AND p.org_id = ?");
-            args.add(orgIdOrThrow(s));
-        }
+        if (!s.isPlatform()) orgIdOrThrow(s);   // 非平台主体须有合法 org（保留原校验语义）
+        com.youzheng.huicui.common.DataScope.appendRange(
+                s, where, args, "c.provider_id", "p.org_id", "p.area", "c.project_id", "c.batch_id");
     }
 
     /** range 可见性复核：该 case 对当前主体是否可见。 */
@@ -441,12 +464,31 @@ public class EvidenceM6Controller {
         return n != null && n > 0;
     }
 
-    /** own-org 复核（evidence.create）：平台不限；其余须 project.org_id = 本组织，否则 403。 */
-    private void requireOwnOrg(CurrentSubject s, long orgId) {
+    /**
+     * own-org 复核（evidence.create/retry）：平台不限；其余须 project.org_id=本组织，否则 403。
+     * PC 额外行级（B-02）：须协调该案件（project_id/batch_id ∈ 本人协调集），否则 403。
+     */
+    private void requireOwnOrg(CurrentSubject s, long orgId, long caseId) {
         if (s.isPlatform()) return;
         if (orgIdOrThrow(s) != orgId) {
             throw new ApiException(BizError.PERM_403, "无权在该案件发起存证(越组织)");
         }
+        if (s.isPC() && !pcCoordinatesCase(s, caseId)) {
+            throw new ApiException(BizError.PERM_403, "无权在该案件发起存证(非协调范围)");
+        }
+    }
+
+    /** PC 协调集行级判定（B-02）：案件 project_id 或 batch_id ∈ 本人协调的项目/批次。 */
+    private boolean pcCoordinatesCase(CurrentSubject s, long caseId) {
+        long acct;
+        try { acct = Long.parseLong(s.accountId()); }
+        catch (RuntimeException e) { return false; }
+        Long n = jdbc.queryForObject(
+                "SELECT count(*) FROM \"case\" c WHERE c.id = ?"
+                        + " AND (c.project_id IN (SELECT project_id FROM project_coordinators WHERE coordinator_id = ?)"
+                        + "   OR c.batch_id IN (SELECT batch_id FROM batch_coordinators WHERE coordinator_id = ?))",
+                Long.class, caseId, acct, acct);
+        return n != null && n > 0;
     }
 
     // ── 数据加载 ────────────────────────────────────────────────────────────
@@ -463,6 +505,39 @@ public class EvidenceM6Controller {
                     caseId);
         } catch (EmptyResultDataAccessException e) {
             throw new ApiException(BizError.NOT_FOUND_404, "案件不存在");
+        }
+    }
+
+    /** 是否案件持有催收员本人（holder_id=accountId）。 */
+    private boolean isHolder(long caseId, long accountId) {
+        Long n = jdbc.queryForObject(
+                "SELECT count(*) FROM \"case\" WHERE id = ? AND holder_id = ?",
+                Long.class, caseId, accountId);
+        return n != null && n > 0;
+    }
+
+    /** BR-M4-03/12：重置 case.t_collector_deadline = now() + CFG-TC（与 FollowUpM4Controller 同口径同助手）。 */
+    private void resetTCollector(long caseId) {
+        jdbc.update(
+                "UPDATE \"case\" SET t_collector_deadline = now() + (? * interval '1 second'),"
+                        + " updated_at = now() WHERE id = ?",
+                tcSeconds(), caseId);
+    }
+
+    private long tcSeconds() {
+        try {
+            Long v = jdbc.query(
+                    "SELECT timers ->> 'tcSeconds' AS v FROM settings WHERE domain = 'TIMERS'"
+                            + " ORDER BY version DESC LIMIT 1",
+                    rs -> {
+                        if (!rs.next()) return null;
+                        String raw = rs.getString("v");
+                        if (raw == null || raw.isBlank()) return null;
+                        try { return Long.valueOf(raw.trim()); } catch (NumberFormatException e) { return null; }
+                    });
+            return v == null ? DEFAULT_TC_SECONDS : v;
+        } catch (RuntimeException e) {
+            return DEFAULT_TC_SECONDS;
         }
     }
 
@@ -486,14 +561,15 @@ public class EvidenceM6Controller {
 
     private record VerifyRow(long id, long caseId, String scene, String status, String certNo, Timestamp issuedAt) {}
 
-    private record EvidenceLock(long id, long orgId, String status) {}
+    private record EvidenceLock(long id, long orgId, long caseId, String status) {}
 
-    /** 取存证并行锁（重试用）：不存在→404。带 org_id 供 own-org 复核。 */
+    /** 取存证并行锁（重试用）：不存在→404。带 org_id/case_id 供 own-org+PC 协调集复核。 */
     private EvidenceLock lockEvidence(long id) {
         try {
             return jdbc.queryForObject(
-                    "SELECT id, org_id, status FROM evidence WHERE id = ? FOR UPDATE",
-                    (rs, i) -> new EvidenceLock(rs.getLong("id"), rs.getLong("org_id"), rs.getString("status")),
+                    "SELECT id, org_id, case_id, status FROM evidence WHERE id = ? FOR UPDATE",
+                    (rs, i) -> new EvidenceLock(rs.getLong("id"), rs.getLong("org_id"),
+                            rs.getLong("case_id"), rs.getString("status")),
                     id);
         } catch (EmptyResultDataAccessException e) {
             throw new ApiException(BizError.NOT_FOUND_404, "存证不存在");

@@ -163,15 +163,8 @@ public class ReportsM10Controller {
 
     /** x-data-scope=range 追加到 WHERE（含前导 AND）。平台不限；物业按 p.org_id；服务商按 c.provider_id（案件级承接归属）。 */
     private void appendRangeScope(CurrentSubject s, StringBuilder where, List<Object> args) {
-        if (s.isPlatform()) return;                       // 平台全量
-        Long org = orgIdLong(s);
-        if ("PROVIDER".equals(s.orgType())) {
-            where.append(" AND c.provider_id = ?");
-            args.add(org);
-        } else {                                          // PROPERTY（及兜底非平台/非服务商）按项目归属
-            where.append(" AND p.org_id = ?");
-            args.add(org);
-        }
+        com.youzheng.huicui.common.DataScope.appendRange(
+                s, where, args, "c.provider_id", "p.org_id", "p.area", "c.project_id", "c.batch_id");
     }
 
     /**

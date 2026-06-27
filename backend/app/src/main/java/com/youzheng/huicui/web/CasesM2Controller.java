@@ -289,15 +289,9 @@ public class CasesM2Controller {
     }
 
     private void appendRangeScope(CurrentSubject s, StringBuilder where, List<Object> args) {
-        if (s.isPlatform()) return;                       // 平台全量
-        if ("PROVIDER".equals(s.orgType())) {
-            // 案件级归属唯一权威：NULL=无归属/平台公海/不可见，不再 COALESCE 回落 batch（防退回案被旧商越权可见）。
-            where.append(" AND c.provider_id = ?");
-            args.add(Long.valueOf(s.orgId()));
-        } else {                                          // PROPERTY（及兜底非平台/非服务商）按项目归属
-            where.append(" AND p.org_id = ?");
-            args.add(Long.valueOf(s.orgId()));
-        }
+        // 统一收口：SA 全量 / SE 三维 data_range / PROVIDER c.provider_id / PL p.org_id / PC 行级协调集（issue#3）。
+        com.youzheng.huicui.common.DataScope.appendRange(
+                s, where, args, "c.provider_id", "p.org_id", "p.area", "c.project_id", "c.batch_id");
     }
 
     /** 详情可见性：按 range scope 判断该案件对当前主体是否可见。 */

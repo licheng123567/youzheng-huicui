@@ -34,6 +34,7 @@ public class JwtService {
                 .claim("orgName", s.orgName())
                 .claim("role", s.role())
                 .claim("perms", String.join(",", s.permissions()))
+                .claim("dataRange", s.dataRange() == null ? null : s.dataRange().toJson())
                 .issuedAt(new Date(now))
                 .expiration(new Date(now + ttlSeconds * 1000))
                 .signWith(key)
@@ -52,6 +53,7 @@ public class JwtService {
                 c.get("orgType", String.class),
                 c.get("orgName", String.class),
                 c.get("role", String.class),
-                permSet);
+                permSet,
+                DataRange.fromJson(c.get("dataRange", String.class)));
     }
 }

@@ -434,10 +434,15 @@ public class DevSeeder implements CommandLineRunner {
         Integer repayExists = jdbc.queryForObject(
                 "SELECT count(*) FROM repay_line WHERE case_id = ?", Integer.class, caseS3Id);
         if (repayExists == null || repayExists == 0) {
+            // B-03 到账归属快照（与 PayReduceRepayM4 登记口径一致）：
+            //   provider_id_at_repay=COALESCE(case.provider_id,batch.provider_id)、collector_id_at_repay=持有催收员。
             jdbc.update(
-                    "INSERT INTO repay_line(case_id, batch_id, amount_cents, channel, paid_at, marked_by, settled) "
-                            + "VALUES (?, ?, 130000, 'WECHAT_QR', now()::date, ?, FALSE)",
-                    caseS3Id, batchId, coHolder);
+                    "INSERT INTO repay_line(case_id, batch_id, amount_cents, channel, paid_at, marked_by, settled,"
+                            + " provider_id_at_repay, collector_id_at_repay) "
+                            + "VALUES (?, ?, 130000, 'WECHAT_QR', now()::date, ?, FALSE,"
+                            + " (SELECT COALESCE(c.provider_id, b.provider_id) FROM \"case\" c"
+                            + "   JOIN batch b ON b.id = c.batch_id WHERE c.id = ?), ?)",
+                    caseS3Id, batchId, coHolder, caseS3Id, coHolder);
         }
 
         // 时间线：录音上传一条 activity（CALL，ref→call_recording），对齐 ERD ACTIVITY.ref 跳转
@@ -750,7 +755,14 @@ public class DevSeeder implements CommandLineRunner {
                     "INSERT INTO co_pay_doc(collector_id, line_ids, count, amount_cents, status) "
                             + "VALUES (?, ?::jsonb, 1, ?, 'PENDING_PAY') RETURNING id",
                     Long.class, coHolder, "[" + line2 + "]", coAmount);
-            jdbc.update("INSERT INTO co_pay_doc_line(co_pay_doc_id, repay_line_id) VALUES (?, ?)", cpd, line2);
+            // B-05 组单时点明细快照（与 CoCommissionM9.createCoPayDoc 落快照口径一致）。
+            jdbc.update(
+                    "INSERT INTO co_pay_doc_line(co_pay_doc_id, repay_line_id,"
+                            + " case_id, room, owner_name, repay_cents, rate, comm_cents)"
+                            + " SELECT ?, rl.id, rl.case_id, c.room, c.owner_name, rl.amount_cents,"
+                            + "        ?::numeric, ?"
+                            + " FROM repay_line rl JOIN \"case\" c ON c.id = rl.case_id WHERE rl.id = ?",
+                    cpd, coRate.toPlainString(), coAmount, line2);
         }
     }
 
@@ -923,26 +935,44 @@ public class DevSeeder implements CommandLineRunner {
                 "SELECT id FROM repay_line WHERE case_id = ? AND batch_id = ? ORDER BY id LIMIT 1",
                 rs -> rs.next() ? rs.getLong(1) : null, caseId, batchId);
         if (existing != null) return existing;
+        // B-03 到账归属快照（与 PayReduceRepayM4 登记口径一致）：
+        //   provider_id_at_repay=COALESCE(case.provider_id,batch.provider_id)、collector_id_at_repay=case.holder_id。
         return jdbc.queryForObject(
-                "INSERT INTO repay_line(case_id, batch_id, amount_cents, channel, paid_at, marked_by, settled) "
-                        + "VALUES (?, ?, ?, 'WECHAT_QR', now()::date, ?, FALSE) RETURNING id",
-                Long.class, caseId, batchId, amountCents, markedBy);
+                "INSERT INTO repay_line(case_id, batch_id, amount_cents, channel, paid_at, marked_by, settled,"
+                        + " provider_id_at_repay, collector_id_at_repay) "
+                        + "VALUES (?, ?, ?, 'WECHAT_QR', now()::date, ?, FALSE,"
+                        + " (SELECT COALESCE(c.provider_id, b.provider_id) FROM \"case\" c"
+                        + "   JOIN batch b ON b.id = c.batch_id WHERE c.id = ?),"
+                        + " (SELECT holder_id FROM \"case\" WHERE id = ?)) RETURNING id",
+                Long.class, caseId, batchId, amountCents, markedBy, caseId, caseId);
     }
 
     /** 物业协调员账号（role_template=PC，非负责人）。绑到指定项目的物业组织下。返回 account.id。 */
     private Long ensureCoordinator(Long projId, String username, String name, String phone) {
         Long aid = jdbc.query("SELECT id FROM account WHERE username = ?",
                 rs -> rs.next() ? rs.getLong(1) : null, username);
-        if (aid != null) return aid;
-        Long propOrgId = jdbc.query("SELECT org_id FROM project WHERE id = ?",
-                rs -> rs.next() ? rs.getLong(1) : null, projId);
-        if (propOrgId == null) return null;
-        String hash = bcrypt.encode(devPassword);
-        aid = jdbc.queryForObject(
-                "INSERT INTO account(org_id, username, name, phone, role_template, status, is_owner, password_hash) "
-                        + "VALUES (?, ?, ?, ?, 'PC', 'ACTIVE', FALSE, ?) RETURNING id",
-                Long.class, propOrgId, username, name, phone, hash);
+        if (aid == null) {
+            Long propOrgId = jdbc.query("SELECT org_id FROM project WHERE id = ?",
+                    rs -> rs.next() ? rs.getLong(1) : null, projId);
+            if (propOrgId == null) return null;
+            String hash = bcrypt.encode(devPassword);
+            aid = jdbc.queryForObject(
+                    "INSERT INTO account(org_id, username, name, phone, role_template, status, is_owner, password_hash) "
+                            + "VALUES (?, ?, ?, ?, 'PC', 'ACTIVE', FALSE, ?) RETURNING id",
+                    Long.class, propOrgId, username, name, phone, hash);
+        }
+        // B-02 行级隔离：PC 仅见协调的项目/批次。把协调员挂到本项目（幂等），否则收紧后看不到测试案件。
+        ensureProjectCoordinator(projId, aid);
         return aid;
+    }
+
+    /** 幂等挂载 项目↔协调员（project_coordinators，PK=(project_id,coordinator_id)）。供 B-02 PC 行级可见。 */
+    private void ensureProjectCoordinator(Long projId, Long coordinatorId) {
+        if (projId == null || coordinatorId == null) return;
+        jdbc.update(
+                "INSERT INTO project_coordinators(project_id, coordinator_id) VALUES (?, ?)"
+                        + " ON CONFLICT (project_id, coordinator_id) DO NOTHING",
+                projId, coordinatorId);
     }
 
     /** 批次幂等：按 (project_id, no) 唯一。可选 provider_id / open_rate。 */

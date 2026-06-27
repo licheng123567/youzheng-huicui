@@ -90,25 +90,19 @@ public class RiskQcService {
     // ── ② range 可见性（三方隔离）。越 scope → false ────────────────────────────
     /** 平台全量；物业按 project.org_id；服务商按 batch.provider_id（落到风险所属案件归属侧）。 */
     public boolean visibleByRange(CurrentSubject s, long riskId) {
-        if (s.isPlatform()) {
-            Long n = jdbc.queryForObject(
-                    "SELECT count(*) FROM risk_record WHERE id = ?", Long.class, riskId);
-            return n != null && n > 0;
-        }
-        Long org = parseOrgIdOrNull(s);
-        if (org == null) return false;
-        String join;
-        if ("PROVIDER".equals(s.orgType())) {
-            // 案件级归属唯一权威（不回落 batch.provider_id）：退回平台公海案 c.provider_id=NULL → 旧商不可见。
-            join = " JOIN \"case\" c ON c.id = r.case_id"
-                    + " WHERE r.id = ? AND c.provider_id = ?";
-        } else {  // PROPERTY 及兜底非平台
-            join = " JOIN \"case\" c ON c.id = r.case_id"
-                    + " JOIN project p ON p.id = c.project_id"
-                    + " WHERE r.id = ? AND p.org_id = ?";
-        }
+        if (!s.isPlatform() && parseOrgIdOrNull(s) == null) return false;
+        // SA 全量 / SE 三维 data_range / PROVIDER c.provider_id / PL p.org_id / PC 行级协调集（统一收口）。
+        StringBuilder where = new StringBuilder(" WHERE r.id = ?");
+        java.util.List<Object> args = new java.util.ArrayList<>();
+        args.add(riskId);
+        com.youzheng.huicui.common.DataScope.appendRange(
+                s, where, args, "c.provider_id", "p.org_id", "p.area", "c.project_id", "c.batch_id");
         Long n = jdbc.queryForObject(
-                "SELECT count(*) FROM risk_record r" + join, Long.class, riskId, org);
+                "SELECT count(*) FROM risk_record r"
+                        + " JOIN \"case\" c ON c.id = r.case_id"
+                        + " JOIN project p ON p.id = c.project_id"
+                        + " JOIN batch b ON b.id = c.batch_id" + where,
+                Long.class, args.toArray());
         return n != null && n > 0;
     }
 
