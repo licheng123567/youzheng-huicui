@@ -184,7 +184,8 @@ public class QcM5Controller {
                 "verdict 非法（CONFIRMED/FALSE_POSITIVE/ESCALATED）");  // 缺/非枚举→422
         String note = optStr(body, "note");
 
-        RiskSnapshot before = riskQc.loadRisk(riskId);   // 平台全量，不存在→404
+        // SA 全量；SE 须该风险在 data_range 内（越范围→404，B-01 收口）。loadVisibleRisk 含存在性+可见性。
+        RiskSnapshot before = riskQc.loadVisibleRisk(s, riskId);
         // 已 FALSE_POSITIVE（已撤销）再判→409。
         if ("FALSE_POSITIVE".equals(before.reviewed())) {
             throw new ApiException(BizError.STATE_409, "风险已判误报撤销，不可再复核: " + riskId);
@@ -255,21 +256,13 @@ public class QcM5Controller {
     /** range scope 追加到 WHERE（含前导 AND）。平台全量 / 服务商 b.provider_id / 物业(兜底) p.org_id。
      *  调用方须已 JOIN \"case\" c / project p / batch b。 */
     private void appendRangeScope(CurrentSubject s, StringBuilder where, List<Object> args) {
-        if (s.isPlatform()) return;
-        Long org = parseOrgIdOrNull(s);
-        if (org == null) {
+        if (!s.isPlatform() && parseOrgIdOrNull(s) == null) {
             // 无有效组织上下文：裁剪到空集（不抛 5xx，列表返回空）。
             where.append(" AND 1=0");
             return;
         }
-        if ("PROVIDER".equals(s.orgType())) {
-            // 案件级归属唯一权威（不 COALESCE 回落 batch）。
-            where.append(" AND c.provider_id = ?");
-            args.add(org);
-        } else {
-            where.append(" AND p.org_id = ?");
-            args.add(org);
-        }
+        com.youzheng.huicui.common.DataScope.appendRange(
+                s, where, args, "c.provider_id", "p.org_id", "p.area", "c.project_id", "c.batch_id");
     }
 
     // ── 入参解析 / 校验（非法→422/404，绝不 5xx）──────────────────────────────────

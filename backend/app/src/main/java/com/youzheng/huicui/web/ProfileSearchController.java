@@ -66,13 +66,12 @@ public class ProfileSearchController {
             " WHERE (c.owner_name ILIKE ? OR c.room ILIKE ? OR c.acct_no ILIKE ?"
                 + " OR EXISTS (SELECT 1 FROM contact ct WHERE ct.case_id = c.id AND ct.phone ILIKE ?))");
         List<Object> args = new ArrayList<>(List.of(like, like, like, like));
-        // range 裁剪：平台全量 / 物业 project.org_id / 服务商 batch.provider_id
-        if (!s.isPlatform()) {
-            Long org = parseLong(s.orgId());
-            if (org == null) return Map.of("items", List.of(), "meta", meta(page, size, 0));
-            if ("PROVIDER".equals(s.orgType())) { where.append(" AND c.provider_id = ?"); args.add(org); }
-            else { where.append(" AND p.org_id = ?"); args.add(org); }
+        // range 裁剪（统一收口）：SA 全量 / SE 三维 data_range / PROVIDER c.provider_id / PL p.org_id / PC 行级协调集。
+        if (!s.isPlatform() && parseLong(s.orgId()) == null) {
+            return Map.of("items", List.of(), "meta", meta(page, size, 0));
         }
+        com.youzheng.huicui.common.DataScope.appendRange(
+                s, where, args, "c.provider_id", "p.org_id", "p.area", "c.project_id", "c.batch_id");
         String base = "FROM \"case\" c JOIN project p ON p.id = c.project_id JOIN batch b ON b.id = c.batch_id" + where;
         Integer total = jdbc.queryForObject("SELECT count(*) " + base, Integer.class, args.toArray());
         int offset = Math.max(0, (page - 1) * size);

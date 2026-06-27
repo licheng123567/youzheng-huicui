@@ -144,7 +144,8 @@ public class CoCommissionM9Controller {
 
         // 单条聚合 SQL（消除 N+1）：按 cc.batch_id 分组，一次性算出每批次
         //   dueCents / unsettledCents / unsettledLineCount。口径与原逐笔计算严格一致：
-        //   - 可计提明细 = 该批次下、本催收员持有(case.holder_id)案件、未冲正(rl.reversed=false)的回款；
+        //   - BLOCKER-1·按到账快照归属：可计提明细 = 该批次下、到账时点本催收员持有
+        //     (repay_line.collector_id_at_repay)、未冲正(rl.reversed=false)的回款（不再 join 当前 case.holder_id）；
         //     用 LEFT JOIN 保证“设过比例但暂无明细”的批次仍出 due=0 行（与原 for 循环逐批出行一致）。
         //   - 逐笔佣金 = round(amount_cents × rate)（HALF_UP 到整数分，金额/比率非负 ⇒ PG round 与 Java HALF_UP 等价），
         //     先逐笔舍入再 SUM（绝不汇总后再舍入），完全复刻 Commission.lineCommissionCents 的求和口径。
@@ -169,9 +170,8 @@ public class CoCommissionM9Controller {
                         + "           THEN 1 ELSE 0 END), 0) AS unsettled_line_count"
                         + " FROM co_commission cc"
                         + " JOIN batch b ON b.id = cc.batch_id"
-                        + " LEFT JOIN \"case\" c ON c.batch_id = cc.batch_id AND c.holder_id = cc.collector_id"
-                        + " LEFT JOIN repay_line rl ON rl.case_id = c.id"
-                        + "        AND rl.batch_id = cc.batch_id AND rl.reversed = false"
+                        + " LEFT JOIN repay_line rl ON rl.batch_id = cc.batch_id"
+                        + "        AND rl.collector_id_at_repay = cc.collector_id AND rl.reversed = false"
                         + " WHERE cc.collector_id = ? AND b.provider_id = ?"
                         + " GROUP BY cc.batch_id, b.no, cc.rate"
                         + " ORDER BY cc.batch_id";
@@ -306,6 +306,9 @@ public class CoCommissionM9Controller {
         long amount = 0L;
         int count = 0;
         List<CoPayDocLineM9Dto> snapshot = new ArrayList<>();
+        // B-05 组单时点明细快照（resp 资金正确性·阻断）：每条 line 固化 case/room/owner/repay/rate/comm，
+        //   详情读快照不再事后重查 co_commission——防比率/归属变更令历史单据失真。
+        List<LineSnapshot> snaps = new ArrayList<>();
         for (Long lineId : lineIds) {
             // FOR UPDATE 行锁；不存在 → 404；越组织（批次非本商）→ 403。
             LockedLine ll = lockLineForCollector(lineId, collectorId, providerOrgId);
@@ -325,6 +328,8 @@ public class CoCommissionM9Controller {
             long comm = Commission.lineCommissionCents(ll.amountCents(), rate);
             amount += comm;
             count++;
+            snaps.add(new LineSnapshot(lineId, ll.caseId(), ll.room(), ll.ownerName(),
+                    ll.amountCents(), rate, comm));
             snapshot.add(new CoPayDocLineM9Dto(
                     String.valueOf(lineId), String.valueOf(ll.caseId()),
                     ll.ownerName(), ll.room(), ll.amountCents(), comm));
@@ -336,10 +341,13 @@ public class CoCommissionM9Controller {
                         + " VALUES (?, ?::jsonb, ?, ?, 'PENDING_PAY') RETURNING id",
                 Long.class, collectorId, linesJson, count, amount);
 
-        for (Long lineId : lineIds) {
+        for (LineSnapshot ls : snaps) {
             jdbc.update(
-                    "INSERT INTO co_pay_doc_line(co_pay_doc_id, repay_line_id) VALUES (?, ?)",
-                    docId, lineId);
+                    "INSERT INTO co_pay_doc_line(co_pay_doc_id, repay_line_id,"
+                            + " case_id, room, owner_name, repay_cents, rate, comm_cents)"
+                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    docId, ls.lineId(), ls.caseId(), ls.room(), ls.ownerName(),
+                    ls.repayCents(), ls.rate(), ls.commCents());
         }
 
         insertCoActivity("CO_PAY_DOC_CREATE", actorId(),
@@ -367,20 +375,20 @@ public class CoCommissionM9Controller {
         DocRow doc = loadDoc(docId);                                  // 不存在 → 404
         requireCollectorOfProvider(doc.collectorId(), providerOrgId); // 越组织 → 403
 
-        // lines 穿透：优先从 line_ids 快照重建，回款明细实时取展示字段 + 逐笔重算 commCents。
-        List<Long> lineIds = readLongList(doc.lineIdsJson());
-        List<CoPayDocLineM9Dto> lines = new ArrayList<>();
-        for (Long lineId : lineIds) {
-            LineDetail d = loadLineDetail(lineId);
-            if (d == null) continue;   // 明细被删（理论 RESTRICT 不会）→ 跳过，不 5xx
-            BigDecimal rate = jdbc.query(
-                    "SELECT rate FROM co_commission WHERE collector_id = ? AND batch_id = ?",
-                    rs -> rs.next() ? rs.getBigDecimal("rate") : null, doc.collectorId(), d.batchId());
-            long comm = rate == null ? 0L : Commission.lineCommissionCents(d.amountCents(), rate);
-            lines.add(new CoPayDocLineM9Dto(
-                    String.valueOf(lineId), String.valueOf(d.caseId()),
-                    d.ownerName(), d.room(), d.amountCents(), comm));
-        }
+        // B-05 lines 只读组单时点快照（resp 资金正确性·阻断）：直接读 co_pay_doc_line 快照列，
+        //   不再事后重查 co_commission.rate / case 展示字段——历史单据不随比率/归属变更失真。
+        //   契约 CoPayDoc.lines 字段不变，仅换数据来源。
+        List<CoPayDocLineM9Dto> lines = jdbc.query(
+                "SELECT repay_line_id, case_id, owner_name, room, repay_cents, comm_cents"
+                        + " FROM co_pay_doc_line WHERE co_pay_doc_id = ? ORDER BY repay_line_id",
+                (rs, i) -> new CoPayDocLineM9Dto(
+                        String.valueOf(rs.getLong("repay_line_id")),
+                        idOrNull(rs, "case_id"),
+                        rs.getString("owner_name"),
+                        rs.getString("room"),
+                        longOrNull(rs, "repay_cents"),
+                        longOrNull(rs, "comm_cents")),
+                docId);
         return new CoPayDocM9Dto(String.valueOf(docId), String.valueOf(doc.collectorId()),
                 doc.collectorName(), doc.count(), doc.amountCents(), doc.status(),
                 ts(doc.createdAt()), null, false, lines);
@@ -524,14 +532,15 @@ public class CoCommissionM9Controller {
     }
 
     /**
-     * 催收员某批次的「可计提」回款明细：该批次下、由本催收员持有(holder)的案件、未冲正的回款。
+     * 催收员某批次的「可计提」回款明细：该批次下、到账时点由本催收员持有的、未冲正的回款。
+     * BLOCKER-1·按到账快照归属：用 repay_line.collector_id_at_repay（登记回款时固化），
+     *   不再 join 当前 case.holder_id——换持有人后历史佣金不漂移（哪个催收员到账时点持有就算谁的）。
      * 基数=减免后实收·不含税（repay_line.amount_cents）。
      */
     private List<LineRow> loadActiveLinesForCollectorBatch(long collectorId, long batchId) {
         return jdbc.query(
                 "SELECT rl.id, rl.amount_cents FROM repay_line rl"
-                        + " JOIN \"case\" c ON c.id = rl.case_id"
-                        + " WHERE rl.batch_id = ? AND c.holder_id = ? AND rl.reversed = false",
+                        + " WHERE rl.batch_id = ? AND rl.collector_id_at_repay = ? AND rl.reversed = false",
                 (rs, i) -> new LineRow(rs.getLong("id"), rs.getLong("amount_cents")),
                 batchId, collectorId);
     }
@@ -558,20 +567,29 @@ public class CoCommissionM9Controller {
 
     private record LockedLine(long id, long caseId, long batchId, String ownerName, String room, long amountCents) {}
 
-    /** 组单行锁：FOR UPDATE 锁定 repay_line；校验属该催收员持有案件 & 批次本商。不存在 → 404，越权 → 403。 */
+    /** B-05 组单时点明细快照（落 co_pay_doc_line 快照列）。 */
+    private record LineSnapshot(long lineId, long caseId, String room, String ownerName,
+                                long repayCents, BigDecimal rate, long commCents) {}
+
+    /**
+     * 组单行锁：FOR UPDATE 锁定 repay_line；校验到账时点属该催收员持有 & 批次本商。不存在 → 404，越权 → 403。
+     * BLOCKER-1·按到账快照归属：以 repay_line.collector_id_at_repay 判持有（非当前 case.holder_id），
+     *   换持有人后历史回款仍归到账时点催收员；owner_name/room 为展示字段仍取当前 case 快照。
+     */
     private LockedLine lockLineForCollector(long lineId, long collectorId, long providerOrgId) {
         LockedLine ll;
         try {
             ll = jdbc.queryForObject(
                     "SELECT rl.id, rl.case_id, rl.batch_id, c.owner_name, c.room, rl.amount_cents,"
-                            + " c.holder_id, b.provider_id, rl.reversed"
+                            + " rl.collector_id_at_repay, b.provider_id, rl.reversed"
                             + " FROM repay_line rl"
                             + " JOIN \"case\" c ON c.id = rl.case_id"
                             + " JOIN batch b ON b.id = rl.batch_id"
                             + " WHERE rl.id = ? FOR UPDATE OF rl",
                     (rs, i) -> {
                         // 越组织/越持有 → 用哨兵值，外层判定（这里仅取，后判）。
-                        long holder = rs.getLong("holder_id");
+                        long holder = rs.getLong("collector_id_at_repay");
+                        boolean holderNull = rs.wasNull();
                         Long providerId = (Long) rs.getObject("provider_id");
                         boolean reversed = rs.getBoolean("reversed");
                         if (reversed) {
@@ -581,8 +599,8 @@ public class CoCommissionM9Controller {
                         if (providerId == null || providerId != providerOrgId) {
                             throw new ApiException(BizError.PERM_403, "回款明细所属批次不属本服务商");
                         }
-                        if (holder != collectorId) {
-                            throw new ApiException(BizError.PERM_403, "回款明细非该催收员持有案件");
+                        if (holderNull || holder != collectorId) {
+                            throw new ApiException(BizError.PERM_403, "回款明细非该催收员到账时点持有");
                         }
                         return new LockedLine(rs.getLong("id"), rs.getLong("case_id"),
                                 rs.getLong("batch_id"), rs.getString("owner_name"),
@@ -630,16 +648,15 @@ public class CoCommissionM9Controller {
         }
     }
 
-    private record LineDetail(long caseId, long batchId, String ownerName, String room, long amountCents) {}
+    /** co_pay_doc_line 快照列读取的空安全助手（快照可空·历史回填）。 */
+    private static String idOrNull(java.sql.ResultSet rs, String col) throws java.sql.SQLException {
+        long v = rs.getLong(col);
+        return rs.wasNull() ? null : String.valueOf(v);
+    }
 
-    private LineDetail loadLineDetail(long lineId) {
-        return jdbc.query(
-                "SELECT rl.case_id, rl.batch_id, c.owner_name, c.room, rl.amount_cents"
-                        + " FROM repay_line rl JOIN \"case\" c ON c.id = rl.case_id WHERE rl.id = ?",
-                rs -> rs.next() ? new LineDetail(rs.getLong("case_id"), rs.getLong("batch_id"),
-                        rs.getString("owner_name"), rs.getString("room"),
-                        rs.getLong("amount_cents")) : null,
-                lineId);
+    private static Long longOrNull(java.sql.ResultSet rs, String col) throws java.sql.SQLException {
+        long v = rs.getLong(col);
+        return rs.wasNull() ? null : v;
     }
 
     // ── activity 审计 ─────────────────────────────────────────────────────────

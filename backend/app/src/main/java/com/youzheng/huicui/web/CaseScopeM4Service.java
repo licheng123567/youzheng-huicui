@@ -53,9 +53,13 @@ public class CaseScopeM4Service {
             if (actor != null && c.holderId() != null && c.holderId().equals(actor)) return c;
             throw new ApiException(BizError.PERM_403, "无权操作该案件（仅持有催收员本人 case-actor）");
         }
-        if ("PL".equals(role) || "PC".equals(role)) {   // 关联物业负责人/协调员→本物业(project.org_id)
+        if ("PL".equals(role)) {                          // 物业负责人→本物业全量(project.org_id)
             if (withinOrg(s, c)) return c;
             throw new ApiException(BizError.PERM_403, "无权操作该案件（非本物业 case-actor）");
+        }
+        if ("PC".equals(role)) {                          // 协调员→本物业 AND 行级协调集(B-02)
+            if (withinOrg(s, c) && pcCoordinates(s, c)) return c;
+            throw new ApiException(BizError.PERM_403, "无权操作该案件（非协调范围 case-actor）");
         }
         throw new ApiException(BizError.PERM_403, "无权操作该案件（非案件相关方 case-actor）");
     }
@@ -66,6 +70,9 @@ public class CaseScopeM4Service {
         if (s.isPlatform()) return c;             // 平台全量
         if (!withinOrg(s, c)) {
             throw new ApiException(BizError.PERM_403, "无权操作该案件（越组织范围）");
+        }
+        if (s.isPC() && !pcCoordinates(s, c)) {   // PC 行级：本物业内仅协调的项目/批次（B-02）
+            throw new ApiException(BizError.PERM_403, "无权操作该案件（非协调范围）");
         }
         return c;
     }
@@ -78,6 +85,19 @@ public class CaseScopeM4Service {
             return c.providerId() != null && c.providerId().equals(org);
         }
         return c.orgId() != null && c.orgId().equals(org);
+    }
+
+    /** PC 协调集行级判定（B-02）：案件 project_id 或 batch_id ∈ 本人协调的项目/批次。 */
+    private boolean pcCoordinates(CurrentSubject s, CaseRow c) {
+        Long acct = parseLong(s.accountId());
+        if (acct == null) return false;
+        Long n = jdbc.queryForObject(
+                "SELECT count(*) FROM \"case\" c"
+                        + " WHERE c.id = ?"
+                        + " AND (c.project_id IN (SELECT project_id FROM project_coordinators WHERE coordinator_id = ?)"
+                        + "   OR c.batch_id IN (SELECT batch_id FROM batch_coordinators WHERE coordinator_id = ?))",
+                Long.class, c.id(), acct, acct);
+        return n != null && n > 0;
     }
 
     /** 取案件 + JOIN project(org_id)/batch(provider_id)。不存在→404。 */

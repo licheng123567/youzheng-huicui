@@ -214,7 +214,13 @@ public class PlaybookController {
 
     /** project range：平台全量；物业 project.org_id=本组织；服务商 EXISTS 承接该项目批次。越范围→403。 */
     private void requireProjectVisible(CurrentSubject s, long projectId, Long projectOrgId) {
-        if (s.isPlatform()) return;
+        if (s.isPlatform()) {
+            // SE（平台员工）受三维 data_range 约束（B-01）；SA 全量。
+            if (s.isSE() && !com.youzheng.huicui.common.DataScope.seVisible(s, projectOrgId, projectArea(projectId), null)) {
+                throw new ApiException(BizError.PERM_403, "无权查看该项目作战手册（超出数据范围）");
+            }
+            return;
+        }
         Long org = parseLongOrNull(s.orgId());
         if (org == null) throw new ApiException(BizError.PERM_403, "无权查看该项目作战手册");
         if ("PROVIDER".equals(s.orgType())) {
@@ -234,7 +240,13 @@ public class PlaybookController {
 
     /** batch range：同 CasesM2Controller.appendRangeScope。平台全量；物业 project.org_id；服务商 batch.provider_id。 */
     private void requireBatchVisible(CurrentSubject s, BatchRow b) {
-        if (s.isPlatform()) return;
+        if (s.isPlatform()) {
+            // SE 受三维 data_range 约束（B-01）：批次按其项目 org/area 与批次承接 provider 判定；SA 全量。
+            if (s.isSE() && !com.youzheng.huicui.common.DataScope.seVisible(s, b.orgId(), projectArea(b.projectId()), b.providerId())) {
+                throw new ApiException(BizError.PERM_403, "无权查看该批次作战手册（超出数据范围）");
+            }
+            return;
+        }
         Long org = parseLongOrNull(s.orgId());
         if (org == null) throw new ApiException(BizError.PERM_403, "无权查看该批次作战手册");
         if ("PROVIDER".equals(s.orgType())) {
@@ -267,6 +279,15 @@ public class PlaybookController {
     }
 
     // ── 行加载（区分 404/403） ────────────────────────────────────────────────
+
+    /** project.area（供 SE data_range areas 维判定）；不存在/异常→null（按维度参数 null 视为该维通过）。 */
+    private String projectArea(long projectId) {
+        try {
+            return jdbc.queryForObject("SELECT area FROM project WHERE id = ?", String.class, projectId);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
 
     /** project.org_id（不存在→404）。 */
     private Long loadProjectOrgId(long projectId) {

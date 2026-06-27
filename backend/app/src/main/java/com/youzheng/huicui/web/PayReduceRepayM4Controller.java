@@ -250,10 +250,22 @@ public class PayReduceRepayM4Controller {
         String note = parseOptionalString(body, "note");
         Long actorId = actorId(s);
 
+        // B-03 到账归属快照（资金正确性·阻断）：登记回款即固化承接/持有归属，结算一律按此，
+        //   不随后续单案再派(case.provider_id 改写)或换持有人(case.holder_id 改写)漂移。
+        //   providerAtRepay = COALESCE(case.provider_id, batch.provider_id)（案件级优先，回落批次级）；
+        //   collectorAtRepay = case.holder_id（CaseRow 已携带）。冲正不动快照。
+        Long providerAtRepay = c.providerId() != null
+                ? c.providerId()
+                : jdbc.query("SELECT provider_id FROM batch WHERE id = ?",
+                        rs -> rs.next() ? (Long) rs.getObject("provider_id") : null, c.batchId());
+        Long collectorAtRepay = c.holderId();
+
         Long repayId = jdbc.queryForObject(
-                "INSERT INTO repay_line(case_id, batch_id, amount_cents, channel, paid_at, note, marked_by, settled)"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?, false) RETURNING id",
-                Long.class, caseId, c.batchId(), amountCents, channel, Date.valueOf(paidAt), note, actorId);
+                "INSERT INTO repay_line(case_id, batch_id, amount_cents, channel, paid_at, note, marked_by, settled,"
+                        + " provider_id_at_repay, collector_id_at_repay)"
+                        + " VALUES (?, ?, ?, ?, ?, ?, ?, false, ?, ?) RETURNING id",
+                Long.class, caseId, c.batchId(), amountCents, channel, Date.valueOf(paidAt), note, actorId,
+                providerAtRepay, collectorAtRepay);
 
         insertActivity(caseId, "NOTE", actorId,
                 "标注线下回款(" + channel + ")", "repay_line", repayId, null);
@@ -283,10 +295,13 @@ public class PayReduceRepayM4Controller {
         if (Boolean.TRUE.equals(rl.reversed)) {
             return ok();                                        // 幂等：已冲正再冲正仍 200
         }
-        // 已纳入 PAID 支付申请单（payment_request_id 指向 PAID 单）→409，须走支付申请单撤销流程。
-        if (rl.paymentRequestId != null && isPaymentRequestPaid(rl.paymentRequestId)) {
+        // BLOCKER-1·冲正时序：已纳入未撤销支付申请单（payment_request_id 指向 PENDING 或 PAID 单）→409，
+        //   须先 revoke 支付申请单再冲正。否则 PENDING 单绑定的 line 被冲正后 complete 仍会把 reversed=true
+        //   的明细结算为 PAID（资金错配）。仅 VOIDED（已撤销，明细已解绑）不挡——实际解绑后 payment_request_id
+        //   已置 NULL，此分支等同 null。
+        if (rl.paymentRequestId != null && isPaymentRequestActive(rl.paymentRequestId)) {
             throw new ApiException(BizError.STATE_409,
-                    "回款已纳入已支付申请单，须走撤销流程: " + repayId);
+                    "回款已纳入未撤销支付申请单，须先撤销该单再冲正: " + repayId);
         }
         jdbc.update(
                 "UPDATE repay_line SET reversed = true, reverse_reason = ?, reversed_at = now(), updated_at = now()"
@@ -377,10 +392,14 @@ public class PayReduceRepayM4Controller {
         }
     }
 
-    private boolean isPaymentRequestPaid(long paymentRequestId) {
-        // 支付申请单已支付锁定态：契约 PaymentRequestStatus={PENDING,PAID,VOIDED}，PAID=完成锁定。
+    /**
+     * 支付申请单是否处于「未撤销」活动态（PENDING 或 PAID）。BLOCKER-1：契约 PaymentRequestStatus=
+     *   {PENDING,PAID,VOIDED}；仅 VOIDED 视为已释放（且释放时 repay_line.payment_request_id 已置 NULL）。
+     *   PENDING/PAID 均锁定该 line，冲正须先撤销该单。
+     */
+    private boolean isPaymentRequestActive(long paymentRequestId) {
         Integer n = jdbc.query(
-                "SELECT count(*) FROM payment_request WHERE id = ? AND status = 'PAID'",
+                "SELECT count(*) FROM payment_request WHERE id = ? AND status IN ('PENDING','PAID')",
                 rs -> rs.next() ? rs.getInt(1) : 0, paymentRequestId);
         return n != null && n > 0;
     }

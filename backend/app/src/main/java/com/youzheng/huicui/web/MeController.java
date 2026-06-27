@@ -29,8 +29,23 @@ public class MeController {
                 s.accountId(), s.name(),
                 new OrgRef(s.orgId(), s.orgType(), s.orgName()),
                 s.role(),
-                s.isPlatform() ? null : java.util.Map.of("areas", List.of(), "properties", List.of(), "providers", List.of()),
+                dataScopeOf(s),
                 s.permissions().stream().sorted().toList());
+    }
+
+    /**
+     * dataScope（契约 Me.dataScope）：
+     *   - SE（平台员工）→ 真实 data_range 三维 {areas,properties,providers}（BR-M1-14）。
+     *   - SA（平台超管）→ null（全量不限）。
+     *   - 非平台 → null（org 维度由 org 隔离表达，不走三维 data_range）。
+     */
+    private static Object dataScopeOf(CurrentSubject s) {
+        if (!s.isSE()) return null;
+        com.youzheng.huicui.security.DataRange r = s.dataRange();
+        return Map.of(
+                "areas", r.areas(),
+                "properties", r.properties().stream().map(String::valueOf).toList(),
+                "providers", r.providers().stream().map(String::valueOf).toList());
     }
 
     /** PATCH /v1/me —— 自助改密/换手机（契约 updateMe → 204）。骨架：校验通过即 204，真逻辑后续。 */
