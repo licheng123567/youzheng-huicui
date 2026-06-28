@@ -1,0 +1,12 @@
+# 仅 prod profile 生效的配置
+spring:
+  flyway:
+    # C-1：prod 包含真迁移 filesystem+classpath，排除 classpath:db/seed（dev种子V900/V910已移出migration目录）。
+    # V901-V916 真迁移在 classpath:db/migration，不含种子。
+    locations: filesystem:../db/migration,classpath:db/migration
+    fail-on-missing-locations: false
+
+# prod 无任何 dev 凭据：
+#   huicui.jwt.secret        → 必须由环境变量 HUICUI_JWT_SECRET 注入（ProdGuard @PostConstruct 校验）
+#   huicui.dev-password      → 不存在（DevSeeder 被 @Profile("dev") 排除，不实例化）
+#   huicui.auth.dev-sms-code → 不存在（AuthController @Value 默认空串，sms-code 端点抛 ApiException）

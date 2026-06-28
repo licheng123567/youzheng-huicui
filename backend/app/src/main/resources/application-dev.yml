@@ -1,0 +1,14 @@
+# 仅 dev profile 生效的配置（本地开发 / CI）
+spring:
+  flyway:
+    # C-1：真迁移(V901-V916)在 classpath:db/migration；dev种子(V900/V910)移至 classpath:db/seed。
+    # filesystem:../db/migration 为外部共享迁移占位（目录不存在时 fail-on-missing-locations=false 忽略）。
+    locations: filesystem:../db/migration,classpath:db/migration,classpath:db/seed
+    fail-on-missing-locations: false
+
+huicui:
+  jwt:
+    secret: "dev-only-secret-change-in-prod-至少32字节用于HS256签名0123456789"
+  dev-password: "Admin@123"    # DevSeeder（@Profile("dev")）给种子账号设此口令的 BCrypt 哈希
+  auth:
+    dev-sms-code: "000000"     # dev 固定短信验证码；prod 此键不存在，sms-code 端点拒绝服务

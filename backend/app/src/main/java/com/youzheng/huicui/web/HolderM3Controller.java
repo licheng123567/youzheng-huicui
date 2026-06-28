@@ -61,6 +61,14 @@ public class HolderM3Controller {
         long caseId = parseId(id);
         long collectorId = parseCollectorId(body);
 
+        // 目标 CO 必须属本商且 role=CO/ACTIVE，否则 403（在获取行锁前校验，快速失败）。
+        requireOwnCollector(s, collectorId);
+        // 全局锁序：先 lockCollector 再 lockCase（collector→case，与 claim / assignCasesBatch 一致，无环）。
+        // B-03 修复：先对目标 CO account 行加锁，序列化同一 CO 的并发 assign/claim。
+        state.lockCollector(collectorId);
+        // 持有上限 BR-M3-05/06：目标 CO 私海持有数 ≥ CFG-HOLDCAP → 409 BIZ_HOLD_CAP。
+        state.checkHoldCap(collectorId);
+
         CaseSnapshot snap = state.lockCase(caseId);          // 不存在→404
         // own-org：S2 案件须本商（batch.provider_id = 本组织），否则按不可见处理 404。
         requireOwnProvider(s, snap, caseId);
@@ -72,11 +80,6 @@ public class HolderM3Controller {
                 && snap.holderId() != null && snap.holderId() == collectorId) {
             return ok();
         }
-
-        // 目标 CO 必须属本商且 role=CO/ACTIVE，否则 403。
-        requireOwnCollector(s, collectorId);
-        // 持有上限 BR-M3-05/06：目标 CO 私海持有数 ≥ CFG-HOLDCAP → 409 BIZ_HOLD_CAP。
-        state.checkHoldCap(collectorId);
 
         Transition t = new Transition(
                 snap.status(), snap.pool(), null,
@@ -102,18 +105,20 @@ public class HolderM3Controller {
     public Map<String, Object> claimCase(@PathVariable("id") String id) {
         CurrentSubject s = SubjectContext.get();
         long caseId = parseId(id);
-
-        // 幂等：本人已持有该案 → 200（不重复占上限）。锁外快读判定即可（再入锁也安全）。
-        CaseSnapshot pre = state.lockCase(caseId);            // 不存在→404
         long coId = parseLong(s.accountId());
+
+        // 幂等快检：不加行锁，仅确认案件存在（不存在→404）。
+        // 注：快检后若本人已持有，直接 200；否则进入全局锁序路径。
+        CaseSnapshot pre = state.peekCase(caseId);            // 不存在→404，不加 FOR UPDATE 锁
         if (CaseStateService.ST_IN_PROGRESS.equals(pre.status())
                 && CaseStateService.POOL_PRIVATE.equals(pre.pool())
                 && pre.holderId() != null && pre.holderId() == coId) {
             return ok();
         }
 
-        // 服务端按 pool 自动判定本商公海(S2) vs 开放池(S4)，行锁内复核 + checkHoldCap + 原子占用。
-        // 已被抢→BIZ_ALREADY_CLAIMED；非 S2/S4→（claim 内对非可抢态亦抛 BIZ_ALREADY_CLAIMED）；
+        // 全局锁序：先 lockCollector 再 lockCase（claim 内部遵守此顺序），
+        // 与 assignCase / assignCasesBatch 一致（collector→case，无环）。
+        // 已被抢→BIZ_ALREADY_CLAIMED；非 S2/S4→BIZ_ALREADY_CLAIMED；
         // 本商公海非本商→PERM_403；超上限→BIZ_HOLD_CAP。
         CaseSnapshot after = state.claim(caseId, s, tcSeconds());
         // 承接：案件级归属落到抢单 CO 所属 org（开放池跨商抢单时令本案归属抢单方，本商公海抢单为同 org 无变化）。

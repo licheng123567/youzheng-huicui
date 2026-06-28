@@ -172,7 +172,7 @@ public class DispatchM3Controller {
 
         // 修 codex HIGH 并发超额：对目标 CO 加行锁，序列化同 CO 的并发批量指派/单案分配。
         // 锁持有至事务提交，锁内再算余量并逐案扣减，关闭「remaining 循环外只算一次」的并发窗口。
-        lockCollector(collectorId);
+        caseState.lockCollector(collectorId);
 
         // 余量预算（锁内计算）：CFG-HOLDCAP - 该 CO 当前私海持有；每成功一件递减一。超额度→rejected(BIZ_HOLD_CAP)。
         int remaining = caseState.holdCap() - caseState.holdCount(collectorId);
@@ -248,16 +248,6 @@ public class DispatchM3Controller {
         out.put("assigned", assigned);
         out.put("rejected", rejected);
         return out;
-    }
-
-    /**
-     * 对目标 CO 取行锁（SELECT ... FOR UPDATE），序列化同一 CO 的并发持有变更（批量指派/单案分配）。
-     * 须在 @Transactional 内；锁持有至提交，确保锁内 holdCount 余量计算与扣减无并发窗口。
-     */
-    private void lockCollector(long collectorId) {
-        // 仅取行锁，不关心列值；不存在则无行可锁（前置 requireOwnCollector 已校验存在/在岗）。
-        jdbc.query("SELECT id FROM account WHERE id = ? FOR UPDATE",
-                rs -> { /* 仅占锁 */ }, collectorId);
     }
 
     /** 目标 collector 必须属本商且 role_template=CO 且 status=ACTIVE，否则 403（与 HolderM3 同口径）。 */

@@ -83,11 +83,15 @@ public class CoCommissionM9Controller {
         Pageable pg = Pageable.of(page, size);
 
         // 聚合维度=催收员（在本服务商 org 内、且已被设过任一批次比例的 collector）。
-        // batch.provider_id = 本商，确保只统计本商承接批次（OUT 线隔离）。
+        // B-02：org 可见性由 batch.provider_id 切换到 repay_line.provider_id_at_repay 到账快照，
+        //   确保单案再派 A→B 后 B 能看到 cB 在该批次的佣金（不再依赖 batch.provider_id）。
         String base = "FROM co_commission cc"
                 + " JOIN account a ON a.id = cc.collector_id"
                 + " JOIN batch b ON b.id = cc.batch_id"
-                + " WHERE a.org_id = ? AND b.provider_id = ?";
+                + " JOIN repay_line rl2 ON rl2.batch_id = cc.batch_id"
+                + "      AND rl2.collector_id_at_repay = cc.collector_id"
+                + "      AND rl2.provider_id_at_repay = ? AND rl2.reversed = false"
+                + " WHERE a.org_id = ?";
 
         Long total = jdbc.queryForObject(
                 "SELECT count(DISTINCT cc.collector_id) " + base,
@@ -104,6 +108,9 @@ public class CoCommissionM9Controller {
         //   - “已结” = 该回款明细被某 SETTLED 的 co_pay_doc 关联（不看 repay_line.settled）；
         //     dueCents=全部、settledCents=已结、unsettledCents=due-settled。
         //   只对本页 collector 聚合（先分页选出 collector，再 JOIN 聚合）；ORDER BY collector_id 同原顺序。
+        // B-02：可计提明细按 rl.provider_id_at_repay 到账快照过滤本商回款，
+        //   LEFT JOIN 仅接本商快照行（reversed=false），保证"设过比例但暂无本商明细"的批次仍计入 batchCount。
+        //   分页子查询同口径：collector 维按 rl.provider_id_at_repay=? 聚合去重。
         String aggSql =
                 "SELECT cc.collector_id,"
                         + "       a.name AS collector_name,"
@@ -119,13 +126,16 @@ public class CoCommissionM9Controller {
                         + " JOIN account a ON a.id = cc.collector_id"
                         + " JOIN batch b ON b.id = cc.batch_id"
                         + " LEFT JOIN repay_line rl ON rl.batch_id = cc.batch_id"
-                        + "        AND rl.collector_id_at_repay = cc.collector_id AND rl.reversed = false"
-                        + " WHERE a.org_id = ? AND b.provider_id = ?"
+                        + "        AND rl.collector_id_at_repay = cc.collector_id"
+                        + "        AND rl.provider_id_at_repay = ? AND rl.reversed = false"
+                        + " WHERE a.org_id = ?"
                         + "   AND cc.collector_id IN ("
                         + "       SELECT cc2.collector_id FROM co_commission cc2"
                         + "         JOIN account a2 ON a2.id = cc2.collector_id"
-                        + "         JOIN batch b2 ON b2.id = cc2.batch_id"
-                        + "        WHERE a2.org_id = ? AND b2.provider_id = ?"
+                        + "         JOIN repay_line rl3 ON rl3.batch_id = cc2.batch_id"
+                        + "              AND rl3.collector_id_at_repay = cc2.collector_id"
+                        + "              AND rl3.provider_id_at_repay = ? AND rl3.reversed = false"
+                        + "        WHERE a2.org_id = ?"
                         + "        GROUP BY cc2.collector_id ORDER BY cc2.collector_id"
                         + "        LIMIT ? OFFSET ?)"
                         + " GROUP BY cc.collector_id, a.name"
@@ -168,6 +178,9 @@ public class CoCommissionM9Controller {
         //   - “已结” = 该回款明细被某 SETTLED 的 co_pay_doc 关联（co_pay_doc_line + co_pay_doc.status='SETTLED'），
         //     不看 repay_line.settled；未结明细才计入 unsettledCents / unsettledLineCount。
         //   ORDER BY cc.batch_id 保持原 loadRateBatches 的输出顺序。
+        // B-02：provider 维由 batch.provider_id 切换到 rl.provider_id_at_repay 到账快照；
+        //   LEFT JOIN 仅接本商（provider_id_at_repay=?）且属该催收员（collector_id_at_repay）的未冲正回款；
+        //   own-org 校验（requireCollectorOfProvider）保留；batch.provider_id 不再参与过滤。
         String sql =
                 "SELECT cc.batch_id,"
                         + "       b.no AS batch_name,"
@@ -187,8 +200,9 @@ public class CoCommissionM9Controller {
                         + " FROM co_commission cc"
                         + " JOIN batch b ON b.id = cc.batch_id"
                         + " LEFT JOIN repay_line rl ON rl.batch_id = cc.batch_id"
-                        + "        AND rl.collector_id_at_repay = cc.collector_id AND rl.reversed = false"
-                        + " WHERE cc.collector_id = ? AND b.provider_id = ?"
+                        + "        AND rl.collector_id_at_repay = cc.collector_id"
+                        + "        AND rl.provider_id_at_repay = ? AND rl.reversed = false"
+                        + " WHERE cc.collector_id = ?"
                         + " GROUP BY cc.batch_id, b.no, cc.rate"
                         + " ORDER BY cc.batch_id";
 
@@ -200,7 +214,7 @@ public class CoCommissionM9Controller {
                         rs.getLong("due_cents"),
                         rs.getLong("unsettled_cents"),
                         rs.getInt("unsettled_line_count")),
-                collectorId, providerOrgId);
+                providerOrgId, collectorId);
     }
 
     // ── [2] PUT /co-commissions/{collectorId}/batches/{batchId}/rate ─────────
@@ -218,9 +232,12 @@ public class CoCommissionM9Controller {
 
         BigDecimal rate = parseRequiredRate(body);   // 缺/非数/越界(0-1) → 422
 
-        // own-org 复核：催收员须属本商；批次须本商承接（OUT 线）。不存在 → 404；越组织 → 403。
+        // own-org 复核：催收员须属本商（not changed）。不存在 → 404；越组织 → 403。
         requireCollectorOfProvider(collectorId, providerOrgId);
-        BigDecimal payOutRate = requireBatchOfProvider(batchId, providerOrgId);
+        // B-02·写入门放宽：批次授权不再要求 batch.provider_id==orgId，
+        //   改为"该 collector 在该 batch 下存在 provider_id_at_repay==orgId 的未冲正回款"即授权；
+        //   pay_out_rate 防倒挂锚点仍取 batch（不变）。
+        BigDecimal payOutRate = requireBatchAccessForCollector(batchId, collectorId, providerOrgId);
 
         // 防倒挂 BR-M9-14/US-M9-02：催收员比例不得超过付佣比例。
         if (payOutRate == null) {
@@ -454,12 +471,13 @@ public class CoCommissionM9Controller {
             throw new ApiException(BizError.PERM_403, "催收员结算仅服务商内部可见");
         }
         long me = actorId();
+        long providerOrgId = Long.parseLong(s.orgId());
 
         List<RateBatch> rbs = loadRateBatchesSelf(me);
         long total = 0L, settled = 0L;
         List<MySettlementM9Dto.Row> rows = new ArrayList<>();
         for (RateBatch rb : rbs) {
-            for (LineRow ln : loadActiveLinesForCollectorBatch(me, rb.batchId())) {
+            for (LineRow ln : loadActiveLinesForCollectorBatch(me, rb.batchId(), providerOrgId)) {
                 long comm = Commission.lineCommissionCents(ln.amountCents(), rb.rate());
                 boolean lineSettled = isLineInternallySettled(ln.id());
                 total += comm;
@@ -517,37 +535,79 @@ public class CoCommissionM9Controller {
         return (BigDecimal) row.get("pay_out_rate");
     }
 
+    /**
+     * B-02·写入门放宽：setCoCommissionRate 授权。
+     * 批次必须存在（否则 404）；pay_out_rate 防倒挂锚点仍取 batch.pay_out_rate（不变）。
+     * 授权条件（OR）：batch.provider_id==orgId（原有），
+     *   OR 该 collector 在该 batch 下存在 provider_id_at_repay==orgId 的未冲正回款（到账快照授权）。
+     * 两条都不满足 → 403。
+     */
+    private BigDecimal requireBatchAccessForCollector(long batchId, long collectorId, long providerOrgId) {
+        Map<String, Object> row = jdbc.query(
+                "SELECT provider_id, pay_out_rate FROM batch WHERE id = ?",
+                rs -> {
+                    if (!rs.next()) return null;
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    long pid = rs.getLong("provider_id");
+                    m.put("provider_id", rs.wasNull() ? null : pid);
+                    m.put("pay_out_rate", rs.getBigDecimal("pay_out_rate"));
+                    return m;
+                }, batchId);
+        if (row == null) {
+            throw new ApiException(BizError.NOT_FOUND_404, "批次不存在: " + batchId);
+        }
+        Object pid = row.get("provider_id");
+        boolean batchOwnedByProvider = (pid != null && ((Long) pid) == providerOrgId);
+        if (!batchOwnedByProvider) {
+            // 按到账快照授权：该 collector 在该 batch 下存在本商快照的未冲正回款。
+            Long snapshotCount = jdbc.queryForObject(
+                    "SELECT count(*) FROM repay_line"
+                            + " WHERE batch_id = ? AND collector_id_at_repay = ?"
+                            + "   AND provider_id_at_repay = ? AND reversed = false",
+                    Long.class, batchId, collectorId, providerOrgId);
+            if (snapshotCount == null || snapshotCount == 0) {
+                throw new ApiException(BizError.PERM_403,
+                        "批次不属本服务商，且该催收员在该批次下无本商到账快照记录");
+            }
+        }
+        return (BigDecimal) row.get("pay_out_rate");
+    }
+
     // ── 汇总数据访问 ──────────────────────────────────────────────────────────
 
     private record RateBatch(long batchId, BigDecimal rate) {}
     private record LineRow(long id, long amountCents) {}
 
-    /** 本人（me/settlement）：本人设过比例的（批次,比率）——不限 provider，本人天然属本商。 */
+    /** 本人（me/settlement）：本人设过比例且在本商快照内有可计提回款的（批次,比率）。 */
     private List<RateBatch> loadRateBatchesSelf(long collectorId) {
-        // 仅本商批次：JOIN batch 并按 provider_id = 本人所属服务商 org 过滤，
-        // 防历史跨商设过比例的批次串入本人结算(审计 M-3)。
+        // B-02：provider 维改按 rl.provider_id_at_repay 到账快照（不再依赖 batch.provider_id），
+        //   防历史跨商批次串入本人结算(审计 M-3)；本商 org 通过 subquery 取 account.org_id。
         return jdbc.query(
-                "SELECT cc.batch_id, cc.rate FROM co_commission cc"
-                        + " JOIN batch b ON b.id = cc.batch_id"
+                "SELECT DISTINCT cc.batch_id, cc.rate FROM co_commission cc"
+                        + " JOIN repay_line rl ON rl.batch_id = cc.batch_id"
+                        + "      AND rl.collector_id_at_repay = cc.collector_id"
+                        + "      AND rl.provider_id_at_repay = (SELECT org_id FROM account WHERE id = ?)"
+                        + "      AND rl.reversed = false"
                         + " WHERE cc.collector_id = ?"
-                        + "   AND b.provider_id = (SELECT org_id FROM account WHERE id = ?)"
                         + " ORDER BY cc.batch_id",
                 (rs, i) -> new RateBatch(rs.getLong("batch_id"), rs.getBigDecimal("rate")),
                 collectorId, collectorId);
     }
 
     /**
-     * 催收员某批次的「可计提」回款明细：该批次下、到账时点由本催收员持有的、未冲正的回款。
+     * 催收员某批次的「可计提」回款明细：该批次下、到账时点由本催收员持有的、属本商快照的、未冲正的回款。
      * BLOCKER-1·按到账快照归属：用 repay_line.collector_id_at_repay（登记回款时固化），
      *   不再 join 当前 case.holder_id——换持有人后历史佣金不漂移（哪个催收员到账时点持有就算谁的）。
+     * B-02：同时按 rl.provider_id_at_repay=providerOrgId 过滤，与 loadRateBatchesSelf 同口径。
      * 基数=减免后实收·不含税（repay_line.amount_cents）。
      */
-    private List<LineRow> loadActiveLinesForCollectorBatch(long collectorId, long batchId) {
+    private List<LineRow> loadActiveLinesForCollectorBatch(long collectorId, long batchId, long providerOrgId) {
         return jdbc.query(
                 "SELECT rl.id, rl.amount_cents FROM repay_line rl"
-                        + " WHERE rl.batch_id = ? AND rl.collector_id_at_repay = ? AND rl.reversed = false",
+                        + " WHERE rl.batch_id = ? AND rl.collector_id_at_repay = ?"
+                        + "   AND rl.provider_id_at_repay = ? AND rl.reversed = false",
                 (rs, i) -> new LineRow(rs.getLong("id"), rs.getLong("amount_cents")),
-                batchId, collectorId);
+                batchId, collectorId, providerOrgId);
     }
 
     /** 内部已结判定：该回款明细被某 SETTLED 的 co_pay_doc 关联（不看 repay_line.settled）。 */
@@ -577,32 +637,34 @@ public class CoCommissionM9Controller {
                                 long repayCents, BigDecimal rate, long commCents) {}
 
     /**
-     * 组单行锁：FOR UPDATE 锁定 repay_line；校验到账时点属该催收员持有 & 批次本商。不存在 → 404，越权 → 403。
+     * 组单行锁：FOR UPDATE 锁定 repay_line；校验到账时点属该催收员持有 & 到账快照属本商。不存在 → 404，越权 → 403。
      * BLOCKER-1·按到账快照归属：以 repay_line.collector_id_at_repay 判持有（非当前 case.holder_id），
      *   换持有人后历史回款仍归到账时点催收员；owner_name/room 为展示字段仍取当前 case 快照。
+     * B-02·写入门放宽：服务商归属改按 rl.provider_id_at_repay 到账快照判定（非 batch.provider_id）。
      */
     private LockedLine lockLineForCollector(long lineId, long collectorId, long providerOrgId) {
         LockedLine ll;
         try {
             ll = jdbc.queryForObject(
                     "SELECT rl.id, rl.case_id, rl.batch_id, c.owner_name, c.room, rl.amount_cents,"
-                            + " rl.collector_id_at_repay, b.provider_id, rl.reversed"
+                            + " rl.collector_id_at_repay, rl.provider_id_at_repay, rl.reversed"
                             + " FROM repay_line rl"
                             + " JOIN \"case\" c ON c.id = rl.case_id"
-                            + " JOIN batch b ON b.id = rl.batch_id"
                             + " WHERE rl.id = ? FOR UPDATE OF rl",
                     (rs, i) -> {
                         // 越组织/越持有 → 用哨兵值，外层判定（这里仅取，后判）。
                         long holder = rs.getLong("collector_id_at_repay");
                         boolean holderNull = rs.wasNull();
-                        Long providerId = (Long) rs.getObject("provider_id");
+                        long providerAtRepay = rs.getLong("provider_id_at_repay");
+                        boolean providerNull = rs.wasNull();
                         boolean reversed = rs.getBoolean("reversed");
                         if (reversed) {
                             throw new ApiException(BizError.STATE_409,
                                     "[BIZ_LINE_LOCKED] 回款明细已冲正，不可组单: " + lineId);
                         }
-                        if (providerId == null || providerId != providerOrgId) {
-                            throw new ApiException(BizError.PERM_403, "回款明细所属批次不属本服务商");
+                        // B-02：到账快照判本商（原 batch.provider_id 已去掉 JOIN）。
+                        if (providerNull || providerAtRepay != providerOrgId) {
+                            throw new ApiException(BizError.PERM_403, "回款明细到账时点所属服务商不属本服务商");
                         }
                         if (holderNull || holder != collectorId) {
                             throw new ApiException(BizError.PERM_403, "回款明细非该催收员到账时点持有");

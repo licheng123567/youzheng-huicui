@@ -18,7 +18,16 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** 认证：登录签发 JWT（契约 /auth/login）。sms-code/select-account 为骨架占位。 */
+/**
+ * 认证：登录签发 JWT（契约 /auth/login）。sms-code/select-account 为骨架占位。
+ *
+ * B-04方案A：
+ *   - login：成功后检查 must_change_password；若 TRUE，LoginResult 携带 mustChangePassword=true，
+ *     前端须强制跳转改密页（不可跳过）。token 仍签发，但前端应在改密完成前限制功能。
+ *   - POST /auth/setup-password{token,newPassword}：消费一次性 setupToken（SHA-256 哈希匹配+
+ *     TTL 24h+一次性 used_at），设 password_hash+must_change_password=FALSE；否则 401。
+ *     此端点无需登录（security=[]）。
+ */
 @RestController
 @RequestMapping("/auth")
 public class AuthController {
@@ -33,8 +42,11 @@ public class AuthController {
         this.jwt = jwt;
     }
 
-    // 契约 LoginResult：单账号返 token；多账号返 loginTicket+accounts(BR-M1-11)。
-    public record LoginResult(String token, String loginTicket, Object accounts) {}
+    /**
+     * 契约 LoginResult：单账号返 token；多账号返 loginTicket+accounts(BR-M1-11)。
+     * B-04方案A：mustChangePassword=true 时前端须强制跳转改密页（不可跳过）。
+     */
+    public record LoginResult(String token, String loginTicket, Object accounts, Boolean mustChangePassword) {}
 
     // 多账号临时票据 / 短信验证码（内存·带 TTL；生产换 Redis + 真实短信通道随机码）。
     private record Ticket(Set<Long> accountIds, long exp) {}
@@ -69,7 +81,10 @@ public class AuthController {
                 throw new ApiException(BizError.AUTH_401, "用户名或口令错误");
             }
             String hash = (String) row.get("password_hash");
-            if (hash == null || !bcrypt.matches(password, hash)) throw new ApiException(BizError.AUTH_401, "用户名或口令错误");
+            // B-04方案A：password_hash=NULL 说明账号尚未走 /auth/setup-password 设密，拒绝登录。
+            if (hash == null || !bcrypt.matches(password, hash)) {
+                throw new ApiException(BizError.AUTH_401, "用户名或口令错误");
+            }
             if (!"ACTIVE".equals(row.get("status"))) throw new ApiException(BizError.PERM_403, "账号已停用");
             phone = (String) row.get("phone");
         }
@@ -79,7 +94,9 @@ public class AuthController {
                         + " WHERE a.phone = ? AND a.status = 'ACTIVE' ORDER BY a.id", phone);
         if (accts.isEmpty()) throw new ApiException(BizError.AUTH_401, "无可用账号");
         if (accts.size() == 1) {
-            return new LoginResult(issueFor(((Number) accts.get(0).get("id")).longValue()), null, null);
+            long accountId = ((Number) accts.get(0).get("id")).longValue();
+            boolean mustChange = mustChangePassword(accountId);
+            return new LoginResult(issueFor(accountId), null, null, mustChange ? Boolean.TRUE : null);
         }
         // 多账号 → 临时票据 + 账号列表（需 /auth/select-account 换 token）
         Set<Long> ids = new HashSet<>();
@@ -92,7 +109,7 @@ public class AuthController {
         }
         String ticket = UUID.randomUUID().toString();
         tickets.put(ticket, new Ticket(ids, System.currentTimeMillis() + TICKET_TTL_MS));
-        return new LoginResult(null, ticket, accounts);
+        return new LoginResult(null, ticket, accounts, null);
     }
 
     @PostMapping("/sms-code")
@@ -118,7 +135,78 @@ public class AuthController {
             throw new ApiException(BizError.AUTH_401, "所选账号不在本次登录范围");
         }
         tickets.remove(ticketId);   // 一次性
-        return new LoginResult(issueFor(accountId), null, null);
+        boolean mustChange = mustChangePassword(accountId);
+        return new LoginResult(issueFor(accountId), null, null, mustChange ? Boolean.TRUE : null);
+    }
+
+    /**
+     * B-04方案A：POST /auth/setup-password — 消费一次性 setupToken，设置账号密码并清除首登改密标志。
+     *
+     * 安全规则：
+     *   1) token_hash 命中且 used_at IS NULL 且 expires_at > now() → 有效，继续；否则 401。
+     *   2) 设 account.password_hash + must_change_password=FALSE。
+     *   3) 设 credential_setup_token.used_at=now()（一次性，防重放）。
+     *   4) 返回 200 + {ok:true}。
+     *   此端点无需登录（security=[]，public）。
+     */
+    @PostMapping("/setup-password")
+    public Map<String, Object> setupPassword(@RequestBody Map<String, Object> body) {
+        String token = req(body, "token");
+        String newPassword = req(body, "newPassword");
+        if (newPassword.length() < 6) {
+            throw new ApiException(BizError.VALIDATION_422, "新口令至少 6 位");
+        }
+
+        // 计算 SHA-256(token) → hash，与数据库比对。
+        String hash = OrgSystemM1Controller.sha256hex(token);
+
+        // 查有效令牌（未使用+未过期）并取 account_id。
+        Long accountId = jdbc.query(
+                "SELECT account_id FROM credential_setup_token"
+                        + " WHERE token_hash = ? AND used_at IS NULL AND expires_at > now()"
+                        + " LIMIT 1",
+                rs -> rs.next() ? rs.getLong("account_id") : null,
+                hash);
+        if (accountId == null) {
+            throw new ApiException(BizError.AUTH_401, "token 无效、已过期或已使用");
+        }
+
+        // 验证账号仍 ACTIVE（安全：不为已停用账号设密）。
+        String status = jdbc.query(
+                "SELECT status FROM account WHERE id = ?",
+                rs -> rs.next() ? rs.getString("status") : null,
+                accountId);
+        if (!"ACTIVE".equals(status)) {
+            throw new ApiException(BizError.PERM_403, "账号已停用，无法设置密码");
+        }
+
+        // 原子更新：设密码 + 清首登改密标志。
+        String newHash = bcrypt.encode(newPassword);
+        jdbc.update(
+                "UPDATE account SET password_hash = ?, must_change_password = FALSE,"
+                        + " updated_at = now() WHERE id = ?",
+                newHash, accountId);
+
+        // 消费 token（一次性：设 used_at，防重放）。
+        jdbc.update(
+                "UPDATE credential_setup_token SET used_at = now()"
+                        + " WHERE token_hash = ? AND used_at IS NULL",
+                hash);
+
+        return Map.of("ok", true);
+    }
+
+    /** B-04方案A：查 account.must_change_password（列不存在时降级 false，避免启动期迁移未跑时 5xx）。 */
+    private boolean mustChangePassword(long accountId) {
+        try {
+            Boolean v = jdbc.query(
+                    "SELECT must_change_password FROM account WHERE id = ?",
+                    rs -> rs.next() ? rs.getBoolean("must_change_password") : null,
+                    accountId);
+            return Boolean.TRUE.equals(v);
+        } catch (Exception e) {
+            return false;   // 迁移未跑/列不存在时降级 false
+        }
     }
 
     /** 按 accountId 加载账号+组织+有效权限 → 签发 JWT。 */

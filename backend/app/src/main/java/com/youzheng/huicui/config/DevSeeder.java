@@ -2,6 +2,7 @@ package com.youzheng.huicui.config;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Component;
@@ -32,6 +33,7 @@ import org.springframework.stereotype.Component;
  * 与 project.pay_info 使 OwnerBill 字段非空；M10 报表走聚合查询无需专门种子。
  * 见 {@link #seedM6Evidence} / {@link #seedM7Bill}。全部幂等，物理隔离。
  */
+@Profile("dev")
 @Component
 public class DevSeeder implements CommandLineRunner {
 

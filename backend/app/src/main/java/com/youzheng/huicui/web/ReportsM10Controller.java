@@ -107,7 +107,9 @@ public class ReportsM10Controller {
                 + " FROM \"case\" c"
                 + " JOIN batch b ON b.id = c.batch_id"
                 + " JOIN project p ON p.id = c.project_id"
-                + " LEFT JOIN repay_line r ON r.case_id = c.id AND r.reversed = false"
+                + " LEFT JOIN (SELECT case_id, SUM(amount_cents) AS amount_cents"
+                + "            FROM repay_line WHERE reversed = false GROUP BY case_id) r"
+                + " ON r.case_id = c.id"
                 + where
                 + " GROUP BY " + dimKeyExpr + ", " + dimNameExpr
                 + " ORDER BY due_cents DESC";
