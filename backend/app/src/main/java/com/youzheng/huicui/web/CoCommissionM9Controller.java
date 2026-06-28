@@ -93,41 +93,57 @@ public class CoCommissionM9Controller {
                 "SELECT count(DISTINCT cc.collector_id) " + base,
                 Long.class, providerOrgId, providerOrgId);
 
-        List<Long> collectorIds = jdbc.query(
-                "SELECT cc.collector_id " + base
-                        + " GROUP BY cc.collector_id ORDER BY cc.collector_id"
-                        + " LIMIT ? OFFSET ?",
-                (rs, i) -> rs.getLong("collector_id"),
-                providerOrgId, providerOrgId, pg.size, pg.offset);
+        // 单条聚合 SQL（消除 N+1·原 listCoCommissionBatches 同口径，聚合维度由 batch 换 collector）：
+        //   按 cc.collector_id 分组，一次性算出每催收员 batchCount/dueCents/settledCents/unsettledCents。
+        //   口径与原 aggregatePerson 逐人逐批逐笔计算严格一致：
+        //   - 可计提明细 = 该(collector,batch)下、到账时点本催收员持有(rl.collector_id_at_repay)、
+        //     未冲正(rl.reversed=false)的回款；LEFT JOIN 保证“设过比例但暂无明细”的批次仍计入 batchCount。
+        //   - batchCount = COUNT(DISTINCT cc.batch_id)，= 原 loadRateBatches.size()（设过比例的批次数，无论有无明细）。
+        //   - 逐笔佣金 = round(rl.amount_cents × cc.rate)（HALF_UP 整数分；金额/比率非负 ⇒ PG round 与
+        //     Java Commission.lineCommissionCents 等价），先逐笔舍入再 SUM（绝不汇总后再舍入）。
+        //   - “已结” = 该回款明细被某 SETTLED 的 co_pay_doc 关联（不看 repay_line.settled）；
+        //     dueCents=全部、settledCents=已结、unsettledCents=due-settled。
+        //   只对本页 collector 聚合（先分页选出 collector，再 JOIN 聚合）；ORDER BY collector_id 同原顺序。
+        String aggSql =
+                "SELECT cc.collector_id,"
+                        + "       a.name AS collector_name,"
+                        + "       count(DISTINCT cc.batch_id) AS batch_count,"
+                        + "       COALESCE(SUM(round(rl.amount_cents * cc.rate))::bigint, 0) AS due_cents,"
+                        + "       COALESCE(SUM(CASE WHEN rl.id IS NOT NULL AND EXISTS ("
+                        + "             SELECT 1 FROM co_pay_doc_line cpl"
+                        + "               JOIN co_pay_doc d ON d.id = cpl.co_pay_doc_id"
+                        + "              WHERE cpl.repay_line_id = rl.id AND d.status = 'SETTLED')"
+                        + "           THEN round(rl.amount_cents * cc.rate) ELSE 0 END)::bigint, 0)"
+                        + "         AS settled_cents"
+                        + " FROM co_commission cc"
+                        + " JOIN account a ON a.id = cc.collector_id"
+                        + " JOIN batch b ON b.id = cc.batch_id"
+                        + " LEFT JOIN repay_line rl ON rl.batch_id = cc.batch_id"
+                        + "        AND rl.collector_id_at_repay = cc.collector_id AND rl.reversed = false"
+                        + " WHERE a.org_id = ? AND b.provider_id = ?"
+                        + "   AND cc.collector_id IN ("
+                        + "       SELECT cc2.collector_id FROM co_commission cc2"
+                        + "         JOIN account a2 ON a2.id = cc2.collector_id"
+                        + "         JOIN batch b2 ON b2.id = cc2.batch_id"
+                        + "        WHERE a2.org_id = ? AND b2.provider_id = ?"
+                        + "        GROUP BY cc2.collector_id ORDER BY cc2.collector_id"
+                        + "        LIMIT ? OFFSET ?)"
+                        + " GROUP BY cc.collector_id, a.name"
+                        + " ORDER BY cc.collector_id";
 
-        List<CoCommissionPersonM9Dto> items = new ArrayList<>();
-        for (Long cid : collectorIds) {
-            items.add(aggregatePerson(cid, providerOrgId));
-        }
+        List<CoCommissionPersonM9Dto> items = jdbc.query(aggSql,
+                (rs, i) -> {
+                    long due = rs.getLong("due_cents");
+                    long settled = rs.getLong("settled_cents");
+                    return new CoCommissionPersonM9Dto(
+                            String.valueOf(rs.getLong("collector_id")),
+                            rs.getString("collector_name"),
+                            rs.getInt("batch_count"),
+                            due, settled, due - settled);
+                },
+                providerOrgId, providerOrgId, providerOrgId, providerOrgId, pg.size, pg.offset);
+
         return Page.of(items, pg, total == null ? 0 : total);
-    }
-
-    /** 单催收员佣金聚合：逐笔 round(repayCents × rate)；settled 由 co_pay_doc.status=SETTLED 判定。 */
-    private CoCommissionPersonM9Dto aggregatePerson(long collectorId, long providerOrgId) {
-        String name = jdbc.query(
-                "SELECT name FROM account WHERE id = ?",
-                rs -> rs.next() ? rs.getString("name") : null, collectorId);
-
-        // 本商内该催收员设过比例的批次（人×批次）。
-        List<RateBatch> rbs = loadRateBatches(collectorId, providerOrgId);
-        int batchCount = rbs.size();
-
-        long due = 0L, settled = 0L;
-        for (RateBatch rb : rbs) {
-            for (LineRow ln : loadActiveLinesForCollectorBatch(collectorId, rb.batchId())) {
-                long comm = Commission.lineCommissionCents(ln.amountCents(), rb.rate());
-                due += comm;
-                if (isLineInternallySettled(ln.id())) settled += comm;
-            }
-        }
-        long unsettled = due - settled;
-        return new CoCommissionPersonM9Dto(
-                String.valueOf(collectorId), name, batchCount, due, settled, unsettled);
     }
 
     // ── [1b] GET /co-commissions/{collectorId}/batches ───────────────────────
@@ -505,17 +521,6 @@ public class CoCommissionM9Controller {
 
     private record RateBatch(long batchId, BigDecimal rate) {}
     private record LineRow(long id, long amountCents) {}
-
-    /** 本商内该催收员设过比例的（批次,比率）。 */
-    private List<RateBatch> loadRateBatches(long collectorId, long providerOrgId) {
-        return jdbc.query(
-                "SELECT cc.batch_id, cc.rate FROM co_commission cc"
-                        + " JOIN batch b ON b.id = cc.batch_id"
-                        + " WHERE cc.collector_id = ? AND b.provider_id = ?"
-                        + " ORDER BY cc.batch_id",
-                (rs, i) -> new RateBatch(rs.getLong("batch_id"), rs.getBigDecimal("rate")),
-                collectorId, providerOrgId);
-    }
 
     /** 本人（me/settlement）：本人设过比例的（批次,比率）——不限 provider，本人天然属本商。 */
     private List<RateBatch> loadRateBatchesSelf(long collectorId) {

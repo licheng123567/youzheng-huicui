@@ -389,12 +389,21 @@ public class PaymentRequestM9Controller {
         if (!"PROVIDER".equals(s.orgType()) || orgId == null) {
             throw new ApiException(BizError.BIZ_WRONG_SETTLE_SIDE, "付佣线(OUT)仅承接服务商可操作");
         }
-        Long n = jdbc.queryForObject(
+        // A1·count-equality 加固（抗历史脏数据·混合 provider 的 OUT 单）：旧实现 EXISTS-any（count>0）——
+        //   只要任一绑定 line 属本商即放行 send/revoke，混合 provider 的脏 OUT 单会被本商越权操作。
+        //   改为「整单在范围内」：该单**全部**绑定 lines 的 provider_id_at_repay 均==本商，且至少一条绑定 line
+        //   （越本商绑定数  owned!=total ⇒ 403）。与读侧 appendOrgScope OUT 分支同口径。
+        Long total = jdbc.queryForObject(
+                "SELECT count(*) FROM repay_line rl WHERE rl.payment_request_id = ?",
+                Long.class, pr.id);
+        Long owned = jdbc.queryForObject(
                 "SELECT count(*) FROM repay_line rl"
                         + " WHERE rl.payment_request_id = ? AND rl.provider_id_at_repay = ?",
                 Long.class, pr.id, orgId);
-        if (n == null || n == 0) {
-            throw new ApiException(BizError.PERM_403, "付佣单到账归属非本服务商，无权操作");
+        long totalN = total == null ? 0L : total;
+        long ownedN = owned == null ? 0L : owned;
+        if (ownedN == 0 || ownedN != totalN) {
+            throw new ApiException(BizError.PERM_403, "付佣单到账归属非本服务商（含他商/越范围明细），无权操作");
         }
     }
 
@@ -432,10 +441,19 @@ public class PaymentRequestM9Controller {
             where.append(" AND p.org_id = ?");
             args.add(orgIdLong(s));
         } else {                                               // 服务商：OUT 付佣按到账归属快照
-            // BLOCKER-2·OUT 可见性按快照：单据须含至少一条本商快照(provider_id_at_repay==orgId)绑定明细，
-            //   与 Recon OUT 汇总 / create OUT 组单口径一致（不按 batch.provider_id——再派后归属不漂移）。
-            where.append(" AND EXISTS (SELECT 1 FROM repay_line rl"
-                    + " WHERE rl.payment_request_id = pr.id AND rl.provider_id_at_repay = ?)");
+            // BLOCKER-2·OUT 可见性按快照：单据按到账归属快照(provider_id_at_repay==orgId)裁剪
+            //   （不按 batch.provider_id——再派后归属不漂移）。
+            // A1·count-equality 加固（抗历史脏数据·混合 provider 的 OUT 单）：旧实现 EXISTS-any——只要
+            //   任一绑定 line 属本商即放整单，混合 provider 的脏 OUT 单会向本商泄露他商明细。改为「整单在范围内」：
+            //   (a) NOT EXISTS 越本商的绑定 line（全部绑定 lines 的 provider_id_at_repay 均==本商，
+            //       NULL 视为越本商）；(b) 叠加 EXISTS 至少一条本商绑定 line，防 0-line 单(NOT EXISTS 空集恒真)
+            //   fail-open。与 SE 侧 appendSeFullScope 的整单口径一致。
+            where.append(" AND NOT EXISTS (SELECT 1 FROM repay_line rlx"
+                    + " WHERE rlx.payment_request_id = pr.id"
+                    + " AND (rlx.provider_id_at_repay IS NULL OR rlx.provider_id_at_repay <> ?))"
+                    + " AND EXISTS (SELECT 1 FROM repay_line rly"
+                    + " WHERE rly.payment_request_id = pr.id AND rly.provider_id_at_repay = ?)");
+            args.add(orgIdLong(s));
             args.add(orgIdLong(s));
         }
     }
