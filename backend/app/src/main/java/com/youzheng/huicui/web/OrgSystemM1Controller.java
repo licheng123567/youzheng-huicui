@@ -247,10 +247,15 @@ public class OrgSystemM1Controller {
 
         StringBuilder where = new StringBuilder(" WHERE 1=1");
         List<Object> args = new ArrayList<>();
-        // range：平台全量；物业/服务商 → 本组织成员产生的审计。
+        // range：平台全量；物业/服务商 → 本组织成员产生的审计 + 平台代本组织操作的留痕。
+        // BR-M1-15（M-07b）：proxy_for=本组织 id 的代操作记录（actor 为平台 SA/SE，不属本组织成员），
+        // 被代方亦应可见——否则平台代物业/服务商所做操作对被代方不透明。proxy_for 为 TEXT，
+        // 生产写路径（MasterWrite/Playbook/ProviderM3）存 String.valueOf(orgId)，故按字符串参数化比对。
         if (!s.isPlatform()) {
-            where.append(" AND actor_id IN (SELECT id FROM account WHERE org_id = ?)");
+            where.append(" AND (actor_id IN (SELECT id FROM account WHERE org_id = ?)"
+                    + " OR proxy_for = ?)");
             args.add(Long.valueOf(s.orgId()));
+            args.add(s.orgId());
         }
         if (!isBlank(from)) {
             where.append(" AND tm >= ?::timestamptz");
