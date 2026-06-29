@@ -26,6 +26,8 @@ async function doVerify(row: any) {
   if (error) { ElMessage.error('验真失败'); return }
   verify.value = data; vdlg.value = true
 }
+// 纯展示：存证状态 → ds-admin .tag 配色（ISSUED 成功 / FAILED 危险 / 其余处理中）
+const statusTag = (s?: string) => (s === 'ISSUED' ? 'suc' : (s === 'FAILED' ? 'dan' : 'war'))
 // H-02: FAILED 失败重试(仅 FAILED→ISSUING·POST /evidence/{id}/retry，按次只向物业计费)；非 evidence.create 不显
 async function doRetry(row: any) {
   const { error } = await api.POST('/evidence/{id}/retry', { params: { path: { id: row.id } } } as any)
@@ -36,35 +38,60 @@ onMounted(load)
 </script>
 
 <template>
-  <el-card header="存证（GET /evidence · 三方隔离 · 哈希链防篡改）">
-    <!-- H-02: 只读入口提示 — 创建在案件作业台「发起存证」，本页仅查看/验真/下载证书 -->
-    <el-alert :type="canCreate ? 'success' : 'info'" :closable="false" style="margin-bottom:10px"
-      :title="canCreate ? '存证创建入口在案件作业台「发起存证」；本页用于查看、验真与下载证书。' : '只读视图：可查看、验真与下载证书；存证发起需在案件作业台由具备创建权限的角色操作。'" />
-    <el-table v-loading="loading" :data="items" border size="small">
-      <el-table-column prop="certNo" label="存证号" />
-      <el-table-column prop="scene" label="场景" width="120" />
-      <el-table-column label="状态" width="100"><template #default="{row}"><el-tag size="small" :type="row.status==='ISSUED'?'success':(row.status==='FAILED'?'danger':'warning')">{{ row.status }}</el-tag></template></el-table-column>
-      <el-table-column prop="issuedAt" label="出证时间" />
-      <el-table-column label="操作" width="200">
-        <template #default="{ row }">
-          <el-button size="small" @click="doVerify(row)">验真</el-button>
-          <el-button v-if="row.certUrl" size="small" text type="primary" tag="a" :href="row.certUrl" target="_blank">证书</el-button>
-          <el-button v-if="row.status==='FAILED' && canCreate" size="small" type="warning" @click="doRetry(row)">重试</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+  <div class="card">
+    <div class="card-h">
+      <div class="t"><span class="bar"></span>存证管理</div>
+      <div class="ops"><span class="note" style="margin:0">GET /evidence · 三方隔离 · 哈希链防篡改</span></div>
+    </div>
 
+    <!-- H-02: 只读入口提示 — 创建在案件作业台「发起存证」，本页仅查看/验真/下载证书 -->
+    <div class="alert" :class="canCreate ? 'ok' : 'info'" style="margin-top:0;margin-bottom:14px">
+      <span>{{ canCreate ? '存证创建入口在案件作业台「发起存证」；本页用于查看、验真与下载证书。' : '只读视图：可查看、验真与下载证书；存证发起需在案件作业台由具备创建权限的角色操作。' }}</span>
+    </div>
+
+    <table v-loading="loading">
+      <thead>
+        <tr>
+          <th>存证号</th>
+          <th style="width:120px">场景</th>
+          <th style="width:100px">状态</th>
+          <th style="width:180px">出证时间</th>
+          <th style="width:200px">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="row in items" :key="row.id">
+          <td>{{ row.certNo || '—' }}</td>
+          <td>{{ row.scene || '—' }}</td>
+          <td><span class="tag" :class="statusTag(row.status)">{{ row.status }}</span></td>
+          <td>{{ row.issuedAt || '—' }}</td>
+          <td>
+            <a class="btn txt" @click="doVerify(row)">验真</a>
+            <a v-if="row.certUrl" class="btn txt" :href="row.certUrl" target="_blank">证书</a>
+            <a v-if="row.status==='FAILED' && canCreate" class="btn txt wn" @click="doRetry(row)">重试</a>
+          </td>
+        </tr>
+        <tr v-if="!loading && !items.length">
+          <td colspan="5" style="text-align:center;color:var(--sec);padding:32px 0">暂无数据</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="note">存证只向物业按次计费、三场景同价；每次有可下载证书 + 第三方/法院核验。存证失败不计费，可点「重试」重新发起。</div>
+
+    <!-- 验真弹窗：保留 el-dialog 外壳（公开校验 GET /evidence/{id}/verify） -->
     <el-dialog v-model="vdlg" title="存证验真（GET /evidence/{id}/verify · 公开校验）" width="440px">
-      <el-result v-if="verify" :icon="verify.valid ? 'success' : 'error'" :title="verify.valid ? '验真通过 · 未被篡改' : '验真失败'">
-        <template #sub-title>
-          <div style="text-align:left">
-            <p>存证号：{{ verify.certNo }}</p>
-            <p>场景：{{ verify.scene }}</p>
-            <p>出证时间：{{ verify.issuedAt }}</p>
-            <p style="word-break:break-all">哈希：<code>{{ verify.hash }}</code></p>
-          </div>
-        </template>
-      </el-result>
+      <template v-if="verify">
+        <div class="alert" :class="verify.valid ? 'ok' : 'err'" style="margin-top:0;margin-bottom:14px">
+          <span>{{ verify.valid ? '验真通过 · 未被篡改' : '验真失败' }}</span>
+        </div>
+        <div class="desc">
+          <div class="r"><div class="k">存证号</div><div class="v">{{ verify.certNo }}</div></div>
+          <div class="r"><div class="k">场景</div><div class="v">{{ verify.scene }}</div></div>
+          <div class="r"><div class="k">出证时间</div><div class="v">{{ verify.issuedAt }}</div></div>
+          <div class="r"><div class="k">哈希</div><div class="v" style="word-break:break-all"><code>{{ verify.hash }}</code></div></div>
+        </div>
+      </template>
     </el-dialog>
-  </el-card>
+  </div>
 </template>

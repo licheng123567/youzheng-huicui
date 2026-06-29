@@ -31,25 +31,55 @@ const editDlg = ref(false)
 function openCreate() { editDlg.value = true }
 function onSaved() { load() }
 onMounted(load)
+
+// 纯展示辅助：项目状态 → ds-admin .tag 配色（启用=suc、停用=inf，其它兜底 inf）。不改数据/逻辑。
+const statusTag = (s?: string) => (s === '启用' || s === 'ACTIVE' || s === 'ENABLED' ? 'suc' : s === '停用' || s === 'INACTIVE' || s === 'DISABLED' ? 'inf' : 'inf')
 </script>
 
 <template>
-  <el-card header="项目（GET /projects · 契约客户端 + 数据范围裁剪）">
-    <el-button v-if="auth.has('proj.edit')" type="primary" size="small" style="margin-bottom:10px" @click="openCreate">新建项目</el-button>
-    <el-table v-loading="loading" :data="items" border @row-click="(r:any)=>router.push(`/projects/${r.id}`)" style="cursor:pointer">
-      <el-table-column prop="id" label="ID" width="70" />
-      <el-table-column prop="name" label="项目" />
-      <el-table-column prop="org" label="物业" />
-      <el-table-column prop="area" label="区域" width="100" />
-      <!-- 资金双线：收佣比例整列仅平台/物业视角渲染，服务商视角整列(含列头)不出，不以占位串泄露字段存在性(H-03) -->
-      <el-table-column v-if="showCommInRate" label="收佣比例" width="110">
-        <template #default="{ row }">{{ ratePct(row.commInRate) }}</template>
-      </el-table-column>
-      <el-table-column prop="status" label="状态" width="90" />
-    </el-table>
-    <el-pagination style="margin-top:12px" layout="total, prev, pager, next" :total="total"
-      :page-size="size" :current-page="page" @current-change="(p:number)=>{page=p;load()}" />
+  <div class="card">
+    <div class="card-h">
+      <div class="t"><span class="bar"></span>项目</div>
+      <div class="ops">
+        <span class="note" style="margin:0">GET /projects · 共 {{ total }} · 契约客户端 + 数据范围裁剪</span>
+        <button v-if="auth.has('proj.edit')" class="btn" @click="openCreate">+ 新建项目</button>
+      </div>
+    </div>
+
+    <table v-loading="loading">
+      <thead>
+        <tr>
+          <th style="width:70px">ID</th>
+          <th>项目</th>
+          <th>物业</th>
+          <th style="width:100px">区域</th>
+          <!-- 资金双线：收佣比例整列仅平台/物业视角渲染，服务商视角整列(含列头)不出，不以占位串泄露字段存在性(H-03) -->
+          <th v-if="showCommInRate" style="width:110px">收佣比例</th>
+          <th style="width:90px">状态</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="row in items" :key="row.id" class="row-click" @click="router.push(`/projects/${row.id}`)">
+          <td>{{ row.id }}</td>
+          <td>{{ row.name || '—' }}</td>
+          <td>{{ row.org || '—' }}</td>
+          <td>{{ row.area || '—' }}</td>
+          <td v-if="showCommInRate" class="num">{{ ratePct(row.commInRate) }}</td>
+          <td><span class="tag" :class="statusTag(row.status)">{{ row.status || '—' }}</span></td>
+        </tr>
+        <tr v-if="!loading && !items.length">
+          <td :colspan="showCommInRate ? 6 : 5" style="text-align:center;color:var(--sec);padding:32px 0">暂无数据</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="page-bar" v-if="total > size">
+      <span style="margin-right:8px">共 {{ total }} 条</span>
+      <div class="pg" @click="page > 1 && (page--, load())">‹</div>
+      <div class="pg on">{{ page }}</div>
+      <div class="pg" @click="page * size < total && (page++, load())">›</div>
+    </div>
 
     <ProjectEditDialog v-model="editDlg" :project="null" @saved="onSaved" />
-  </el-card>
+  </div>
 </template>

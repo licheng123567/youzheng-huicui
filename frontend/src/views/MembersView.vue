@@ -12,13 +12,15 @@ const sup = ref<any[]>([])
 const orgs = ref<any[]>([])
 const isPlatform = () => auth.has('org.manage')
 
-// BR-M1-04a：角色下拉按当前组织类型过滤。文案/标签来自 constants/roles.ts 单一真源（L-01/L-02）。
+// BR-M1-04a：角色下拉按当前组织类型过滤，与后端 MemberM1Controller 允许范围严格一致。
+// PROPERTY→只建协调员(PC)；PROVIDER→只建催收员(CO)；PLATFORM→建平台员工(SA/SE)。
+// PL/VL 为负责人角色，由 POST /orgs 绑定，不经此入口建立。
 const roleOptions = computed<string[]>(() => {
   const orgType: string = (auth.me as any)?.org?.type ?? ''
   if (orgType === 'PLATFORM') return ['SA', 'SE']
-  if (orgType === 'PROPERTY') return ['PL', 'PC']
-  if (orgType === 'PROVIDER') return ['VL', 'CO']
-  return ['PL', 'PC'] // 保守兜底
+  if (orgType === 'PROPERTY') return ['PC']
+  if (orgType === 'PROVIDER') return ['CO']
+  return ['PC'] // 保守兜底
 })
 
 // 当前主体可授予的权限上限（Me.permissions）
@@ -140,10 +142,14 @@ async function toggle(row: any) {
 }
 // 重置密码（B-04方案A：响应返回 setupToken，展示后带外告知成员）
 const pDlg = ref(false)
-const pForm = ref<any>({ id: '', name: '' })
-function openReset(row: any) { pForm.value = { id: row.id, name: row.name }; pDlg.value = true }
+const pForm = ref<any>({ id: '', name: '', newPassword: '', notify: false })
+function openReset(row: any) { pForm.value = { id: row.id, name: row.name, newPassword: '', notify: false }; pDlg.value = true }
 async function submitReset() {
-  const { data, error } = await api.POST('/members/{id}/reset-password', { params: { path: { id: pForm.value.id } }, body: {} as any })
+  // ResetPasswordInput{newPassword?:string|null（留空=服务端生成）, notify?:boolean（短信通知员工）}
+  const body: any = {}
+  if (pForm.value.newPassword) body.newPassword = pForm.value.newPassword
+  if (pForm.value.notify) body.notify = true
+  const { data, error } = await api.POST('/members/{id}/reset-password', { params: { path: { id: pForm.value.id } }, body: body as any })
   if (error) { ElMessage.error('重置失败：' + ((error as any)?.message ?? '')); return }
   pDlg.value = false
   // B-04方案A：展示一次性 setupToken
@@ -167,35 +173,100 @@ onMounted(load)
 </script>
 
 <template>
-  <el-card header="成员管理 / 督导（member.manage · 仅本组织成员，平台不可跨组织 BR-M1-04a）">
-    <el-button v-if="auth.has('member.manage')" type="primary" size="small" style="margin-bottom:10px" @click="openCreate">新增成员</el-button>
-    <el-table :data="members" border size="small">
-      <el-table-column prop="username" label="账号" /><el-table-column prop="name" label="姓名" />
-      <el-table-column prop="phone" label="手机" /><el-table-column prop="role" label="角色" width="120" :formatter="(row: any) => roleLabel(row.role)" />
-      <el-table-column label="状态" width="90"><template #default="{row}"><el-tag size="small" :type="row.status==='ACTIVE'?'success':'info'">{{ row.status }}</el-tag><el-tag v-if="row.isOwner" size="small" type="warning" style="margin-left:4px">负责人</el-tag></template></el-table-column>
-      <el-table-column v-if="auth.has('member.manage')" label="操作" width="300">
-        <template #default="{ row }">
-          <el-button size="small" type="primary" :disabled="!row.manageable" @click="openEdit(row)">编辑</el-button>
-          <el-button size="small" :disabled="row.isOwner || !row.manageable" @click="toggle(row)">{{ row.status==='ACTIVE'?'停用':'启用' }}</el-button>
-          <el-button size="small" :disabled="!row.manageable" @click="openReset(row)">重置密码</el-button>
-          <el-button size="small" type="primary" text :disabled="!row.manageable" @click="openSup(row)">督导</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+  <div class="card">
+    <div class="card-h">
+      <div class="t"><span class="bar"></span>成员管理 / 督导</div>
+      <div class="ops">
+        <span class="note" style="margin:0">member.manage · 仅本组织成员，平台不可跨组织 BR-M1-04a</span>
+        <button v-if="auth.has('member.manage')" class="btn sm" @click="openCreate">+ 新增成员</button>
+      </div>
+    </div>
 
-    <el-divider content-position="left">督导记录（GET /members/supervision · 写审计 BR-M10-10）</el-divider>
-    <el-table :data="sup" border size="small">
-      <el-table-column prop="memberName" label="成员" /><el-table-column prop="action" label="动作" width="100" />
-      <el-table-column prop="note" label="说明" /><el-table-column prop="tm" label="时间" />
-    </el-table>
+    <table>
+      <thead>
+        <tr>
+          <th>账号</th>
+          <th>姓名</th>
+          <th>手机</th>
+          <th style="width:130px">角色</th>
+          <th style="width:130px">状态</th>
+          <th v-if="auth.has('member.manage')" style="width:300px">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="row in members" :key="row.id">
+          <td>{{ row.username || '—' }}</td>
+          <td>{{ row.name || '—' }}</td>
+          <td>{{ row.phone || '—' }}</td>
+          <td>{{ roleLabel(row.role) }}</td>
+          <td>
+            <span class="tag" :class="row.status==='ACTIVE' ? 'suc' : 'inf'">{{ row.status }}</span>
+            <span v-if="row.isOwner" class="tag war" style="margin-left:4px">负责人</span>
+          </td>
+          <td v-if="auth.has('member.manage')">
+            <button class="btn txt" :disabled="!row.manageable" @click="openEdit(row)">编辑</button>
+            <button class="btn txt" :disabled="row.isOwner || !row.manageable" @click="toggle(row)">{{ row.status==='ACTIVE'?'停用':'启用' }}</button>
+            <button class="btn txt" :disabled="!row.manageable" @click="openReset(row)">重置密码</button>
+            <button class="btn txt" :disabled="!row.manageable" @click="openSup(row)">督导</button>
+          </td>
+        </tr>
+        <tr v-if="!members.length">
+          <td :colspan="auth.has('member.manage') ? 6 : 5" style="text-align:center;color:var(--sec);padding:32px 0">暂无成员</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="sec-title">督导记录（GET /members/supervision · 写审计 BR-M10-10）</div>
+    <table>
+      <thead>
+        <tr>
+          <th>成员</th>
+          <th style="width:110px">动作</th>
+          <th>说明</th>
+          <th style="width:180px">时间</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="(row, i) in sup" :key="i">
+          <td>{{ row.memberName || '—' }}</td>
+          <td><span class="tag inf">{{ row.action }}</span></td>
+          <td>{{ row.note || '—' }}</td>
+          <td>{{ row.tm || '—' }}</td>
+        </tr>
+        <tr v-if="!sup.length">
+          <td colspan="4" style="text-align:center;color:var(--sec);padding:32px 0">暂无督导记录</td>
+        </tr>
+      </tbody>
+    </table>
 
     <template v-if="isPlatform()">
-      <el-divider content-position="left">组织管理（GET /orgs · 平台 org.manage）<el-button size="small" text type="primary" @click="oDlg=true">+ 新建组织</el-button></el-divider>
-      <el-table :data="orgs" border size="small">
-        <el-table-column prop="name" label="组织" /><el-table-column prop="type" label="类型" width="100" />
-        <el-table-column prop="status" label="状态" width="90" /><el-table-column prop="ownerAccountId" label="负责人账号" />
-        <el-table-column label="操作" width="110"><template #default="{row}"><el-button size="small" @click="rebindOwner(row)">改绑负责人</el-button></template></el-table-column>
-      </el-table>
+      <div class="sec-title" style="justify-content:space-between">
+        <span style="display:flex;align-items:center;gap:8px">组织管理（GET /orgs · 平台 org.manage）</span>
+        <button class="btn txt" @click="oDlg=true">+ 新建组织</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>组织</th>
+            <th style="width:110px">类型</th>
+            <th style="width:110px">状态</th>
+            <th>负责人账号</th>
+            <th style="width:120px">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in orgs" :key="row.id">
+            <td>{{ row.name || '—' }}</td>
+            <td><span class="tag" :class="row.type==='PLATFORM' ? 'pri' : (row.type==='PROVIDER' ? 'war' : 'inf')">{{ row.type }}</span></td>
+            <td><span class="tag" :class="row.status==='ACTIVE' ? 'suc' : 'inf'">{{ row.status }}</span></td>
+            <td>{{ row.ownerAccountId || '—' }}</td>
+            <td><button class="btn txt" @click="rebindOwner(row)">改绑负责人</button></td>
+          </tr>
+          <tr v-if="!orgs.length">
+            <td colspan="5" style="text-align:center;color:var(--sec);padding:32px 0">暂无组织</td>
+          </tr>
+        </tbody>
+      </table>
     </template>
 
     <!-- B-04方案A：一次性凭据交付 Token 展示弹窗（复制按钮+带外告知说明） -->
@@ -266,6 +337,15 @@ onMounted(load)
     <el-dialog v-model="pDlg" :title="`重置密码 · ${pForm.name}（B-04方案A·一次性凭据）`" width="420px">
       <el-alert type="info" :closable="false" style="margin-bottom:10px"
         title="重置后系统将生成一次性凭据 Token（24h 有效，一次性），请在下一步弹窗中复制并带外告知成员。成员用此 Token 走 /auth/setup-password 设密后方可登录。" />
+      <el-form label-width="100px">
+        <el-form-item label="自定义新密码">
+          <el-input v-model="pForm.newPassword" type="password" show-password autocomplete="new-password" placeholder="留空=系统生成" />
+          <div style="font-size:12px;color:#999;margin-top:4px">留空则由系统生成临时密码（仍以一次性凭据形式发放）</div>
+        </el-form-item>
+        <el-form-item label="短信通知">
+          <el-checkbox v-model="pForm.notify">短信通知员工（notify）</el-checkbox>
+        </el-form-item>
+      </el-form>
       <template #footer><el-button @click="pDlg=false">取消</el-button><el-button type="primary" @click="submitReset">重置并获取 Token</el-button></template>
     </el-dialog>
 
@@ -276,5 +356,5 @@ onMounted(load)
       </el-form>
       <template #footer><el-button @click="sDlg=false">取消</el-button><el-button type="primary" @click="submitSup">记录</el-button></template>
     </el-dialog>
-  </el-card>
+  </div>
 </template>

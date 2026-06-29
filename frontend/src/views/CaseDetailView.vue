@@ -5,7 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 
-// M4 催收完整作业台：概览/联系人 · 通话AI · 跟进承诺工单 · 回款减免 · 法务存证。动作按 /me 权限门控。
+// M4 催收三栏接打台：左画像 / 中三Tab(沟通记录·项目资料·作战手册) / 右操作区。动作按 /me 权限门控。
 const route = useRoute(); const router = useRouter(); const auth = useAuth()
 const id = String(route.params.id)
 const d = ref<any>(null)
@@ -64,7 +64,66 @@ const promises = ref<any[]>([]); const tickets = ref<any[]>([]); const legalDocs
 const readyRecs = ref<any[]>([])   // H-02: 本案 READY 录音(供 RECORDING 存证选 refIds)
 const payLinks = ref<any[]>([])   // 本会话创建的缴费链接(契约无 per-case 列表端点,发后捕获→可重发/作废 BR-M4-14)
 const latest = ref<any>(null); const review = ref<any>(null)
+const playbookDoc = ref<any>(null)   // 项目/批次作战手册静态底稿(容错取其一)
 const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
+
+// ===== 纯展示辅助（仅 UI 表现层，不参与数据流）=====
+// 案件状态 → ds-admin .tag 配色
+const CASE_STATUS_TAG: Record<string, string> = {
+  SETTLED: 'suc', IN_PROGRESS: 'pri', PROMISED: 'war',
+  PENDING_DISPATCH: 'inf', PROVIDER_SEA: 'inf',
+  WITHDRAWN: 'inf', BAD_DEBT: 'dan', VOIDED: 'dan'
+}
+const caseStatusTag = (s?: string) => CASE_STATUS_TAG[s ?? ''] ?? 'inf'
+// 录音/通用通道状态 → 配色
+const REC_STATUS_TAG: Record<string, string> = {
+  READY: 'suc', PROCESSING: 'pri', PARSING: 'pri',
+  FAILED: 'dan', QUOTA_BLOCKED: 'war', UPLOADED: 'inf'
+}
+const recStatusTag = (s?: string) => REC_STATUS_TAG[s ?? ''] ?? 'inf'
+// 业主姓名首字（画像头像）
+const ownerInitial = computed<string>(function () {
+  var n = d.value?.case?.ownerName
+  return n ? String(n).charAt(0) : '案'
+})
+// 时间线类型 → ds-admin .ty-xxx class（按 item.type 小写；缺省落 ty-note）
+const TL_TY: Record<string, string> = {
+  CALL: 'ty-call', NOTE: 'ty-note', FOLLOWUP: 'ty-note', FOLLOW_UP: 'ty-note',
+  TICKET: 'ty-ticket', SMS: 'ty-sms', PAYLINK: 'ty-sms', PROMISE: 'ty-promise',
+  STATUS: 'ty-status', OPLOG: 'ty-status', LEGAL: 'ty-legal', EVIDENCE: 'ty-evidence',
+  REPAY: 'ty-promise'
+}
+const tlTy = (t?: string) => TL_TY[String(t ?? '').toUpperCase()] ?? 'ty-note'
+// 时间线类型 → 中文徽标文案
+const TL_LABEL: Record<string, string> = {
+  CALL: '通话', NOTE: '手记', FOLLOWUP: '跟进', FOLLOW_UP: '跟进', TICKET: '工单',
+  SMS: '催费单', PAYLINK: '催费单', PROMISE: '承诺', STATUS: '状态变更',
+  OPLOG: '操作日志', LEGAL: '法务', EVIDENCE: '存证', REPAY: '回款'
+}
+const tlLabel = (t?: string) => TL_LABEL[String(t ?? '').toUpperCase()] ?? (t ?? '')
+
+// ===== 中栏三 Tab 切换（纯 UI）=====
+const midTab = ref<'timeline' | 'project' | 'playbook'>('timeline')
+// 时间线类型筛选（前端过滤，按 item.type 小写归类）
+const tlFilter = ref<'all' | 'call' | 'note' | 'ticket' | 'promise' | 'legal' | 'sms' | 'status'>('all')
+const TL_GROUP: Record<string, string> = {
+  CALL: 'call', NOTE: 'note', FOLLOWUP: 'note', FOLLOW_UP: 'note', TICKET: 'ticket',
+  SMS: 'sms', PAYLINK: 'sms', PROMISE: 'promise', REPAY: 'promise',
+  STATUS: 'status', OPLOG: 'status', LEGAL: 'legal', EVIDENCE: 'legal'
+}
+const timeline = computed<any[]>(function () { return d.value?.timeline ?? [] })
+const tlFiltered = computed<any[]>(function () {
+  if (tlFilter.value === 'all') return timeline.value
+  return timeline.value.filter(function (ev: any) { return TL_GROUP[String(ev.type ?? '').toUpperCase()] === tlFilter.value })
+})
+// 项目资料（同一 GET /cases/{id} 响应里的 projectRef）
+const projectRef = computed<any>(function () { return d.value?.projectRef ?? {} })
+// 减免决策 → 中文
+const reduceDecideLabel: Record<string, string> = { AUTO: '自动', PROPERTY: '物业审批', PLATFORM: '平台审批', MANUAL: '人工审批' }
+
+// ===== 录音就绪态（右栏 op-rec 纯展示，复用现有 latest/review 逻辑）=====
+const recReady = computed<boolean>(function () { return !!(latest.value?.hasRecording && latest.value?.recording) })
+const recObj = computed<any>(function () { return latest.value?.recording ?? null })
 
 async function loadAll() {
   const det = await api.GET('/cases/{id}', { params: { path: { id } } })
@@ -82,6 +141,24 @@ async function loadAll() {
     const rl = await api.GET('/batches/{id}/repay-lines', { params: { path: { id: String(bid) }, query: { page: 1, size: 100 } } } as any)
     repays.value = ((rl.data as any)?.items ?? []).filter((x: any) => String(x.caseId) === String(d.value?.case?.id))
   }
+  // 作战手册静态底稿：优先 CaseDetail.playbook(同一响应)；否则容错取项目/批次 playbook 端点(其一)
+  loadPlaybook()
+}
+// 作战手册静态文本：CaseDetail.playbook 优先，回退 /projects/{pid}/playbook 或 /batches/{bid}/playbook
+async function loadPlaybook() {
+  if (d.value?.playbook?.content) { playbookDoc.value = d.value.playbook; return }
+  const pid = d.value?.case?.projectId
+  const bid = d.value?.case?.batchId
+  try {
+    if (pid) {
+      const { data } = await api.GET('/projects/{id}/playbook', { params: { path: { id: String(pid) } } } as any)
+      if (data) { playbookDoc.value = data; return }
+    }
+    if (bid) {
+      const { data } = await api.GET('/batches/{id}/playbook', { params: { path: { id: String(bid) } } } as any)
+      if (data) { playbookDoc.value = data }
+    }
+  } catch { /* 容错：无手册端点则静默 */ }
 }
 async function getLatest() {
   const { data, error } = await api.GET('/cases/{id}/recordings/latest', { params: { path: { id } } })
@@ -93,6 +170,13 @@ async function loadReview(recId: string) {
   const { data, error } = await api.GET('/recordings/{id}/ai-review', { params: { path: { id: recId } } })
   if (error) { ElMessage.error('复盘加载失败'); return }
   review.value = data
+  midTab.value = 'playbook'   // 复盘载入后切到作战手册 Tab（摘要/风险/建议在此渲染）
+}
+// 沟通记录点 call 项 → 拉取最新录音的 AI 复盘
+async function openCallReview() {
+  if (recObj.value) { loadReview(recObj.value.id); return }
+  await getLatest()
+  if (recObj.value) loadReview(recObj.value.id)
 }
 // 录音：上传 / 解析 / 结果标记
 async function uploadRecording(e: any) {
@@ -130,6 +214,42 @@ async function batchParseRec() {
   ElMessage.success('已受理批量补解析：入队 ' + (r?.queued ?? 0) + ' 条' + (r?.skipped ? ('，余额不足跳过 ' + r.skipped + ' 条') : ''))
   getLatest()
 }
+// 转工单类型受控选项(提交仍是 TicketInput.type 字符串)
+const TICKET_TYPES: string[] = ['上门核实', '材料证明', '法务工单', '信息核实', '其他']
+// 结案原因受控选项 — 优先取 settings(CFG-CLOSE-REASONS)，取不到回退预置；按 close kind 过滤
+const CLOSE_REASONS_FALLBACK: Record<string, Array<{ code: string; label: string }>> = {
+  WITHDRAWN: [
+    { code: 'NEGOTIATED_WITHDRAW', label: '协商撤回' },
+    { code: 'WRONG_FILING', label: '错误立案' },
+    { code: 'OTHER', label: '其它' }
+  ],
+  BAD_DEBT: [
+    { code: 'UNREACHABLE_NO_ASSET', label: '失联无财产' },
+    { code: 'REFUSE_WRITEOFF', label: '拒缴核销' },
+    { code: 'OTHER', label: '其它' }
+  ]
+}
+// settings 下发的 close 原因(扁平 {kind,code,label})，loadCloseReasons 填充；空则用回退
+const closeReasonsCfg = ref<Array<{ kind?: string; code?: string; label?: string }>>([])
+// 当前结案类型对应的可选原因(settings 优先，按 kind 过滤；无则回退预置)
+const closeReasonOptions = computed<Array<{ code: string; label: string }>>(function () {
+  var kind = form.value && form.value.closeKind
+  var fromCfg = closeReasonsCfg.value
+    .filter(function (r: any) { return r && r.kind === kind && r.code })
+    .map(function (r: any) { return { code: r.code, label: r.label || r.code } })
+  return fromCfg.length ? fromCfg : (CLOSE_REASONS_FALLBACK[kind] || CLOSE_REASONS_FALLBACK.WITHDRAWN)
+})
+// 取 settings 的 CLOSE_REASONS 域(容错：无端点/无权限静默回退)
+async function loadCloseReasons() {
+  try {
+    const { data } = await api.GET('/settings', { params: { query: { domain: 'CLOSE_REASONS' } } } as any)
+    var arr = (data as any) || []
+    var flat: Array<{ kind?: string; code?: string; label?: string }> = []
+    arr.forEach(function (s: any) { (s && s.closeReasons ? s.closeReasons : []).forEach(function (r: any) { flat.push(r) }) })
+    closeReasonsCfg.value = flat
+  } catch { /* 容错：回退预置 */ }
+}
+
 const mkdlg = ref(false); const mkForm = ref<any>({})
 function openMark(recId: string) { mkForm.value = { recId, mark: markCodes.value[0]?.code ?? 'PROMISED' }; mkdlg.value = true }
 async function submitMark() {
@@ -152,8 +272,8 @@ function openAct(kind: string, title: string, sourceSuggestionId?: string) {
   form.value = kind === 'follow' ? { content: '', method: 'CALL', attachments: [], sourceSuggestionId }
     : kind === 'promise' ? { date: '', amountYuan: 0, installments: [], sourceSuggestionId }
     : kind === 'ticket' ? { type: '上门核实', note: '', sourceSuggestionId }
-    : kind === 'close' ? { closeKind: 'WITHDRAWN', reason: '' }
-    : kind === 'repay' ? { amountYuan: 0, channel: 'WECHAT_QR', paidAt: '' }
+    : kind === 'close' ? { closeKind: 'WITHDRAWN', reasonCode: '', reasonNote: '' }
+    : kind === 'repay' ? { amountYuan: 0, channel: 'WECHAT_QR', paidAt: '', note: '' }
     : kind === 'legal' ? { type: 'COLLECTION_LETTER' }
     : kind === 'evidence' ? { scene: 'RECORDING', note: '', refIds: [] }
     : { channel: 'SMS', sourceSuggestionId }
@@ -176,8 +296,16 @@ async function submitAct() {
     res = await api.POST('/cases/{id}/promises', { params: { path: { id } }, body: { date: f.date, amountCents: Math.round(f.amountYuan * 100), installments: inst.length ? inst : undefined, sourceSuggestionId: f.sourceSuggestionId } as any })
   }
   else if (k === 'ticket') res = await api.POST('/cases/{id}/tickets', { params: { path: { id } }, body: { type: f.type, note: f.note, sourceSuggestionId: f.sourceSuggestionId } as any })
-  else if (k === 'close') res = await api.POST('/cases/{id}/close', { params: { path: { id } }, body: { kind: f.closeKind, reason: f.reason } as any })
-  else if (k === 'repay') res = await api.POST('/cases/{id}/repay-lines', { params: { path: { id } }, body: { amountCents: Math.round(f.amountYuan * 100), channel: f.channel, paidAt: f.paidAt } as any })
+  else if (k === 'close') {
+    // 受控原因下拉 → 取选中 label；选"其它"(code=OTHER)时拼接备注。最终 reason 仍是字符串(CloseInput.reason 必填)
+    var picked = closeReasonOptions.value.find(function (o: any) { return o.code === f.reasonCode })
+    var label = picked ? picked.label : ''
+    var note = (f.reasonNote || '').trim()
+    if (!label) { ElMessage.error('请选择结案原因'); return }
+    var reason = (f.reasonCode === 'OTHER' && note) ? (label + '：' + note) : label
+    res = await api.POST('/cases/{id}/close', { params: { path: { id } }, body: { kind: f.closeKind, reason } as any })
+  }
+  else if (k === 'repay') res = await api.POST('/cases/{id}/repay-lines', { params: { path: { id } }, body: { amountCents: Math.round(f.amountYuan * 100), channel: f.channel, paidAt: f.paidAt, note: (f.note && f.note.trim()) ? f.note.trim() : undefined } as any })
   else if (k === 'legal') res = await api.POST('/cases/{id}/legal-docs', { params: { path: { id } }, body: { type: f.type } as any })
   else if (k === 'evidence') {
     // H-02: RECORDING/DELIVERY 必带 refIds(指向 READY 录音/SIGNED 文书)，否则后端 422
@@ -267,166 +395,295 @@ function adopt(card: any) {
   if (!auth.has(m[2])) { ElMessage.warning('无权限：' + m[2]); return }
   openAct(m[0], m[1] + '（采纳 AI 建议）', card.id)
 }
-onMounted(loadAll)
+onMounted(function () { loadAll(); loadCloseReasons() })
 </script>
 
 <template>
-  <div v-if="d">
-    <el-page-header @back="router.back()" :content="`案件作业台：${d.case?.ownerName} ${d.case?.room} · ${d.case?.status}`" style="margin-bottom:12px" />
-    <el-card style="margin-bottom:12px">
-      <!-- M-01: availableActions(CaseDetail.availableActions) 非空时作 SSOT；为空回退纯权限(BR-M8-04) -->
-      <el-button v-if="canAct('follow','case.follow')" type="primary" size="small" @click="openAct('follow','写跟进')">写跟进</el-button>
-      <el-button v-if="canAct('promise','case.promise')" size="small" @click="openAct('promise','登记承诺')">登记承诺</el-button>
-      <el-button v-if="canAct('ticket','case.ticket')" size="small" @click="openAct('ticket','转工单')">转工单</el-button>
-      <el-button v-if="canAct('paylink','case.paylink')" size="small" @click="openAct('paylink','发缴费链接')">发缴费链接</el-button>
-      <el-button v-if="canAct('repay','case.repay.mark')" size="small" type="success" @click="openAct('repay','登记还款')">登记还款</el-button>
-      <el-button v-if="canAct('follow','case.follow')" size="small" @click="suggestLegal">建议走法务</el-button>
-      <el-button v-if="canAct('legal','legal.create')" size="small" @click="openAct('legal','申请法务文书')">申请法务</el-button>
-      <el-button v-if="canAct('evidence','evidence.create')" size="small" @click="openAct('evidence','发起存证')">发起存证</el-button>
-      <el-button v-if="canAct('release','case.release')" size="small" @click="lifecycle('释放','/cases/{id}/release')">释放</el-button>
-      <el-button v-if="canAct('return','case.return')" size="small" @click="lifecycle('退回','/cases/{id}/return')">退回</el-button>
-      <el-button v-if="canAct('close','case.close')" size="small" type="danger" plain @click="openAct('close','结案')">结案</el-button>
-    </el-card>
+  <div v-if="d" class="case3">
+    <!-- ============ 左栏：业主画像 ============ -->
+    <div class="col left">
+      <div class="portrait-top">
+        <div class="portrait-av" style="background:var(--primary)">{{ ownerInitial }}</div>
+        <div class="portrait-id">
+          <div class="nm">{{ d.case?.ownerName || '—' }}</div>
+          <div class="sub">{{ d.case?.room || '—' }} · 户号 {{ d.case?.acctNo || '—' }}</div>
+        </div>
+        <div class="portrait-amt">
+          <div class="a num">{{ yuan(d.case?.dueCents) }}</div>
+          <div class="s">应收欠费</div>
+        </div>
+      </div>
+      <!-- 状态徽标（省略原型画像风险标签 ptags：后端无数据） -->
+      <div class="ptags" style="margin-top:12px">
+        <span class="tag" :class="caseStatusTag(d.case?.status)">{{ d.case?.status }}</span>
+        <span v-if="d.case?.pool" class="tag inf">{{ d.case.pool }}</span>
+        <span v-if="redacted" class="tag inf">已脱敏</span>
+      </div>
+      <div class="pstats" style="margin-top:12px">
+        <div><div class="v num">{{ (d.contacts ?? []).length }}</div><div class="k">联系次数</div></div>
+        <div><div class="v num">{{ promises.length }}</div><div class="k">承诺次数</div></div>
+        <div><div class="v num">{{ tickets.length }}</div><div class="k">工单数</div></div>
+      </div>
 
-    <el-tabs>
-      <el-tab-pane label="概览 / 联系人">
-        <!-- H-05: 结案脱敏(redacted)且非平台 → 统计收敛视图，不渲染逐行明细 -->
-        <template v-if="summaryView">
-          <el-alert type="info" :closable="false" style="margin-bottom:10px" title="本案已结案并脱敏（BR-M8-09）：仅展示统计汇总，业主姓名/联系方式等明细已收敛。" />
-          <el-descriptions :column="3" border size="small">
-            <el-descriptions-item label="户号">{{ d.case?.acctNo }}</el-descriptions-item>
-            <el-descriptions-item label="状态">{{ d.case?.status }}</el-descriptions-item>
-            <el-descriptions-item label="池">{{ d.case?.pool }}</el-descriptions-item>
-          </el-descriptions>
-          <el-row :gutter="12" style="margin-top:12px">
-            <el-col :span="6"><el-statistic title="应收" :value="(stat.dueCents ?? 0)/100" :precision="2" prefix="¥" /></el-col>
-            <el-col :span="6"><el-statistic title="减免后" :value="(stat.reduceAfterCents ?? 0)/100" :precision="2" prefix="¥" /></el-col>
-            <el-col :span="6"><el-statistic title="已回款合计" :value="stat.repaidCents/100" :precision="2" prefix="¥" /></el-col>
-            <el-col :span="6"><el-statistic title="联系方式数" :value="stat.contactCount" /></el-col>
-          </el-row>
-          <el-row :gutter="12" style="margin-top:12px">
-            <el-col :span="6"><el-statistic title="承诺数" :value="stat.promiseCount" /></el-col>
-            <el-col :span="6"><el-statistic title="工单数" :value="stat.ticketCount" /></el-col>
-          </el-row>
-        </template>
-        <template v-else>
-        <el-descriptions :column="3" border size="small">
-          <el-descriptions-item label="户号">{{ d.case?.acctNo }}</el-descriptions-item>
-          <el-descriptions-item label="应收">{{ yuan(d.case?.dueCents) }}</el-descriptions-item>
-          <el-descriptions-item label="减免后">{{ yuan(d.case?.reduceAfterCents ?? d.case?.dueCents) }}</el-descriptions-item>
-          <el-descriptions-item label="状态">{{ d.case?.status }}</el-descriptions-item>
-          <el-descriptions-item label="池">{{ d.case?.pool }}</el-descriptions-item>
-        </el-descriptions>
-        <el-divider content-position="left">联系方式 <el-button v-if="auth.has('case.follow')" size="small" text type="primary" @click="openAddContact">+ 新增</el-button></el-divider>
-        <el-table :data="d.contacts ?? []" size="small" border>
-          <el-table-column prop="phone" label="电话" /><el-table-column prop="label" label="标签" />
-          <el-table-column label="主号" width="70"><template #default="{row}"><el-tag v-if="row.isPrimary" size="small" type="warning">主号</el-tag></template></el-table-column>
-          <el-table-column label="状态"><template #default="{row}"><el-tag size="small" :type="row.invalid?'info':'success'">{{ row.invalid?'失效':'有效' }}</el-tag></template></el-table-column>
-          <el-table-column label="操作" width="150"><template #default="{row}">
-            <el-button v-if="!row.invalid && !row.isPrimary && auth.has('case.follow')" size="small" text type="primary" @click="setPrimaryContact(row)">设主号</el-button>
-            <el-button v-if="!row.invalid && auth.has('case.follow')" size="small" text @click="invalidContact(row)">标失效</el-button>
-          </template></el-table-column>
-        </el-table>
-        </template>
-        <template v-if="payLinks.length">
-          <el-divider content-position="left">缴费链接（本会话创建 · BR-M4-14 重发/作废）</el-divider>
-          <el-table :data="payLinks" size="small" border>
-            <el-table-column prop="token" label="token" /><el-table-column label="金额"><template #default="{row}">{{ yuan(row.amountCents) }}</template></el-table-column>
-            <el-table-column label="状态" width="90"><template #default="{row}"><el-tag size="small" :type="row.status==='ACTIVE'?'success':'info'">{{ row.status==='ACTIVE'?'有效':'已失效' }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="160"><template #default="{row}">
-              <el-button v-if="row.status==='ACTIVE' && auth.has('case.paylink')" size="small" @click="resendLink(row)">重发</el-button>
-              <el-button v-if="row.status==='ACTIVE' && auth.has('case.paylink')" size="small" text type="danger" @click="voidLink(row)">作废</el-button>
-            </template></el-table-column>
-          </el-table>
-        </template>
-      </el-tab-pane>
+      <!-- 欠费详情：欠费周期=arrearagePeriods、应收=dueCents、减免后=reduceAfterCents -->
+      <div class="sec-title">欠费详情</div>
+      <table class="arrears"><tbody>
+        <tr>
+          <td>欠费周期</td>
+          <td class="r" style="color:var(--reg);font-weight:400">
+            <template v-if="(d.case?.arrearagePeriods ?? []).length">{{ d.case.arrearagePeriods.join('、') }}</template>
+            <template v-else>—</template>
+          </td>
+        </tr>
+        <tr><td>应收</td><td class="r">{{ yuan(d.case?.dueCents) }}</td></tr>
+        <tr><td>减免后</td><td class="r" style="color:var(--success)">{{ yuan(d.case?.reduceAfterCents ?? d.case?.dueCents) }}</td></tr>
+        <tr><td><b>状态</b></td><td class="r" style="font-weight:400"><span class="tag" :class="caseStatusTag(d.case?.status)">{{ d.case?.status }}</span></td></tr>
+      </tbody></table>
 
-      <el-tab-pane label="通话 / AI 复盘">
-        <el-button size="small" v-if="auth.has('case.call')" @click="getLatest">获取最新通话录音</el-button>
-        <el-button size="small" v-if="auth.has('case.call')" tag="label" style="margin-left:6px">上传录音<input type="file" hidden accept="audio/*" @change="uploadRecording" /></el-button>
-        <template v-if="latest?.hasRecording && latest.recording">
-          <el-descriptions :column="3" border size="small" style="margin-top:8px">
-            <el-descriptions-item label="状态">{{ latest.recording.status }}</el-descriptions-item>
-            <el-descriptions-item label="时长">{{ latest.recording.durationSec }}s</el-descriptions-item>
-            <el-descriptions-item label="操作">
-              <el-button size="small" type="primary" @click="loadReview(latest.recording.id)">看 AI 复盘</el-button>
-              <el-button size="small" @click="router.push(`/cases/${id}/call/${latest.recording.id}`)">通话记录详情</el-button>
-              <el-button v-if="latest.recording.status==='FAILED'" size="small" @click="reprocessRec(latest.recording.id)">重新处理</el-button>
-              <!-- H-06: QUOTA_BLOCKED 充值后补解析(单条 parse + 批量 batch-parse) -->
-              <el-button v-if="latest.recording.status==='QUOTA_BLOCKED' && auth.has('case.call')" size="small" type="warning" @click="parseRec(latest.recording.id)">补解析</el-button>
-              <el-button v-if="latest.recording.status==='QUOTA_BLOCKED' && auth.has('case.call')" size="small" @click="batchParseRec">批量补解析</el-button>
-              <!-- H-05: 标记结果调 POST /recordings/{id}/ai-review x-permission=case.follow，非 case.call -->
-              <el-button v-if="auth.has('case.follow')" size="small" @click="openMark(latest.recording.id)">标记结果</el-button>
-            </el-descriptions-item>
-          </el-descriptions>
-          <el-alert v-if="latest.recording.status==='QUOTA_BLOCKED'" type="warning" :closable="false" style="margin-top:8px" title="解析余额不足已暂停（BR-M5-02）：充值解析分钟后点「补解析」按时间顺序续解析。" />
+      <!-- 联系方式（脱敏收敛态不渲染明细） -->
+      <div class="sec-title" style="margin-top:14px">
+        联系方式
+        <el-button v-if="!summaryView && auth.has('case.follow')" size="small" text type="primary" @click="openAddContact">+ 新增</el-button>
+      </div>
+      <template v-if="summaryView">
+        <div class="alert info" style="font-size:12px">本案已结案并脱敏（BR-M8-09）：明细已收敛，仅展示数量 {{ (d.contacts ?? []).length }} 个联系方式。</div>
+      </template>
+      <template v-else>
+        <div v-for="ct in (d.contacts ?? [])" :key="ct.id" class="contact-item">
+          <div class="ct-top">
+            <span class="ct-phone">{{ ct.phone }}</span>
+            <span class="ct-ops">
+              <a v-if="!ct.isPrimary && !ct.invalid && auth.has('case.follow')" class="btn txt" style="font-size:12px" @click="setPrimaryContact(ct)">设为主号码</a>
+              <a v-if="!ct.invalid && auth.has('case.follow')" class="btn txt" style="font-size:12px;color:var(--danger,#F56C6C)" @click="invalidContact(ct)">标记无效</a>
+            </span>
+          </div>
+          <div class="ct-tags">
+            <span class="tag inf">{{ ct.label }}</span>
+            <span v-if="ct.isPrimary" class="tag pri">主号码</span>
+            <span v-if="ct.invalid" class="tag dan">无效</span>
+          </div>
+        </div>
+        <div v-if="!(d.contacts ?? []).length" class="note" style="font-size:12px">暂无联系方式。</div>
+      </template>
+
+      <!-- 最近承诺 -->
+      <div class="sec-title" style="margin-top:14px">最近承诺</div>
+      <template v-if="promises.length">
+        <div style="font-size:13px;color:var(--reg);background:#fffbeb;border:1px solid #f5dab1;border-radius:6px;padding:9px;margin-top:4px">
+          {{ promises[0].date }} {{ yuan(promises[0].amountCents) }}
+          <span class="tag war" style="font-size:11px;margin-left:6px">{{ promises[0].state || '待兑现' }}</span>
+          <span v-if="promises[0].installments?.length" class="tag inf" style="font-size:11px;margin-left:4px">{{ promises[0].installments.length }} 期</span>
+        </div>
+      </template>
+      <div v-else class="note" style="font-size:12px">暂无承诺记录。</div>
+    </div>
+
+    <!-- ============ 中栏：三 Tab ============ -->
+    <div class="col mid">
+      <div class="dtabs" style="padding:14px 14px 0">
+        <div class="t" :class="{ on: midTab === 'timeline' }" @click="midTab = 'timeline'">沟通记录</div>
+        <div class="t" :class="{ on: midTab === 'project' }" @click="midTab = 'project'">项目资料</div>
+        <div class="t" :class="{ on: midTab === 'playbook' }" @click="midTab = 'playbook'">作战手册</div>
+      </div>
+
+      <!-- Tab1：沟通记录（timeline） -->
+      <div class="midpanel" v-show="midTab === 'timeline'">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+          <span class="tag-pick" :class="{ on: tlFilter === 'all' }" @click="tlFilter = 'all'">全部</span>
+          <span class="tag-pick" :class="{ on: tlFilter === 'call' }" @click="tlFilter = 'call'">通话</span>
+          <span class="tag-pick" :class="{ on: tlFilter === 'note' }" @click="tlFilter = 'note'">跟进</span>
+          <span class="tag-pick" :class="{ on: tlFilter === 'ticket' }" @click="tlFilter = 'ticket'">工单</span>
+          <span class="tag-pick" :class="{ on: tlFilter === 'promise' }" @click="tlFilter = 'promise'">承诺</span>
+          <span class="tag-pick" :class="{ on: tlFilter === 'legal' }" @click="tlFilter = 'legal'">法务存证</span>
+          <span class="tag-pick" :class="{ on: tlFilter === 'sms' }" @click="tlFilter = 'sms'">催费单</span>
+          <span class="tag-pick" :class="{ on: tlFilter === 'status' }" @click="tlFilter = 'status'">状态日志</span>
+        </div>
+        <div class="tl" v-if="tlFiltered.length">
+          <div
+            class="e"
+            :class="{ clickable: String(ev.type).toUpperCase() === 'CALL' }"
+            v-for="ev in tlFiltered"
+            :key="ev.id"
+            @click="String(ev.type).toUpperCase() === 'CALL' ? openCallReview() : null"
+          >
+            <span class="ty" :class="tlTy(ev.type)">{{ tlLabel(ev.type) }}</span>
+            <span class="tm">{{ ev.createdAt }}</span>
+            {{ ev.content }}
+            <span v-if="ev.actor" style="color:var(--sec);font-size:12px"> · {{ ev.actor }}</span>
+            <span v-if="String(ev.type).toUpperCase() === 'CALL'" class="td-arr">›</span>
+          </div>
+        </div>
+        <div v-else class="note">暂无记录。</div>
+      </div>
+
+      <!-- Tab2：项目资料（projectRef） -->
+      <div class="midpanel" v-show="midTab === 'project'">
+        <div class="sec-title" style="margin-top:0">项目档案</div>
+        <div class="desc">
+          <div class="r"><div class="k">项目名称</div><div class="v">{{ d.case?.projectName || '—' }}</div></div>
+          <div class="r"><div class="k">合同类型</div><div class="v">{{ projectRef.contractType || '—' }}</div></div>
+          <div class="r"><div class="k">批次号</div><div class="v">{{ d.case?.batchId || '—' }}</div></div>
+        </div>
+        <div class="sec-title">收费标准（收费依据）</div>
+        <div class="desc">
+          <div class="r"><div class="k">收费标准</div><div class="v">{{ projectRef.feeStd || '—' }}</div></div>
+        </div>
+        <div class="sec-title">收款信息（催收依据）</div>
+        <div class="desc">
+          <div class="r"><div class="k">收款信息</div><div class="v" style="white-space:pre-wrap">{{ projectRef.payInfo || '—' }}</div></div>
+        </div>
+        <div class="sec-title">减免规则</div>
+        <template v-if="(projectRef.reduceTiers ?? []).length">
+          <div class="desc">
+            <div class="r" v-for="(t, ti) in projectRef.reduceTiers" :key="ti">
+              <div class="k">档位 {{ ti + 1 }}</div>
+              <div class="v">
+                {{ t.discount }}
+                <span v-if="t.waivePenalty" class="tag suc" style="margin-left:6px">免滞纳金</span>
+                <span v-if="t.capCents != null" class="tag inf" style="margin-left:6px">上限 {{ yuan(t.capCents) }}</span>
+                <span class="tag war" style="margin-left:6px">{{ reduceDecideLabel[t.decide] || t.decide }}</span>
+              </div>
+            </div>
+          </div>
         </template>
+        <div v-else class="note" style="font-size:12px">本项目暂无减免档位。</div>
+      </div>
+
+      <!-- Tab3：作战手册（AI 复盘摘要/风险/建议 + 静态 playbook） -->
+      <div class="midpanel" v-show="midTab === 'playbook'">
         <template v-if="review">
-          <el-divider>AI 复盘</el-divider>
-          <p><b>小结：</b>{{ review.summary }}</p>
-          <!-- M-02: 说话人分离对话气泡(review.dialogue) -->
-          <template v-if="review.dialogue?.length">
-            <div style="max-height:260px;overflow:auto;background:#f5f7fa;padding:8px;border-radius:4px;margin:6px 0">
-              <div v-for="(turn,ti) in review.dialogue" :key="ti" style="display:flex;margin:4px 0" :style="{ justifyContent: turn.speaker==='AGENT' || turn.speaker==='催收员' ? 'flex-end' : 'flex-start' }">
-                <div :style="{ maxWidth:'72%', background: turn.speaker==='AGENT' || turn.speaker==='催收员' ? '#d9ecff' : '#fff', border:'1px solid #e4e7ed', borderRadius:'6px', padding:'6px 10px' }">
-                  <div style="font-size:12px;color:#909399">{{ turn.speaker }}</div>
-                  <div style="font-size:13px;white-space:pre-wrap">{{ turn.text }}</div>
-                </div>
+          <div class="sec-title" style="margin-top:0">AI 通话复盘 <span style="font-size:12px;font-weight:400;color:var(--sec)">据本次通话生成，仅建议</span></div>
+          <div class="bgbox">📋 通话小结：{{ review.summary || '—' }}</div>
+          <!-- 风险条 -->
+          <div
+            v-for="(r, ri) in (review.risks ?? [])"
+            :key="ri"
+            class="riskbar"
+            :class="(r.level === 'HIGH' || r.level === 'H') ? 'l2' : 'l1'"
+          >
+            ⚠ {{ r.level }} · {{ r.desc }}<span v-if="r.segmentTs" style="color:var(--sec)"> @{{ r.segmentTs }}</span>
+          </div>
+          <!-- 建议卡 StrategyCard -->
+          <div class="aicard script" v-for="su in (review.suggestions ?? [])" :key="su.id">
+            <div class="h">
+              <span>💡 {{ su.type || '策略建议' }}</span>
+              <span v-if="su.confidence" class="tag pri">置信度 {{ su.confidence }}</span>
+            </div>
+            <div class="ti">{{ su.title }}</div>
+            <div class="tx">{{ su.body }}</div>
+            <div v-if="su.trigger" class="note" style="font-size:11px;margin-top:4px">触发：{{ su.trigger }}</div>
+            <div v-if="su.actionRef && su.actionRef !== 'NONE'" class="cta">
+              <el-button size="small" type="primary" @click="adopt(su)">✓ 采纳 → {{ su.actionRef }}</el-button>
+            </div>
+          </div>
+        </template>
+        <div v-else class="alert info" style="margin-top:0">通话后在右侧操作区「查看 AI 复盘」或在沟通记录点通话项，载入本次通话的 AI 复盘（摘要/风险/建议）。</div>
+
+        <!-- 静态：物业作战手册底稿（项目/批次维护，案件详情只读调阅） -->
+        <div class="sec-title" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--bd)">
+          物业静态资料
+          <span style="font-size:12px;font-weight:400;color:var(--sec)">随项目/批次维护，案件详情只读调阅</span>
+        </div>
+        <template v-if="playbookDoc?.content">
+          <div class="note" style="line-height:2;background:#f8fafc;border:1px solid var(--bd);border-radius:6px;padding:10px;white-space:pre-wrap">
+            <b v-if="playbookDoc.version">版本：{{ playbookDoc.version }}</b><br v-if="playbookDoc.version">
+            {{ playbookDoc.content }}
+          </div>
+        </template>
+        <div v-else class="note" style="font-size:12px">暂无作战手册底稿（项目/批次未维护）。</div>
+      </div>
+    </div>
+
+    <!-- ============ 右栏：操作区 ============ -->
+    <div class="col right">
+      <div class="opzone">
+        <div style="font-size:13px;font-weight:600;color:var(--txt);margin-bottom:10px;display:flex;align-items:center;gap:6px">
+          <span style="width:3px;height:13px;background:var(--primary);border-radius:2px;display:inline-block"></span>操作区
+        </div>
+
+        <!-- 录音解析（复用现有 latest/review 逻辑） -->
+        <div v-if="auth.has('case.call')" class="op-rec">
+          <div class="op-rec-h">本次通话回填</div>
+          <div class="note" style="font-size:11px;margin:0 0 8px;line-height:1.6">ⓘ 平台不感知拨打时机；按作战手册通话后，点下方拉取本机最新录音（App 自动上传解析）。</div>
+          <button class="btn sm" style="width:100%" @click="getLatest">🔄 获取最新通话录音</button>
+          <div v-if="recReady" class="rec-ready">
+            <div class="rr-meta">
+              <span class="tag" :class="recStatusTag(recObj.status)">{{ recObj.status }}</span>
+              最新通话 · {{ recObj.durationSec }}s
+            </div>
+            <button v-if="recObj.status === 'READY'" class="btn sm" style="width:100%;margin-top:7px" @click="loadReview(recObj.id)">查看并标注（AI 复盘）→</button>
+            <div class="toolbar" style="margin-top:7px;gap:6px;flex-wrap:wrap">
+              <el-button size="small" @click="router.push(`/cases/${id}/call/${recObj.id}`)">通话详情</el-button>
+              <el-button v-if="recObj.status === 'FAILED'" size="small" @click="reprocessRec(recObj.id)">重新处理</el-button>
+              <el-button v-if="recObj.status === 'QUOTA_BLOCKED'" size="small" type="warning" @click="parseRec(recObj.id)">补解析</el-button>
+              <el-button v-if="recObj.status === 'QUOTA_BLOCKED'" size="small" @click="batchParseRec">批量补解析</el-button>
+              <el-button v-if="auth.has('case.follow')" size="small" @click="openMark(recObj.id)">标记结果</el-button>
+            </div>
+            <div v-if="recObj.status === 'QUOTA_BLOCKED'" class="alert warn" style="font-size:11px;margin-top:6px">解析余额不足已暂停（BR-M5-02）：充值后点「补解析」续解析。</div>
+          </div>
+          <div class="note" style="font-size:11px;margin-top:8px;line-height:1.7">
+            未发现新录音？App 可能仍在上传 ·
+            <label class="btn txt" style="padding:0 2px;cursor:pointer">手动上传<input type="file" hidden accept="audio/*" @change="uploadRecording" /></label>（救济）
+          </div>
+          <div style="border-bottom:1px solid var(--bd);margin:12px 0"></div>
+        </div>
+
+        <!-- 操作区按钮（复用现有 openAct(kind)；显隐沿用 canAct 判断） -->
+        <div class="sec-title" style="margin:6px 0 6px">催收作业</div>
+        <button v-if="canAct('follow', 'case.follow')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('follow', '写跟进')">写跟进</button>
+        <button v-if="canAct('promise', 'case.promise')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('promise', '登记承诺')">登记承诺</button>
+        <button v-if="canAct('ticket', 'case.ticket')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('ticket', '转工单')">转工单</button>
+        <button v-if="canAct('paylink', 'case.paylink')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('paylink', '发缴费链接')">发缴费链接</button>
+        <button v-if="canAct('repay', 'case.repay.mark')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('repay', '登记还款')">登记还款</button>
+        <button v-if="canAct('follow', 'case.follow')" class="btn sm" style="width:100%;margin-bottom:6px" @click="suggestLegal">建议走法务</button>
+        <button v-if="canAct('release', 'case.release')" class="btn sm" style="width:100%;margin-bottom:6px" @click="lifecycle('释放', '/cases/{id}/release')">释放</button>
+        <button v-if="canAct('return', 'case.return')" class="btn sm" style="width:100%;margin-bottom:6px" @click="lifecycle('退回', '/cases/{id}/return')">退回</button>
+
+        <!-- 缴费链接（本会话创建·重发/作废 BR-M4-14） -->
+        <template v-if="payLinks.length">
+          <div class="sec-title" style="margin:10px 0 6px">缴费链接（本会话）</div>
+          <div v-for="l in payLinks" :key="l.id" class="note" style="font-size:12px;border:1px solid var(--bd);border-radius:6px;padding:7px 9px;margin-bottom:6px">
+            <div>{{ l.token }} · {{ yuan(l.amountCents) }} <span class="tag" :class="l.status === 'ACTIVE' ? 'suc' : 'inf'">{{ l.status === 'ACTIVE' ? '有效' : '已失效' }}</span></div>
+            <div v-if="l.status === 'ACTIVE' && auth.has('case.paylink')" class="toolbar" style="margin-top:5px;gap:6px">
+              <el-button size="small" @click="resendLink(l)">重发</el-button>
+              <el-button size="small" text type="danger" @click="voidLink(l)">作废</el-button>
+            </div>
+          </div>
+        </template>
+
+        <!-- 送达存证（PC/PL/SA：律师函/催收单/诉讼/证据下载/存证清单·复用现有 evidence/legal 入口） -->
+        <template v-if="canAct('legal', 'legal.create') || canAct('evidence', 'evidence.create')">
+          <div class="sec-title" style="margin-top:14px">送达存证</div>
+          <button v-if="canAct('legal', 'legal.create')" class="btn df sm" style="width:100%;margin-bottom:6px" @click="openAct('legal', '申请法务文书')">⚖ 申请法务文书</button>
+          <button v-if="canAct('evidence', 'evidence.create')" class="btn df sm" style="width:100%;margin-bottom:6px" @click="openAct('evidence', '发起存证')">🔒 发起存证（录音/送达/材料包）</button>
+          <!-- 法务文书列表：登记送达入口 -->
+          <template v-if="legalDocs.length">
+            <div v-for="doc in legalDocs" :key="doc.id" class="note" style="font-size:12px;border:1px solid var(--bd);border-radius:6px;padding:7px 9px;margin-bottom:6px">
+              <div>{{ doc.type }} <span class="tag inf">{{ doc.status }}</span></div>
+              <div v-if="doc.status !== 'DELIVERED' && auth.has('legal.create')" class="toolbar" style="margin-top:5px">
+                <el-button size="small" @click="deliverLegal(doc)">登记送达</el-button>
               </div>
             </div>
           </template>
-          <!-- M-02: 风险标签追加 segmentTs 片段定位 -->
-          <p v-if="review.risks?.length"><b>风险：</b><el-tag v-for="(r,ri) in review.risks" :key="ri" type="danger" size="small" style="margin:2px">{{ r.level }} {{ r.desc }}<span v-if="r.segmentTs"> @{{ r.segmentTs }}</span></el-tag></p>
-          <el-card v-for="su in review.suggestions ?? []" :key="su.id" shadow="never" style="margin:6px 0">
-            <b>{{ su.title }}</b> <el-tag size="small">{{ su.type }}</el-tag>
-            <div style="color:#606266;font-size:13px">{{ su.body }}</div>
-            <el-button v-if="su.actionRef && su.actionRef!=='NONE'" size="small" type="primary" text @click="adopt(su)">采纳 → {{ su.actionRef }}</el-button>
-          </el-card>
         </template>
-      </el-tab-pane>
 
-      <el-tab-pane label="承诺 / 工单">
-        <el-divider content-position="left">承诺（含分期）</el-divider>
-        <el-table :data="promises" size="small" border>
-          <el-table-column prop="date" label="日期" /><el-table-column label="金额"><template #default="{row}">{{ yuan(row.amountCents) }}</template></el-table-column>
-          <el-table-column prop="state" label="状态" /><el-table-column label="分期"><template #default="{row}">{{ row.installments?.length ? row.installments.length+' 期' : '单笔' }}</template></el-table-column>
-        </el-table>
-        <el-divider content-position="left">工单</el-divider>
-        <el-table :data="tickets" size="small" border>
-          <el-table-column prop="type" label="类型" /><el-table-column prop="note" label="说明" />
-          <el-table-column prop="status" label="状态" width="90" /><el-table-column prop="result" label="结果" />
-          <el-table-column label="操作" width="90"><template #default="{row}"><el-button v-if="row.status==='PENDING' && auth.has('ticket.handle')" size="small" type="primary" @click="openHandle(row)">处理</el-button></template></el-table-column>
-        </el-table>
-      </el-tab-pane>
+        <!-- CO 法务进度只读（case.legalStage） -->
+        <template v-if="d.case?.legalStage">
+          <div class="sec-title" style="margin-top:14px">法务进度</div>
+          <div class="alert info" style="margin-top:0;font-size:12px">当前法务阶段：<b>{{ d.case.legalStage }}</b>（只读，由协调员主导）。</div>
+        </template>
 
-      <el-tab-pane label="回款">
-        <el-table :data="repays" size="small" border>
-          <el-table-column label="金额"><template #default="{row}">{{ yuan(row.amountCents) }}</template></el-table-column>
-          <el-table-column prop="channel" label="渠道" /><el-table-column prop="paidAt" label="日期" />
-          <el-table-column label="状态"><template #default="{row}"><el-tag size="small" :type="row.reversed?'info':(row.settled?'success':'warning')">{{ row.reversed?'已冲销':(row.settled?'已结':'未结') }}</el-tag></template></el-table-column>
-          <el-table-column label="操作" width="90"><template #default="{row}"><el-button v-if="!row.reversed && auth.has('case.repay.mark')" size="small" text type="danger" @click="reverseRepay(row)">冲销</el-button></template></el-table-column>
-        </el-table>
-      </el-tab-pane>
+        <!-- 危险操作（作废/坏账 → 结案 dlg） -->
+        <template v-if="canAct('close', 'case.close')">
+          <div class="sec-title" style="color:var(--dg,#F56C6C);margin-top:14px">终态操作（不可撤销）</div>
+          <button class="btn sm dg" style="width:100%" @click="openAct('close', '结案')">结案 / 坏账</button>
+        </template>
 
-      <el-tab-pane label="事件时间线">
-        <el-timeline>
-          <el-timeline-item v-for="ev in d.timeline ?? []" :key="ev.id" :timestamp="ev.createdAt" placement="top">
-            <el-tag size="small">{{ ev.type }}</el-tag> {{ ev.content }} <span style="color:#909399">· {{ ev.actor }}</span>
-          </el-timeline-item>
-          <el-empty v-if="!(d.timeline?.length)" description="暂无事件" :image-size="50" />
-        </el-timeline>
-      </el-tab-pane>
+        <div v-if="!canAct('follow', 'case.follow') && !canAct('legal', 'legal.create') && !canAct('close', 'case.close')" class="note" style="margin:8px 0 0">当前角色暂无可操作权限。</div>
+      </div>
+    </div>
 
-      <el-tab-pane label="法务 / 存证">
-        <el-table :data="legalDocs" size="small" border>
-          <el-table-column prop="type" label="文书类型" /><el-table-column prop="status" label="状态" width="100" />
-          <el-table-column prop="deliveredAt" label="送达时间" />
-          <el-table-column label="操作" width="100"><template #default="{row}"><el-button v-if="row.status!=='DELIVERED' && auth.has('legal.create')" size="small" @click="deliverLegal(row)">登记送达</el-button></template></el-table-column>
-        </el-table>
-        <el-alert type="info" :closable="false" style="margin-top:8px" title="存证：通过上方「发起存证」按场景(录音/送达/材料包)发起；列表与验真见「存证」菜单。" />
-      </el-tab-pane>
-    </el-tabs>
-
+    <!-- ===================== 保留 EL 对话框（仅触发入口换到三栏） ===================== -->
     <!-- 通用动作对话框 -->
     <el-dialog v-model="dlg.open" :title="dlg.title" width="500px">
       <el-form label-width="90px">
@@ -454,13 +711,14 @@ onMounted(loadAll)
           </el-form-item>
         </template>
         <template v-else-if="dlg.kind==='ticket'">
-          <el-form-item label="类型"><el-input v-model="form.type" /></el-form-item>
+          <el-form-item label="类型"><el-select v-model="form.type" style="width:100%"><el-option v-for="t in TICKET_TYPES" :key="t" :label="t" :value="t" /></el-select></el-form-item>
           <el-form-item label="说明"><el-input v-model="form.note" type="textarea" :rows="2" /></el-form-item>
         </template>
         <template v-else-if="dlg.kind==='repay'">
           <el-form-item label="金额(元)"><el-input-number v-model="form.amountYuan" :min="0" /></el-form-item>
           <el-form-item label="渠道"><el-select v-model="form.channel"><el-option v-for="c in ['WECHAT_QR','BANK_TRANSFER','CASH']" :key="c" :label="c" :value="c" /></el-select></el-form-item>
           <el-form-item label="到账日"><el-date-picker v-model="form.paidAt" type="date" value-format="YYYY-MM-DD" /></el-form-item>
+          <el-form-item label="备注"><el-input v-model="form.note" type="textarea" :rows="2" placeholder="凭证说明 / 备注(可选)" /></el-form-item>
         </template>
         <template v-else-if="dlg.kind==='legal'">
           <el-form-item label="文书类型"><el-select v-model="form.type"><el-option label="催款函" value="COLLECTION_LETTER" /><el-option label="律师函" value="LAWYER_LETTER" /><el-option label="诉讼" value="LITIGATION" /></el-select></el-form-item>
@@ -476,8 +734,9 @@ onMounted(loadAll)
           <el-form-item label="备注"><el-input v-model="form.note" /></el-form-item>
         </template>
         <template v-else-if="dlg.kind==='close'">
-          <el-form-item label="结案类型"><el-select v-model="form.closeKind"><el-option label="撤案" value="WITHDRAWN" /><el-option label="坏账" value="BAD_DEBT" /></el-select></el-form-item>
-          <el-form-item label="原因"><el-input v-model="form.reason" type="textarea" :rows="2" /></el-form-item>
+          <el-form-item label="结案类型"><el-select v-model="form.closeKind" @change="form.reasonCode=''"><el-option label="撤案" value="WITHDRAWN" /><el-option label="坏账" value="BAD_DEBT" /></el-select></el-form-item>
+          <el-form-item label="原因"><el-select v-model="form.reasonCode" style="width:100%" placeholder="请选择结案原因"><el-option v-for="o in closeReasonOptions" :key="o.code" :label="o.label" :value="o.code" /></el-select></el-form-item>
+          <el-form-item v-if="form.reasonCode==='OTHER'" label="备注"><el-input v-model="form.reasonNote" type="textarea" :rows="2" placeholder="其它原因说明" /></el-form-item>
         </template>
         <template v-else>
           <el-form-item label="渠道"><el-select v-model="form.channel"><el-option label="短信" value="SMS" /><el-option label="微信转发" value="WECHAT_COPY" /></el-select></el-form-item>

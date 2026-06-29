@@ -133,79 +133,103 @@ onMounted(loadAll)
 </script>
 
 <template>
-  <el-card v-if="b">
-    <template #header>
-      <el-button link @click="router.back()">← 返回批次</el-button>
-      <span style="margin-left:8px">批次详情：{{ b.code }}（视角 {{ b.viewRole }}）</span>
-    </template>
-    <el-descriptions :column="3" border size="small">
-      <el-descriptions-item label="状态">{{ b.status }}</el-descriptions-item>
-      <!-- 资金双线：收佣/付佣各自整项渲染，视角无对应字段时整项不出(H-03) -->
-      <el-descriptions-item v-if="showCommInRate" label="收佣比例">{{ ratePct(b.commInRate) }}</el-descriptions-item>
-      <el-descriptions-item v-if="showPayOutRate" label="付佣比例">{{ ratePct(b.payOutRate) }}</el-descriptions-item>
-    </el-descriptions>
+  <div v-if="b" class="batch-detail">
+    <!-- 概览卡 -->
+    <div class="card">
+      <div class="card-h">
+        <div class="t"><span class="bar"></span>批次详情：{{ b.code }}<span class="tag inf" style="font-weight:400">视角 {{ b.viewRole }}</span></div>
+        <div class="ops">
+          <button class="btn df sm" @click="router.back()">← 返回批次</button>
+        </div>
+      </div>
+      <div class="desc">
+        <div class="r"><div class="k">状态</div><div class="v">{{ b.status }}</div></div>
+        <!-- 资金双线：收佣/付佣各自整项渲染，视角无对应字段时整项不出(H-03) -->
+        <div v-if="showCommInRate" class="r"><div class="k">收佣比例</div><div class="v num">{{ ratePct(b.commInRate) }}</div></div>
+        <div v-if="showPayOutRate" class="r"><div class="k">付佣比例</div><div class="v num">{{ ratePct(b.payOutRate) }}</div></div>
+      </div>
+    </div>
 
     <!-- BC-01 批次协调员 -->
-    <el-divider content-position="left">
-      批次协调员（PC↔批次 多对多 BR-M2-13）
-      <el-button v-if="auth.has('batch.import')" size="small" text type="primary" @click="openCoord">维护协调员</el-button>
-    </el-divider>
-    <div v-if="b.coordinators && b.coordinators.length">
-      <el-tag v-for="c in b.coordinators" :key="c.id" style="margin-right:6px">{{ c.name || c.id }}</el-tag>
+    <div class="card">
+      <div class="sec-title" style="margin-top:0">
+        批次协调员（PC↔批次 多对多 BR-M2-13）
+        <button v-if="auth.has('batch.import')" class="btn txt" @click="openCoord">维护协调员</button>
+      </div>
+      <div v-if="b.coordinators && b.coordinators.length" class="coord-tags">
+        <span v-for="c in b.coordinators" :key="c.id" class="tag pri">{{ c.name || c.id }}</span>
+      </div>
+      <div v-else class="note">尚未关联协调员。</div>
     </div>
-    <el-empty v-else description="尚未关联协调员" :image-size="40" />
 
     <!-- BC-02 减免档位 + 覆盖编辑/恢复继承/同步 -->
-    <el-divider content-position="left">
-      减免档位（GET /batches/{id}/reduce-tiers）
-      <el-tag v-if="tiersSource" size="small" style="margin-left:8px">{{ sourceLabel(tiersSource) }}</el-tag>
-      <el-button v-if="!tiersPermDenied && auth.has('reduce.policy.edit')" size="small" text type="primary" style="margin-left:8px" @click="openReduce">自定义覆盖</el-button>
-      <el-button v-if="!tiersPermDenied && auth.has('reduce.policy.edit') && tiersSource==='CUSTOM'" size="small" text @click="clearReduce">清除自定义·恢复继承</el-button>
-    </el-divider>
-    <!-- BR-M2-18b 项目级减免已更新·该 CUSTOM 批次有差异 -->
-    <el-alert v-if="b.reduceDrift" type="warning" :closable="false" style="margin-bottom:8px"
-      title="项目级减免已更新·当前批次自定义有差异">
-      <template #default>
-        <el-button v-if="auth.has('reduce.policy.edit')" size="small" type="primary" @click="syncReduce">一键同步为项目最新</el-button>
-      </template>
-    </el-alert>
-    <el-alert v-if="tiersPermDenied" type="warning" :closable="false" title="无减免策略查看权限（需 reduce.policy.edit）" style="margin-bottom:8px" />
-    <el-table v-else :data="tiers" border size="small">
-      <el-table-column prop="discount" label="折扣" />
-      <el-table-column label="封顶"><template #default="{row}">{{ yuan(row.capCents) }}</template></el-table-column>
-      <el-table-column label="决策"><template #default="{row}">{{ decideLabel(row.decide) }}</template></el-table-column>
-      <el-table-column label="免违约金"><template #default="{row}">{{ row.waivePenalty?'是':'否' }}</template></el-table-column>
-    </el-table>
+    <div class="card">
+      <div class="sec-title" style="margin-top:0">
+        减免档位（GET /batches/{id}/reduce-tiers）
+        <span v-if="tiersSource" class="tag inf" style="font-weight:400">{{ sourceLabel(tiersSource) }}</span>
+        <button v-if="!tiersPermDenied && auth.has('reduce.policy.edit')" class="btn txt" @click="openReduce">自定义覆盖</button>
+        <button v-if="!tiersPermDenied && auth.has('reduce.policy.edit') && tiersSource==='CUSTOM'" class="btn txt" @click="clearReduce">清除自定义·恢复继承</button>
+      </div>
+      <!-- BR-M2-18b 项目级减免已更新·该 CUSTOM 批次有差异 -->
+      <div v-if="b.reduceDrift" class="alert warn">
+        <span>项目级减免已更新·当前批次自定义有差异</span>
+        <button v-if="auth.has('reduce.policy.edit')" class="btn sm" style="margin-left:auto" @click="syncReduce">一键同步为项目最新</button>
+      </div>
+      <div v-if="tiersPermDenied" class="alert warn">无减免策略查看权限（需 reduce.policy.edit）</div>
+      <table v-else>
+        <thead><tr><th>折扣</th><th>封顶</th><th>决策</th><th>免违约金</th></tr></thead>
+        <tbody>
+          <tr v-for="(t,ti) in tiers" :key="ti">
+            <td>{{ t.discount }}</td>
+            <td class="num">{{ yuan(t.capCents) }}</td>
+            <td>{{ decideLabel(t.decide) }}</td>
+            <td>{{ t.waivePenalty?'是':'否' }}</td>
+          </tr>
+          <tr v-if="!tiers.length"><td colspan="4" class="empty-cell">暂无减免档位</td></tr>
+        </tbody>
+      </table>
+    </div>
 
     <!-- BC-03 批次作战手册 -->
-    <el-divider content-position="left">
-      批次作战手册（GET /batches/{id}/playbook · BR-M5-05a/b）
-      <el-tag v-if="playbookSource" size="small" style="margin-left:8px">{{ sourceLabel(playbookSource) }}</el-tag>
-      <el-button v-if="auth.has('playbook.adopt')" size="small" text type="primary" style="margin-left:8px" @click="openPlaybook">采纳/编辑</el-button>
-      <el-button v-if="auth.has('playbook.adopt') && playbookSource==='CUSTOM'" size="small" text @click="restorePlaybook">恢复继承项目</el-button>
-    </el-divider>
-    <!-- BR-M2-18b 项目级手册已更新·该 CUSTOM 批次有差异 -->
-    <el-alert v-if="b.playbookDrift" type="warning" :closable="false" style="margin-bottom:8px"
-      title="项目级作战手册已更新·当前批次自定义有差异">
-      <template #default>
-        <el-button v-if="auth.has('playbook.adopt')" size="small" type="primary" @click="syncPlaybook">一键同步为项目最新</el-button>
-      </template>
-    </el-alert>
-    <el-descriptions v-if="playbook" :column="2" border size="small">
-      <el-descriptions-item label="版本">{{ playbook.version ?? '—' }}</el-descriptions-item>
-      <el-descriptions-item label="采纳模式">{{ playbook.adoptMode ?? '—' }}</el-descriptions-item>
-      <el-descriptions-item label="内容" :span="2"><div style="white-space:pre-wrap;max-height:160px;overflow:auto">{{ playbook.content ?? '（尚无手册）' }}</div></el-descriptions-item>
-    </el-descriptions>
-    <el-empty v-else description="尚无作战手册" :image-size="40" />
+    <div class="card">
+      <div class="sec-title" style="margin-top:0">
+        批次作战手册（GET /batches/{id}/playbook · BR-M5-05a/b）
+        <span v-if="playbookSource" class="tag inf" style="font-weight:400">{{ sourceLabel(playbookSource) }}</span>
+        <button v-if="auth.has('playbook.adopt')" class="btn txt" @click="openPlaybook">采纳/编辑</button>
+        <button v-if="auth.has('playbook.adopt') && playbookSource==='CUSTOM'" class="btn txt" @click="restorePlaybook">恢复继承项目</button>
+      </div>
+      <!-- BR-M2-18b 项目级手册已更新·该 CUSTOM 批次有差异 -->
+      <div v-if="b.playbookDrift" class="alert warn">
+        <span>项目级作战手册已更新·当前批次自定义有差异</span>
+        <button v-if="auth.has('playbook.adopt')" class="btn sm" style="margin-left:auto" @click="syncPlaybook">一键同步为项目最新</button>
+      </div>
+      <div v-if="playbook" class="desc">
+        <div class="r"><div class="k">版本</div><div class="v">{{ playbook.version ?? '—' }}</div></div>
+        <div class="r"><div class="k">采纳模式</div><div class="v">{{ playbook.adoptMode ?? '—' }}</div></div>
+        <div class="r"><div class="k">内容</div><div class="v"><div class="pb-content">{{ playbook.content ?? '（尚无手册）' }}</div></div></div>
+      </div>
+      <div v-else class="note">尚无作战手册。</div>
+    </div>
 
     <!-- 案件清单 -->
-    <el-divider content-position="left">案件清单（GET /cases?batchId · 共 {{ cases.length }}）</el-divider>
-    <el-table :data="cases" border size="small" @row-click="openCase">
-      <el-table-column prop="acctNo" label="户号" /><el-table-column prop="ownerName" label="业主" />
-      <el-table-column prop="room" label="房号" /><el-table-column label="应收"><template #default="{row}">{{ yuan(row.dueCents) }}</template></el-table-column>
-      <el-table-column prop="status" label="状态" /><el-table-column prop="pool" label="池" />
-    </el-table>
-    <el-alert type="info" :closable="false" style="margin-top:8px" title="点案件行进作业台。资金双线：物业视角无付佣比例、服务商视角无收佣比例（整列不渲染）。" />
+    <div class="card">
+      <div class="sec-title" style="margin-top:0">案件清单（GET /cases?batchId · 共 {{ cases.length }}）</div>
+      <table>
+        <thead><tr><th>户号</th><th>业主</th><th>房号</th><th>应收</th><th>状态</th><th>池</th></tr></thead>
+        <tbody>
+          <tr v-for="c in cases" :key="c.id" class="row-click" @click="openCase(c)">
+            <td>{{ c.acctNo }}</td>
+            <td>{{ c.ownerName }}</td>
+            <td>{{ c.room }}</td>
+            <td class="num">{{ yuan(c.dueCents) }}</td>
+            <td>{{ c.status }}</td>
+            <td>{{ c.pool }}</td>
+          </tr>
+          <tr v-if="!cases.length"><td colspan="6" class="empty-cell">暂无案件</td></tr>
+        </tbody>
+      </table>
+      <div class="alert info">点案件行进作业台。资金双线：物业视角无付佣比例、服务商视角无收佣比例（整列不渲染）。</div>
+    </div>
 
     <!-- BC-01 协调员维护对话框(复用 CoordinatorPicker) -->
     <CoordinatorPicker v-model="coordDlg" :selected="b.coordinators ?? []" title="维护批次协调员（PUT /batches/{id}/coordinators）" @submit="saveCoordinators" />
@@ -238,5 +262,13 @@ onMounted(loadAll)
       </el-form>
       <template #footer><el-button @click="pbDlg=false">取消</el-button><el-button type="primary" @click="adoptPlaybook">采纳发布</el-button></template>
     </el-dialog>
-  </el-card>
+  </div>
 </template>
+
+<style scoped>
+.batch-detail .sec-title { justify-content: flex-start; flex-wrap: wrap; }
+.batch-detail .sec-title .btn.txt { margin-left: 4px; }
+.coord-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.pb-content { white-space: pre-wrap; max-height: 160px; overflow: auto; }
+.empty-cell { text-align: center; color: var(--sec); padding: 18px 14px; }
+</style>

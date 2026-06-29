@@ -12,7 +12,8 @@ type ProjectInput = components['schemas']['ProjectInput']
  * create→POST /projects(201)，edit→PUT /projects/{id}。
  * commInRate 为 Rate 分数 0-1：UI 录入百分比、提交 ÷100 存(与 ProjectDetailView 口径一致)。
  * 必填(基本信息+缴费标准+收佣比例)缺失阻止提交(US-M2-01 验收)。
- * 注：协调员走独立 /coordinators 端点，本表单不维护协调员。
+ * 协调员：新建/编辑均可在本表单直接设(ProjectInput.coordinatorIds 全量)，
+ * 候选 GET /members?role=PC(与 CoordinatorPicker 同源)；编辑后续仍可走 /coordinators 端点维护。
  */
 const props = defineProps<{
   modelValue: boolean
@@ -26,6 +27,17 @@ const emit = defineEmits<{
 
 const formRef = ref<FormInstance>()
 const saving = ref(false)
+
+// 协调员候选(本组织 PC·GET /members?role=PC，与 CoordinatorPicker 同源)
+const coordOptions = ref<{ id: string; name: string }[]>([])
+const coordLoading = ref(false)
+async function loadCoordOptions() {
+  coordLoading.value = true
+  const { data, error } = await api.GET('/members', { params: { query: { role: 'PC', page: 1, size: 200 } } })
+  coordLoading.value = false
+  if (error) { ElMessage.error('加载协调员候选失败'); return }
+  coordOptions.value = (data?.items ?? []).map((m) => ({ id: String(m.id ?? ''), name: m.name || m.username || String(m.id ?? '') }))
+}
 
 // 表单模型：commInPct 为百分比展示值；feeRows 数组初始即初始化(防白屏铁律)
 function emptyForm() {
@@ -42,6 +54,7 @@ function emptyForm() {
     penalty: '',
     payInfo: '',
     commInPct: 30, // 百分比；提交时 ÷100
+    coordinatorIds: [] as string[], // 协调员 ids(数组初始即初始化·防白屏铁律)
     litiCreditCode: '',
     litiLegal: '',
     litiAddr: '',
@@ -58,6 +71,7 @@ const rules: FormRules = {
 // 弹窗打开：编辑预填、新建重置
 watch(() => props.modelValue, (open) => {
   if (!open) return
+  loadCoordOptions()
   const p = props.project
   if (p) {
     form.value = {
@@ -73,6 +87,7 @@ watch(() => props.modelValue, (open) => {
       penalty: p.penalty ?? '',
       payInfo: p.payInfo ?? '',
       commInPct: p.commInRate != null ? Number((p.commInRate * 100).toFixed(2)) : 30,
+      coordinatorIds: Array.isArray(p.coordinators) ? p.coordinators.map((c: any) => String(c.id ?? '')).filter((x: string) => x) : [],
       litiCreditCode: p.litigation?.creditCode ?? '',
       litiLegal: p.litigation?.legal ?? '',
       litiAddr: p.litigation?.addr ?? '',
@@ -106,6 +121,8 @@ function buildBody(): ProjectInput {
     commInRate: Number((Number(f.commInPct) / 100).toFixed(4)),
     litigation,
   }
+  // 协调员：仅在有选时带(空数组不下发，避免编辑态误清空已有关联)
+  if (Array.isArray(f.coordinatorIds) && f.coordinatorIds.length) body.coordinatorIds = f.coordinatorIds
   return body
 }
 
@@ -162,6 +179,14 @@ async function submit() {
       <el-form-item label="收佣比例(%)" prop="commInPct">
         <el-input-number v-model="form.commInPct" :min="0" :max="100" :step="1" :precision="2" />
         <span style="margin-left:8px;color:#909399">百分比录入，提交按分数 0-1 存（30=0.30）</span>
+      </el-form-item>
+
+      <el-divider content-position="left">协调员（PC·决定可见案件范围 BR-M2-13）</el-divider>
+      <el-form-item label="协调员">
+        <el-select v-model="form.coordinatorIds" multiple filterable clearable :loading="coordLoading" placeholder="选择本组织协调员（PC）" style="width:100%">
+          <el-option v-for="c in coordOptions" :key="c.id" :label="c.name" :value="c.id" />
+        </el-select>
+        <span style="color:#909399;font-size:12px">候选来自本组织 PC（GET /members?role=PC）。新建可直接设，编辑亦可调整（全量覆盖）。</span>
       </el-form-item>
 
       <el-divider content-position="left">诉讼要素（可后补）</el-divider>

@@ -73,13 +73,19 @@ async function setOpenRate(row: any) {
 // 契约 ImportResult: { batch, total, succeeded, skipped, errors: ImportError[] }
 // ImportError: { row, field, code, message }
 const impDlg = ref(false)
-const emptyRow = () => ({ acctNo: '', ownerName: '', phone: '', room: '', dueYuan: 0, arrearPeriod: '' })
+const emptyRow = () => ({ acctNo: '', ownerName: '', phone: '', room: '', dueYuan: 0, arrearPeriod: '', idCard: '', addr: '' })
 const imp = ref<any>({ projectId: '', commInRate: 0.3, rows: [emptyRow()] })
 const impResult = ref<any>(null)   // ImportResult 响应体，null=未提交
 function openImport() { imp.value = { projectId: '', commInRate: 0.3, rows: [emptyRow()] }; impResult.value = null; impDlg.value = true }
 async function submitImport() {
   if (!imp.value.projectId) { ElMessage.warning('请填项目 id'); return }
-  const rows = imp.value.rows.map((r: any) => ({ acctNo: r.acctNo, ownerName: r.ownerName, phone: r.phone, room: r.room, dueCents: Math.round(r.dueYuan * 100), arrearPeriod: r.arrearPeriod }))
+  const rows = imp.value.rows.map((r: any) => {
+    const row: any = { acctNo: r.acctNo, ownerName: r.ownerName, phone: r.phone, room: r.room, dueCents: Math.round(r.dueYuan * 100), arrearPeriod: r.arrearPeriod }
+    // 诉讼要素(选填)：仅在有值时带 litigation:{idCard,addr}(CaseImportRow.litigation·BR-M2-14)
+    const idCard = (r.idCard || '').trim(); const addr = (r.addr || '').trim()
+    if (idCard || addr) row.litigation = { ...(idCard ? { idCard } : {}), ...(addr ? { addr } : {}) }
+    return row
+  })
   // body 构造保持：projectId 字符串化、commInRate 数字、rows dueCents 单位=分
   const { data, error } = await api.POST('/batches/import', { body: { projectId: String(imp.value.projectId), commInRate: Number(imp.value.commInRate), rows } as any })
   if (error) { ElMessage.error('导入失败：' + ((error as any)?.message ?? '')); return }
@@ -105,33 +111,59 @@ async function voidBatch(row: any) {
     ElMessage.success('已作废'); load()
   } catch { /* 取消 */ }
 }
+// 纯展示辅助：批次状态 → ds-admin .tag 配色（不改数据，仅 UI 着色）
+const STATUS_TAG: Record<string, string> = {
+  SETTLED: 'suc', IN_PROGRESS: 'pri', DISPATCHED: 'pri', PROMISED: 'war',
+  PENDING_DISPATCH: 'inf', PROVIDER_SEA: 'inf', OPEN_POOL: 'inf',
+  WITHDRAWN: 'inf', BAD_DEBT: 'dan', VOIDED: 'dan',
+}
+const statusTag = (s?: string) => STATUS_TAG[s ?? ''] ?? 'inf'
+
 onMounted(load)
 </script>
 
 <template>
-  <el-card :header="`批次（GET /batches · 共 ${total}）`">
-    <el-button v-if="auth.has('batch.import')" type="primary" size="small" style="margin-bottom:10px" @click="openImport">导入批次</el-button>
-    <el-table v-loading="loading" :data="items" border>
-      <el-table-column prop="id" label="ID" width="60" />
-      <el-table-column label="批次号"><template #default="{row}"><el-button link type="primary" @click="$router.push(`/batches/${row.id}`)">{{ row.code }}</el-button></template></el-table-column>
-      <el-table-column prop="status" label="状态" width="110" />
-      <!-- 收佣比例：仅平台/物业视角整列渲染(服务商视角字段级无→整列不出 H-03) -->
-      <el-table-column v-if="showCommInRate" label="收佣比例" width="100">
-        <template #default="{ row }">{{ ratePct(row.commInRate) }}</template>
-      </el-table-column>
-      <!-- 付佣比例：仅平台/服务商视角整列渲染(物业视角字段级无→整列不出，不显占位串 H-03) -->
-      <el-table-column v-if="showPayOutRate" label="付佣比例" width="120">
-        <template #default="{ row }">{{ ratePct(row.payOutRate) }}</template>
-      </el-table-column>
-      <el-table-column label="操作" width="280">
-        <template #default="{ row }">
-          <el-button v-if="auth.has('case.dispatch')" size="small" type="primary" :loading="acting===row.id" @click="openDispatch(row.id)">派单</el-button>
-          <el-button v-if="auth.has('case.dispatch')" size="small" @click="openDispatch(row.id, true)">重派</el-button>
-          <el-button v-if="auth.has('case.dispatch')" size="small" @click="setOpenRate(row)">开放费率</el-button>
-          <el-button v-if="auth.has('case.void')" size="small" type="danger" plain @click="voidBatch(row)">作废</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+  <div class="card">
+    <div class="card-h">
+      <div class="t"><span class="bar"></span>批次（催收单）</div>
+      <div class="ops">
+        <span class="note" style="margin:0">GET /batches · 共 {{ total }}</span>
+        <button v-if="auth.has('batch.import')" class="btn sm" @click="openImport">+ 导入批次</button>
+      </div>
+    </div>
+
+    <table v-loading="loading">
+      <thead>
+        <tr>
+          <th style="width:60px">ID</th>
+          <th>批次号</th>
+          <th style="width:110px">状态</th>
+          <th v-if="showCommInRate" style="width:100px">收佣比例</th>
+          <th v-if="showPayOutRate" style="width:120px">付佣比例</th>
+          <th style="width:300px">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="row in items" :key="row.id">
+          <td class="num">{{ row.id }}</td>
+          <td><a class="link" @click="$router.push(`/batches/${row.id}`)">{{ row.code }}</a></td>
+          <td><span class="tag" :class="statusTag(row.status)">{{ row.status }}</span></td>
+          <!-- 收佣比例：仅平台/物业视角整列渲染(服务商视角字段级无→整列不出 H-03) -->
+          <td v-if="showCommInRate" class="num">{{ ratePct(row.commInRate) }}</td>
+          <!-- 付佣比例：仅平台/服务商视角整列渲染(物业视角字段级无→整列不出，不显占位串 H-03) -->
+          <td v-if="showPayOutRate" class="num">{{ ratePct(row.payOutRate) }}</td>
+          <td>
+            <a v-if="auth.has('case.dispatch')" class="btn txt" :class="{ 'is-disabled': acting===row.id }" @click="acting===row.id || openDispatch(row.id)">派单</a>
+            <a v-if="auth.has('case.dispatch')" class="btn txt" @click="openDispatch(row.id, true)">重派</a>
+            <a v-if="auth.has('case.dispatch')" class="btn txt" @click="setOpenRate(row)">开放费率</a>
+            <a v-if="auth.has('case.void')" class="btn txt dgc" @click="voidBatch(row)">作废</a>
+          </td>
+        </tr>
+        <tr v-if="!loading && !items.length">
+          <td :colspan="3 + (showCommInRate ? 1 : 0) + (showPayOutRate ? 1 : 0) + 1" style="text-align:center;color:var(--sec);padding:32px 0">暂无批次，点击「+ 导入批次」导入催收单。</td>
+        </tr>
+      </tbody>
+    </table>
 
     <!-- 派单/重派 -->
     <el-dialog v-model="dlg" :title="(form.redispatch?'重派':'派单')+'（POST /batches/{id}/'+(form.redispatch?'redispatch':'dispatch')+'）'" width="640px">
@@ -180,6 +212,8 @@ onMounted(load)
         <el-table-column label="房号"><template #default="{row}"><el-input v-model="row.room" size="small" /></template></el-table-column>
         <el-table-column label="应收(元)" width="110"><template #default="{row}"><el-input-number v-model="row.dueYuan" size="small" :min="0" :controls="false" style="width:90px" /></template></el-table-column>
         <el-table-column label="欠费期" width="100"><template #default="{row}"><el-input v-model="row.arrearPeriod" size="small" placeholder="2025-01" /></template></el-table-column>
+        <el-table-column label="身份证号(选填)" width="150"><template #default="{row}"><el-input v-model="row.idCard" size="small" placeholder="诉讼要素·可后补" /></template></el-table-column>
+        <el-table-column label="通讯地址(选填)" min-width="140"><template #default="{row}"><el-input v-model="row.addr" size="small" placeholder="诉讼要素·可后补" /></template></el-table-column>
         <el-table-column width="50"><template #default="{$index}"><el-button size="small" text type="danger" @click="imp.rows.splice($index,1)" :disabled="imp.rows.length<=1">×</el-button></template></el-table-column>
       </el-table>
       <el-button size="small" text type="primary" style="margin-top:6px" @click="imp.rows.push(emptyRow())">+ 添加行</el-button>
@@ -208,5 +242,10 @@ onMounted(load)
         <el-button type="primary" @click="submitImport">导入</el-button>
       </template>
     </el-dialog>
-  </el-card>
+  </div>
 </template>
+
+<style scoped>
+/* 派单/导入弹窗内嵌 EL 表格保持原生主题，不受本页 ds-admin 原生 table 规则影响 */
+.btn.txt.is-disabled { opacity: .5; cursor: not-allowed; }
+</style>

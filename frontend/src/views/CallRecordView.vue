@@ -18,38 +18,71 @@ onMounted(async () => {
 </script>
 
 <template>
-  <el-card v-if="rec">
-    <template #header>
-      <el-button link @click="router.back()">← 返回案件</el-button>
-      <span style="margin-left:8px">通话记录 #{{ rec.id }} · 案件 {{ rec.caseId }}</span>
-    </template>
-    <el-descriptions :column="3" border size="small">
-      <el-descriptions-item label="来源">{{ rec.source }}</el-descriptions-item>
-      <el-descriptions-item label="状态"><el-tag size="small" :type="rec.status==='READY'?'success':rec.status==='FAILED'?'danger':'warning'">{{ rec.status }}</el-tag></el-descriptions-item>
-      <el-descriptions-item label="时长">{{ rec.durationSec }}s</el-descriptions-item>
-      <el-descriptions-item label="号码">{{ rec.phone ?? '—' }}</el-descriptions-item>
-      <el-descriptions-item label="录制时间" :span="2">{{ rec.recordedAt ?? '—' }}</el-descriptions-item>
-      <el-descriptions-item v-if="rec.failureCode" label="失败原因" :span="3">{{ rec.failureCode }} {{ rec.failureMessage }}</el-descriptions-item>
-    </el-descriptions>
-    <el-divider content-position="left">转写文本</el-divider>
-    <div style="white-space:pre-wrap;background:#f5f7fa;padding:12px;border-radius:4px;min-height:60px">{{ rec.transcript ?? '（暂无转写）' }}</div>
+  <div v-if="rec" class="card">
+    <div class="card-h">
+      <div class="t"><span class="bar"></span>通话记录 #{{ rec.id }} · 案件 {{ rec.caseId }}</div>
+      <div class="ops">
+        <el-button class="btn df sm" text @click="router.back()">← 返回案件</el-button>
+      </div>
+    </div>
+
+    <!-- 录音条 -->
+    <div class="player">
+      <span>{{ rec.status==='READY' ? '▶' : '·' }}</span>
+      <div style="flex:1;height:4px;background:#e4e7ed;border-radius:2px;position:relative"><div style="width:0;height:100%;background:var(--primary);border-radius:2px"></div></div>
+      <span>{{ rec.durationSec ?? 0 }}s</span>
+      <span class="tag" :class="rec.status==='READY'?'suc':rec.status==='FAILED'?'dan':'war'">{{ rec.status }}</span>
+    </div>
+
+    <!-- 键值信息 -->
+    <div class="sec-title">通话信息</div>
+    <div class="desc">
+      <div class="r"><div class="k">来源</div><div class="v">{{ rec.source ?? '—' }}</div></div>
+      <div class="r"><div class="k">状态</div><div class="v"><span class="tag" :class="rec.status==='READY'?'suc':rec.status==='FAILED'?'dan':'war'">{{ rec.status }}</span></div></div>
+      <div class="r"><div class="k">时长</div><div class="v num">{{ rec.durationSec ?? 0 }}s</div></div>
+      <div class="r"><div class="k">号码</div><div class="v">{{ rec.phone ?? '—' }}</div></div>
+      <div class="r"><div class="k">录制时间</div><div class="v">{{ rec.recordedAt ?? '—' }}</div></div>
+      <div v-if="rec.failureCode" class="r"><div class="k">失败原因</div><div class="v">{{ rec.failureCode }} {{ rec.failureMessage }}</div></div>
+    </div>
+
+    <!-- 转写文本 -->
+    <div class="sec-title">转写文本</div>
+    <div style="white-space:pre-wrap;background:#f7f9fc;border:1px solid var(--bd);padding:12px;border-radius:6px;min-height:60px;font-size:13px;line-height:1.7">{{ rec.transcript ?? '（暂无转写）' }}</div>
+
     <template v-if="review">
-      <el-divider content-position="left">AI 复盘</el-divider>
-      <p><b>小结：</b>{{ review.summary }}</p>
+      <div class="sec-title">AI 复盘</div>
+      <div class="alert info" style="margin-top:0">📋 {{ review.summary }}</div>
+
       <!-- M-02: 说话人分离对话气泡(review.dialogue) -->
       <template v-if="review.dialogue?.length">
-        <div style="max-height:320px;overflow:auto;background:#f5f7fa;padding:8px;border-radius:4px;margin:6px 0">
-          <div v-for="(turn,ti) in review.dialogue" :key="ti" style="display:flex;margin:4px 0" :style="{ justifyContent: turn.speaker==='AGENT' || turn.speaker==='催收员' ? 'flex-end' : 'flex-start' }">
-            <div :style="{ maxWidth:'72%', background: turn.speaker==='AGENT' || turn.speaker==='催收员' ? '#d9ecff' : '#fff', border:'1px solid #e4e7ed', borderRadius:'6px', padding:'6px 10px' }">
-              <div style="font-size:12px;color:#909399">{{ turn.speaker }}</div>
-              <div style="font-size:13px;white-space:pre-wrap">{{ turn.text }}</div>
+        <div class="sec-title">对话记录 · ASR 转写（说话人分离）</div>
+        <div class="chat" style="max-height:320px;overflow:auto;background:#f7f9fc;border:1px solid var(--bd);padding:8px;border-radius:6px">
+          <div v-for="(turn,ti) in review.dialogue" :key="ti" class="row" :class="(turn.speaker==='AGENT' || turn.speaker==='催收员') ? 'me' : 'them'">
+            <div>
+              <div class="bub" style="white-space:pre-wrap">{{ turn.text }}</div>
+              <div class="meta">{{ turn.speaker }}</div>
             </div>
           </div>
         </div>
       </template>
-      <!-- M-02: 风险标签追加 segmentTs 片段定位 -->
-      <p v-if="review.risks?.length"><b>风险：</b><el-tag v-for="(r,ri) in review.risks" :key="ri" type="danger" size="small" style="margin:2px">{{ r.level }} {{ r.desc }}<span v-if="r.segmentTs"> @{{ r.segmentTs }}</span></el-tag></p>
-      <el-card v-for="s in review.suggestions ?? []" :key="s.id" shadow="never" style="margin:6px 0"><b>{{ s.title }}</b> <el-tag size="small">{{ s.type }}</el-tag><div style="color:#606266;font-size:13px">{{ s.body }}</div></el-card>
+
+      <!-- M-02: 风险条(level→l1/l2)，保留 segmentTs 片段定位 -->
+      <template v-if="review.risks?.length">
+        <div class="sec-title">质检风险点</div>
+        <div v-for="(r,ri) in review.risks" :key="ri" class="riskbar" :class="r.level==='L2'||r.level==='HIGH'?'l2':'l1'">
+          {{ r.level==='L2'||r.level==='HIGH' ? '🔴' : '⚠️' }} {{ r.level }}：{{ r.desc }}<span v-if="r.segmentTs"> @{{ r.segmentTs }}</span>
+        </div>
+      </template>
+
+      <!-- 下一步建议 -->
+      <template v-if="(review.suggestions ?? []).length">
+        <div class="sec-title">下一步建议</div>
+        <div class="aicard script" v-for="s in review.suggestions" :key="s.id">
+          <div class="ti">{{ s.title }} <span class="tag inf" style="font-weight:400">{{ s.type }}</span></div>
+          <div class="tx">{{ s.body }}</div>
+        </div>
+      </template>
     </template>
-  </el-card>
+  </div>
 </template>
+
