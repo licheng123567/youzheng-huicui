@@ -5,9 +5,11 @@ import com.youzheng.huicui.error.BizError;
 import com.youzheng.huicui.security.CurrentSubject;
 import com.youzheng.huicui.security.JwtService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
@@ -18,7 +20,16 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** 认证：登录签发 JWT（契约 /auth/login）。sms-code/select-account 为骨架占位。 */
+/**
+ * 认证：登录签发 JWT（契约 /auth/login）。sms-code/select-account 为骨架占位。
+ *
+ * B-04方案A：
+ *   - login：成功后检查 must_change_password；若 TRUE，LoginResult 携带 mustChangePassword=true，
+ *     前端须强制跳转改密页（不可跳过）。token 仍签发，但前端应在改密完成前限制功能。
+ *   - POST /auth/setup-password{token,newPassword}：消费一次性 setupToken（SHA-256 哈希匹配+
+ *     TTL 24h+一次性 used_at），设 password_hash+must_change_password=FALSE；否则 401。
+ *     此端点无需登录（security=[]）。
+ */
 @RestController
 @RequestMapping("/auth")
 public class AuthController {
@@ -28,13 +39,20 @@ public class AuthController {
     private final BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder();
     private final ObjectMapper om = new ObjectMapper();
 
+    /** dev 固定短信验证码，从 huicui.auth.dev-sms-code 读取（prod 留空，sms-code 端点拒绝服务）。 */
+    @Value("${huicui.auth.dev-sms-code:}")
+    private String devSmsCode;
+
     public AuthController(JdbcTemplate jdbc, JwtService jwt) {
         this.jdbc = jdbc;
         this.jwt = jwt;
     }
 
-    // 契约 LoginResult：单账号返 token；多账号返 loginTicket+accounts(BR-M1-11)。
-    public record LoginResult(String token, String loginTicket, Object accounts) {}
+    /**
+     * 契约 LoginResult：单账号返 token；多账号返 loginTicket+accounts(BR-M1-11)。
+     * B-04方案A：mustChangePassword=true 时前端须强制跳转改密页（不可跳过）。
+     */
+    public record LoginResult(String token, String loginTicket, Object accounts, Boolean mustChangePassword) {}
 
     // 多账号临时票据 / 短信验证码（内存·带 TTL；生产换 Redis + 真实短信通道随机码）。
     private record Ticket(Set<Long> accountIds, long exp) {}
@@ -43,8 +61,6 @@ public class AuthController {
     private final Map<String, SmsCode> smsCodes = new ConcurrentHashMap<>();
     private static final long TICKET_TTL_MS = 5 * 60 * 1000L;
     private static final long SMS_TTL_MS = 5 * 60 * 1000L;
-    // dev 固定码（仅 dev：DevSeeder 在跑即视为 dev）。生产务必改随机码经短信通道下发，且不得回显前端。
-    private static final String DEV_SMS_CODE = "000000";
 
     @PostMapping("/login")
     public LoginResult login(@RequestBody Map<String, Object> body) {
@@ -69,7 +85,10 @@ public class AuthController {
                 throw new ApiException(BizError.AUTH_401, "用户名或口令错误");
             }
             String hash = (String) row.get("password_hash");
-            if (hash == null || !bcrypt.matches(password, hash)) throw new ApiException(BizError.AUTH_401, "用户名或口令错误");
+            // B-04方案A：password_hash=NULL 说明账号尚未走 /auth/setup-password 设密，拒绝登录。
+            if (hash == null || !bcrypt.matches(password, hash)) {
+                throw new ApiException(BizError.AUTH_401, "用户名或口令错误");
+            }
             if (!"ACTIVE".equals(row.get("status"))) throw new ApiException(BizError.PERM_403, "账号已停用");
             phone = (String) row.get("phone");
         }
@@ -79,7 +98,9 @@ public class AuthController {
                         + " WHERE a.phone = ? AND a.status = 'ACTIVE' ORDER BY a.id", phone);
         if (accts.isEmpty()) throw new ApiException(BizError.AUTH_401, "无可用账号");
         if (accts.size() == 1) {
-            return new LoginResult(issueFor(((Number) accts.get(0).get("id")).longValue()), null, null);
+            long accountId = ((Number) accts.get(0).get("id")).longValue();
+            boolean mustChange = mustChangePassword(accountId);
+            return new LoginResult(issueFor(accountId), null, null, mustChange ? Boolean.TRUE : null);
         }
         // 多账号 → 临时票据 + 账号列表（需 /auth/select-account 换 token）
         Set<Long> ids = new HashSet<>();
@@ -92,14 +113,18 @@ public class AuthController {
         }
         String ticket = UUID.randomUUID().toString();
         tickets.put(ticket, new Ticket(ids, System.currentTimeMillis() + TICKET_TTL_MS));
-        return new LoginResult(null, ticket, accounts);
+        return new LoginResult(null, ticket, accounts, null);
     }
 
     @PostMapping("/sms-code")
     public Map<String, Object> smsCode(@RequestBody Map<String, Object> body) {
         String phone = req(body, "phone");
-        // dev 存固定码 + TTL（生产：随机码经短信通道下发 + 限流429）。绝不回显 code。
-        smsCodes.put(phone, new SmsCode(DEV_SMS_CODE, System.currentTimeMillis() + SMS_TTL_MS));
+        // prod：devSmsCode 为空 → 短信通道未接入，拒绝服务（503）。绝不回显 code。
+        // dev：devSmsCode 由 huicui.auth.dev-sms-code 配置（application-dev.yml），默认 "000000"。
+        if (devSmsCode == null || devSmsCode.isBlank()) {
+            throw new ApiException(BizError.SERVICE_503, "短信通道未接入，dev-sms-code 未配置");
+        }
+        smsCodes.put(phone, new SmsCode(devSmsCode, System.currentTimeMillis() + SMS_TTL_MS));
         return Map.of("sent", true, "ttlSeconds", SMS_TTL_MS / 1000);
     }
 
@@ -118,7 +143,76 @@ public class AuthController {
             throw new ApiException(BizError.AUTH_401, "所选账号不在本次登录范围");
         }
         tickets.remove(ticketId);   // 一次性
-        return new LoginResult(issueFor(accountId), null, null);
+        boolean mustChange = mustChangePassword(accountId);
+        return new LoginResult(issueFor(accountId), null, null, mustChange ? Boolean.TRUE : null);
+    }
+
+    /**
+     * B-04方案A：POST /auth/setup-password — 消费一次性 setupToken，设置账号密码并清除首登改密标志。
+     *
+     * 安全规则：
+     *   1) token_hash 命中且 used_at IS NULL 且 expires_at > now() → 有效，继续；否则 401。
+     *   2) 设 account.password_hash + must_change_password=FALSE。
+     *   3) 设 credential_setup_token.used_at=now()（一次性，防重放）。
+     *   4) 返回 200 + {ok:true}。
+     *   此端点无需登录（security=[]，public）。
+     */
+    @PostMapping("/setup-password")
+    @Transactional
+    public Map<String, Object> setupPassword(@RequestBody Map<String, Object> body) {
+        String token = req(body, "token");
+        String newPassword = req(body, "newPassword");
+        if (newPassword.length() < 6) {
+            throw new ApiException(BizError.VALIDATION_422, "新口令至少 6 位");
+        }
+
+        // 计算 SHA-256(token) → hash，与数据库比对。
+        String hash = OrgSystemM1Controller.sha256hex(token);
+
+        // HIGH-3 原子一次性消费：UPDATE ... SET used_at=now() WHERE token_hash=? AND used_at IS NULL
+        //   AND expires_at > now() RETURNING account_id。
+        // 行级锁 + 原子 CAS：并发重放中仅一个事务成功更新（rowsAffected=1），其余得 0 行 → 409。
+        // 不再使用 SELECT → 消费 的两步模式，彻底消除 TOCTOU 竞态（审计 HIGH-3）。
+        Long accountId = jdbc.query(
+                "UPDATE credential_setup_token SET used_at = now()"
+                        + " WHERE token_hash = ? AND used_at IS NULL AND expires_at > now()"
+                        + " RETURNING account_id",
+                rs -> rs.next() ? rs.getLong("account_id") : null,
+                hash);
+        if (accountId == null) {
+            throw new ApiException(BizError.AUTH_401, "token 无效、已过期或已使用");
+        }
+
+        // 验证账号仍 ACTIVE（安全：不为已停用账号设密）。
+        String status = jdbc.query(
+                "SELECT status FROM account WHERE id = ?",
+                rs -> rs.next() ? rs.getString("status") : null,
+                accountId);
+        if (!"ACTIVE".equals(status)) {
+            throw new ApiException(BizError.PERM_403, "账号已停用，无法设置密码");
+        }
+
+        // 设密码 + 清首登改密标志（token 已于上步原子消费，不存在重放窗口）。
+        String newHash = bcrypt.encode(newPassword);
+        jdbc.update(
+                "UPDATE account SET password_hash = ?, must_change_password = FALSE,"
+                        + " updated_at = now() WHERE id = ?",
+                newHash, accountId);
+
+        return Map.of("ok", true);
+    }
+
+    /** B-04方案A：查 account.must_change_password（列不存在时降级 false，避免启动期迁移未跑时 5xx）。 */
+    private boolean mustChangePassword(long accountId) {
+        try {
+            Boolean v = jdbc.query(
+                    "SELECT must_change_password FROM account WHERE id = ?",
+                    rs -> rs.next() ? rs.getBoolean("must_change_password") : null,
+                    accountId);
+            return Boolean.TRUE.equals(v);
+        } catch (Exception e) {
+            return false;   // 迁移未跑/列不存在时降级 false
+        }
     }
 
     /** 按 accountId 加载账号+组织+有效权限 → 签发 JWT。 */

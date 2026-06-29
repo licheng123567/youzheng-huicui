@@ -1,0 +1,16 @@
+# 测试 profile：Testcontainers PostgreSQL，只跑核心 schema 迁移（V1-V7），不含 dev 种子（V9xx）。
+# DataSource URL 由 @DynamicPropertySource 动态注入，此处占位配置可被覆盖。
+spring:
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    username: postgres
+    password: test
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
+    locations: filesystem:../db/migration
+
+huicui:
+  jwt:
+    secret: "test-secret-only-for-unit-tests-not-for-production"
+    ttl-seconds: 86400

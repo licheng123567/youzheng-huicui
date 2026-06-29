@@ -47,6 +47,34 @@ tags:
 
 paths:
 
+  /auth/setup-password:
+    post:
+      operationId: setupPassword
+      tags: [auth]
+      summary: 消费一次性 setupToken 设置初始密码(B-04方案A·新 owner/重置成员凭据交付闭环)
+      description: |
+        消费 credential_setup_token 发放的一次性明文 token（SHA-256 哈希匹配+TTL 24h+一次性）：
+        设 account.password_hash + must_change_password=FALSE。token 只能使用一次，过期或已用返 401。
+        此端点无需登录（public），由新 owner/成员在收到带外 token 后自行调用。
+      security: []
+      x-permission: none
+      x-data-scope: public
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, newPassword]
+              properties:
+                token: { type: string, description: '一次性 setupToken 明文（由平台带外转交，24h 有效）' }
+                newPassword: { type: string, minLength: 6, description: '新密码（至少 6 位）' }
+      responses:
+        '200': { description: 密码设置成功，账号可正常登录 }
+        '401': { $ref: '#/components/responses/Unauthorized', description: 'token 无效、已过期或已使用' }
+        '403': { $ref: '#/components/responses/Forbidden', description: '账号已停用' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /auth/sms-code:
     post:
       operationId: requestSmsCode
@@ -1723,11 +1751,22 @@ paths:
     post:
       tags: [org-member]
       operationId: resetMemberPassword
-      summary: 重置员工密码(US-M1-05)·写审计
+      summary: 重置员工凭据(B-04方案A·一次性 setupToken 交付，管理员带外告知成员·写审计)
+      description: 'B-04方案A：不再接受 newPassword 明文，改为清除口令+发放一次性 setupToken（哈希存 credential_setup_token，TTL 24h）。响应体返回 setupToken 明文，管理员带外告知成员走 /auth/setup-password 设密。'
       x-permission: member.manage
       x-data-scope: own-org
-      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/ResetPasswordInput' } } } }
-      responses: { '200': { description: ok }, '403': { $ref: '#/components/responses/Forbidden' } }
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses:
+        '200':
+          description: ok，响应体含一次性 setupToken
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  setupToken: { type: string, description: '一次性凭据 token 明文（带外告知成员，24h 有效，一次性）' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /members/{id}/supervision-actions:
     parameters: [ { $ref: '#/components/parameters/Id' } ]
@@ -1946,7 +1985,7 @@ components:
         token: { type: string, description: 'JWT/access token' }
     LoginResult:
       type: object
-      description: '登录结果；单账号返回 token；多账号返回 loginTicket+accounts，需调 /auth/select-account 换取 token(BR-M1-11)'
+      description: '登录结果；单账号返回 token；多账号返回 loginTicket+accounts，需调 /auth/select-account 换取 token(BR-M1-11)。B-04方案A：mustChangePassword=true 时前端须强制跳转改密页。'
       properties:
         token: { type: [string, 'null'], description: '单账号直接返回token；多账号为空，需选 account 后换取' }
         loginTicket: { type: [string, 'null'], description: '多账号临时票据，有效期短(如 5 分钟)，单账号为空' }
@@ -1954,6 +1993,7 @@ components:
           type: [array, 'null']
           description: '一号多账号列表(BR-M1-11)，单账号为空'
           items: { type: object, properties: { accountId: { type: string }, orgName: { type: string }, role: { $ref: '#/components/schemas/RoleTemplateEnum' }, name: { type: string } } }
+        mustChangePassword: { type: [boolean, 'null'], description: 'B-04方案A：true=首登须改密，前端强制跳转 /auth/setup-password；null/false=正常登录' }
     Me:
       type: object
       properties:
@@ -2721,7 +2761,16 @@ components:
 
     # ---------- 组织/成员/审计 M1 ----------
     OrgInput: { type: object, required: [type, name, ownerAccount, ownerPhone], properties: { type: { $ref: '#/components/schemas/OrgTypeEnum' }, name: { type: string }, ownerAccount: { type: string }, ownerPhone: { type: string } } }
-    Org: { type: object, properties: { id: { type: string }, type: { $ref: '#/components/schemas/OrgTypeEnum' }, name: { type: string }, ownerAccountId: { type: string }, status: { type: string } } }
+    Org:
+      type: object
+      description: '组织（B-04方案A：POST /orgs 201 响应及 PATCH /orgs/{id}/owner?resetPassword=true 响应含 ownerSetupToken 一次性明文；列表/GET 始终 null）'
+      properties:
+        id: { type: string }
+        type: { $ref: '#/components/schemas/OrgTypeEnum' }
+        name: { type: string }
+        ownerAccountId: { type: string }
+        status: { type: string }
+        ownerSetupToken: { type: [string, 'null'], description: '一次性凭据交付 token 明文（仅 POST /orgs 201 及 PATCH owner?resetPassword=true 响应出现一次，带外转交 owner；审计不记明文）' }
     OrgPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Org' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }
     MemberInput: { type: object, required: [username, name, phone, role], properties: { username: { type: string }, name: { type: string }, phone: { type: string }, role: { $ref: '#/components/schemas/RoleTemplateEnum' }, permissions: { type: array, items: { type: string }, description: '负责人权限子集' } } }
     Member: { type: object, properties: { id: { type: string }, orgId: { type: string }, username: { type: string }, name: { type: string }, phone: { type: string }, role: { $ref: '#/components/schemas/RoleTemplateEnum' }, status: { type: string }, isOwner: { type: boolean }, manageable: { type: boolean, description: '当前主体是否可管(平台对跨组织成员=false BR-M1-04a)' } } }

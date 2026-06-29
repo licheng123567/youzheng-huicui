@@ -5,6 +5,8 @@ server:
     context-path: /v1          # 对齐契约 servers 的 /v1 basePath
 
 spring:
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
   jackson:
     default-property-inclusion: non_null   # 省略 null 字段：契约多数字段非 nullable，可选字段缺省即合规（统一出口）
   web:
@@ -19,10 +21,8 @@ spring:
     driver-class-name: org.postgresql.Driver
   flyway:
     enabled: true
-    # V1/V2 核心迁移在 backend/db/migration（相对运行目录 backend/app 即 ../db/migration）；
-    # V900 dev 种子在 classpath，仅地基/dev 演示用（生产 profile 应排除）。
-    locations: filesystem:../db/migration,classpath:db/migration
     baseline-on-migrate: false
+    # locations 由 profile-specific yml（application-dev.yml/application-prod.yml）覆盖。
 
 logging:
   level:
@@ -31,6 +31,5 @@ logging:
 # 横切层
 huicui:
   jwt:
-    secret: "dev-only-secret-change-in-prod-至少32字节用于HS256签名0123456789"
+    secret: "${HUICUI_JWT_SECRET:}"    # 空默认；prod 必须通过环境变量注入，否则启动护栏抛 IllegalStateException
     ttl-seconds: 86400
-  dev-password: "Admin@123"     # 仅 dev：DevSeeder 给种子账号设此口令的 BCrypt 哈希

@@ -18,7 +18,6 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -40,22 +39,26 @@ import java.util.Set;
  *   PATCH/members/{id}                  updateMember         | perm=member.manage | scope=own-org | 200/403/404/422
  *   POST /members/{id}/disable          disableMember        | perm=member.manage | scope=own-org | 触发私海释放
  *   POST /members/{id}/enable           enableMember         | perm=member.manage | scope=own-org
- *   POST /members/{id}/reset-password   resetMemberPassword  | perm=member.manage | scope=own-org | BCrypt
+ *   POST /members/{id}/reset-password   resetMemberPassword  | perm=member.manage | scope=own-org | B-04方案A: 返回 setupToken
  *
  * 绝不 5xx（横切共性）：资源不存在/越 scope→404；无权限/平台改跨组织/越子集→403；状态非法（停用 owner/名重复）→409；
  *   入参/枚举/必填→422。错误经 GlobalExceptionHandler 统一信封。account JSONB 列 permissions/data_range
  *   用 ?::jsonb 写、Jackson readTree 读。敏感动作（create/disable/enable/reset_password/update）必落 audit_log。
+ *
+ * B-04方案A：
+ *   - createMember：INSERT password_hash=NULL + must_change_password=TRUE，发放一次性 setupToken；
+ *     响应体返回 setupToken 明文，管理员带外转交成员。禁止任何环境使用硬编码初始口令。
+ *   - resetMemberPassword：不再接受 newPassword 明文入参，改为发放一次性 setupToken（哈希存
+ *     credential_setup_token）；响应体返回 setupToken 明文，管理员带外转交成员。
  */
 @RestController
 public class MemberM1Controller {
 
     private static final Set<String> ROLE_ENUM = Set.of("SA", "SE", "PL", "PC", "VL", "CO");
-    private static final String DEV_INITIAL_PASSWORD = "Huicui@123";   // 创建员工 dev 初始口令
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
     private final AuditService audit;
-    private final BCryptPasswordEncoder bcrypt;
     private final CaseStateService state;
     private final SecureRandom rnd = new SecureRandom();
 
@@ -64,7 +67,6 @@ public class MemberM1Controller {
         this.jdbc = jdbc;
         this.json = json;
         this.audit = audit;
-        this.bcrypt = new BCryptPasswordEncoder();
         this.state = state;
     }
 
@@ -121,11 +123,14 @@ public class MemberM1Controller {
     }
 
     // ── [2] POST /members ─────────────────────────────────────────────────────
+    // B-04方案A：createMember 写 password_hash=NULL + must_change_password=TRUE，发放一次性 setupToken；
+    //   响应体返回 setupToken 明文（管理员带外转交成员，成员走 /auth/setup-password 设密）。
+    //   禁止任何环境使用硬编码初始口令。
     @PostMapping("/members")
     @RequirePermission("member.manage")
     @Transactional
     @ResponseStatus(HttpStatus.CREATED)
-    public MemberDto createMember(@RequestBody(required = false) Map<String, Object> body) {
+    public Map<String, Object> createMember(@RequestBody(required = false) Map<String, Object> body) {
         CurrentSubject s = SubjectContext.get();
         String username = requireStr(body, "username");
         String name = requireStr(body, "name");
@@ -165,16 +170,17 @@ public class MemberM1Controller {
 
         long orgId = orgIdLong(s);   // 均落操作人本组织
         String permJson = toJsonArrayOrNull(permissions);
-        String passwordHash = bcrypt.encode(DEV_INITIAL_PASSWORD);
+        // B-04方案A：password_hash=NULL + must_change_password=TRUE；绝不使用硬编码初始口令。
+        // 成员须走 /auth/setup-password 消费一次性 setupToken 设密后才能登录。
 
         Long newId;
         try {
             newId = jdbc.queryForObject(
                     "INSERT INTO account(org_id, username, name, phone, role_template, status,"
-                            + " is_owner, permissions, password_hash)"
-                            + " VALUES (?, ?, ?, ?, ?, 'ACTIVE', FALSE, ?::jsonb, ?) RETURNING id",
+                            + " is_owner, permissions, password_hash, must_change_password)"
+                            + " VALUES (?, ?, ?, ?, ?, 'ACTIVE', FALSE, ?::jsonb, NULL, TRUE) RETURNING id",
                     Long.class,
-                    orgId, username, name, phone, role, permJson, passwordHash);
+                    orgId, username, name, phone, role, permJson);
         } catch (DuplicateKeyException e) {
             // uq_account_username 冲突 → 业务幂等/重复，409。
             throw new ApiException(BizError.STATE_409, "用户名已存在: " + username);
@@ -183,15 +189,32 @@ public class MemberM1Controller {
             throw new ApiException(BizError.STATE_409, "创建成员失败: " + username);
         }
 
+        // 发放一次性 setupToken（先作废旧 token，再签发新 token——原子化在 issueSetupToken 内完成）。
+        long creatorId = Long.parseLong(s.accountId());
+        String setupToken = issueSetupToken(newId, creatorId, orgId);
+
         Map<String, Object> after = new LinkedHashMap<>();
         after.put("username", username);
         after.put("role", role);
         after.put("permissions", permissions == null ? List.of() : permissions);
+        after.put("setupTokenIssued", true);
         audit.write(s, "member.create", "account", String.valueOf(newId), null, null, after);
 
-        // 新建成员一定属操作人本组织 → manageable=true。
-        return new MemberDto(String.valueOf(newId), String.valueOf(orgId), username, name, phone,
+        // 响应体：member 信息 + setupToken 明文（管理员带外转交成员，绝不落日志）。
+        MemberDto dto = new MemberDto(String.valueOf(newId), String.valueOf(orgId), username, name, phone,
                 role, "ACTIVE", false, true);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("id", dto.id());
+        resp.put("orgId", dto.orgId());
+        resp.put("username", dto.username());
+        resp.put("name", dto.name());
+        resp.put("phone", dto.phone());
+        resp.put("role", dto.role());
+        resp.put("status", dto.status());
+        resp.put("isOwner", dto.isOwner());
+        resp.put("manageable", dto.manageable());
+        resp.put("setupToken", setupToken);
+        return resp;
     }
 
     // ── [3] PATCH /members/{id} ───────────────────────────────────────────────
@@ -299,6 +322,9 @@ public class MemberM1Controller {
     }
 
     // ── [6] POST /members/{id}/reset-password ─────────────────────────────────
+    // B-04方案A：不再接受 newPassword 明文，改为发放一次性 setupToken；
+    //   设 password_hash=NULL + must_change_password=TRUE，成员须走 /auth/setup-password 设密。
+    //   响应体返回 setupToken 明文（管理员带外转交成员）。审计绝不记 token 明文。
     @PostMapping("/members/{id}/reset-password")
     @RequirePermission("member.manage")
     @Transactional
@@ -307,30 +333,29 @@ public class MemberM1Controller {
         CurrentSubject s = SubjectContext.get();
         long memberId = parseId(id);
 
-        loadManageable(s, memberId);   // 不存在→404；越 own-org/平台改跨组织→403
+        MemberRow target = loadManageable(s, memberId);   // 不存在→404；越 own-org/平台改跨组织→403
 
-        Object pwRaw = body == null ? null : body.get("newPassword");
-        boolean notify = boolVal(body, "notify");
-        String pw = (pwRaw == null || String.valueOf(pwRaw).isBlank())
-                ? generatePassword() : String.valueOf(pwRaw);
+        // 清除口令 + 设首登改密标志。
+        jdbc.update("UPDATE account SET password_hash = NULL, must_change_password = TRUE,"
+                + " updated_at = now() WHERE id = ?", memberId);
 
-        jdbc.update("UPDATE account SET password_hash = ?, updated_at = now() WHERE id = ?",
-                bcrypt.encode(pw), memberId);
+        // 发放一次性 setupToken（仅存哈希，明文在此返回一次）。
+        long creatorId = Long.parseLong(s.accountId());
+        long orgId = target.orgId();
+        String setupToken = issueSetupToken(memberId, creatorId, orgId);
 
-        // notify==true → 短信通知骨架（占位，不阻断）。
-        // TODO: 接短信通道下发。当前仅记审计 notify 标记。
-
-        // 审计：绝不记明文/哈希。
+        // 审计：绝不记明文/哈希/token。
         Map<String, Object> after = new LinkedHashMap<>();
         after.put("passwordReset", true);
-        after.put("notify", notify);
+        after.put("setupTokenIssued", true);
         audit.write(s, "member.reset_password", "account", String.valueOf(memberId),
                 "重置密码", null, after);
 
-        // 不回传明文口令(审计 H-2)：明文经响应体会落日志/前端状态/APM。
-        // 生产应带外下发(短信/邮件 notify 通道)；契约 reset-password 响应仅 200 ok。
+        // 响应体返回 setupToken 明文（H-2 审计要求明文不落日志/审计，此处仅响应体一次性暴露）。
+        // 管理员须带外告知成员，成员用此 token 走 POST /auth/setup-password 设密，首登自动强制改密。
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("ok", true);
+        resp.put("setupToken", setupToken);
         return resp;
     }
 
@@ -432,6 +457,39 @@ public class MemberM1Controller {
         }
     }
 
+    // ── B-04方案A：一次性凭据交付令牌工具 ────────────────────────────────────────
+
+    /**
+     * 生成一次性 setupToken 并写入 credential_setup_token（仅存 SHA-256 哈希，TTL 24h）。
+     * 返回明文 token，由调用方一次性放入响应体，带外转交成员。
+     * 所有参数均参数化，无 SQL 注入风险。复用 OrgSystemM1Controller.sha256hex（包内 static）。
+     *
+     * HIGH-4：先作废该账号所有旧 token（used_at=NULL → 标废），再插新 token，均在同一事务内完成。
+     * 防止旧 token 泄漏后仍可被利用：新 token 签发 → 旧 token 立即失效。
+     */
+    private String issueSetupToken(long accountId, long createdByAccountId, long orgId) {
+        // 先作废该账号所有未使用旧 token（防止旧 token 泄漏后仍可被利用）。
+        jdbc.update(
+                "UPDATE credential_setup_token SET used_at = now()"
+                        + " WHERE account_id = ? AND used_at IS NULL",
+                accountId);
+        String token = generateSetupTokenPlain();
+        String hash  = OrgSystemM1Controller.sha256hex(token);
+        jdbc.update(
+                "INSERT INTO credential_setup_token(account_id, token_hash, expires_at, created_by, org_id)"
+                        + " VALUES (?, ?, now() + interval '24 hours', ?, ?)",
+                accountId, hash, createdByAccountId, orgId);
+        return token;
+    }
+
+    /** 生成 48 位 base62 随机串（高熵，用作 setupToken 明文）。 */
+    private String generateSetupTokenPlain() {
+        String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+        StringBuilder sb = new StringBuilder(48);
+        for (int i = 0; i < 48; i++) sb.append(alphabet.charAt(rnd.nextInt(alphabet.length())));
+        return sb.toString();
+    }
+
     // ── helpers：权限子集/JSONB/入参 ──────────────────────────────────────────
 
     /** permissions ⊆ 操作人权限集（BR-M1-03）；越子集→403 PERM_403。 */
@@ -512,21 +570,6 @@ public class MemberM1Controller {
         Object v = body == null ? null : body.get(key);
         if (v == null || String.valueOf(v).isBlank()) return null;
         return String.valueOf(v).trim();
-    }
-
-    private static boolean boolVal(Map<String, Object> body, String key) {
-        Object v = body == null ? null : body.get(key);
-        return v instanceof Boolean b ? b : Boolean.parseBoolean(String.valueOf(v));
-    }
-
-    private String generatePassword() {
-        String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-        int len = 8 + rnd.nextInt(5);   // 8-12 位
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < len; i++) {
-            sb.append(alphabet.charAt(rnd.nextInt(alphabet.length())));
-        }
-        return sb.toString();
     }
 
     /** 路径 id 非法形态统一 404，避免存在性泄漏 / 防 5xx。 */

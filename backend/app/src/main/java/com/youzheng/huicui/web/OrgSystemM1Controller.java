@@ -28,11 +28,16 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,10 +57,14 @@ import java.util.Set;
  *
  * range 口径（BR-M1 平台全量/组织本组织）：
  *   /orgs      → 平台无过滤；物业/服务商 AND id = :orgId（own-org-on-self，仅本组织）。
- *   /audit-log → 平台无过滤；物业/服务商 AND actor_id IN (本组织成员)。
+ *   /audit-log → 平台全量；物业/服务商 AND actor_id IN (本组织成员)。
  * platform 口径：!isPlatform → 403 PERM_403（仅平台）。
  *
  * 敏感动作（org.create / org.owner.rebind / reset-password）必落 audit_log（OrgSystemAuditService）。
+ *
+ * B-04方案A：新建组织/改绑重置不再生成可登录随机口令，改为发放一次性 setupToken（明文仅 201/200 响应体
+ * 出现一次，带外转交 owner）。Token 哈希存 credential_setup_token 表，TTL 24h，一次性。
+ * owner 须先走 POST /auth/setup-password 设密，login 成功且 must_change_password=true 强制改密。
  */
 @RestController
 public class OrgSystemM1Controller {
@@ -66,20 +75,12 @@ public class OrgSystemM1Controller {
     private final OrgSystemAuditService audit;
     private final ObjectMapper json;
     private final BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder();
-    private final java.security.SecureRandom rnd = new java.security.SecureRandom();
+    private final SecureRandom rnd = new SecureRandom();
 
     public OrgSystemM1Controller(JdbcTemplate jdbc, OrgSystemAuditService audit, ObjectMapper json) {
         this.jdbc = jdbc;
         this.audit = audit;
         this.json = json;
-    }
-
-    /** 随机初始口令(审计 M-3)：建组织 owner / 改绑重置均用，替代可预测的 devPassword。生产应带外下发+首登改密。 */
-    private String generatePassword() {
-        String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0, len = 8 + rnd.nextInt(5); i < len; i++) sb.append(alphabet.charAt(rnd.nextInt(alphabet.length())));
-        return sb.toString();
     }
 
     // ── [1] GET /orgs ─────────────────────────────────────────────────────────
@@ -114,6 +115,8 @@ public class OrgSystemM1Controller {
 
     // ── [2] POST /orgs ────────────────────────────────────────────────────────
     // x-permission=org.manage，x-data-scope=platform（仅平台建组织 BR-M1-01）。
+    // B-04方案A：owner 账号无可登录口令（password_hash=NULL，must_change_password=TRUE）；
+    //   发放一次性 setupToken，明文仅 201 响应体返回一次，需带外转交 owner。
     @PostMapping("/orgs")
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermission("org.manage")
@@ -154,32 +157,40 @@ public class OrgSystemM1Controller {
             throw new ApiException(BizError.STATE_409, "负责人账号已存在：" + body.ownerAccount());
         }
 
-        // 写库：org → account(owner) → 回填 owner_account_id。
+        // 写库：org → account(owner, 无可登录口令+首登改密) → 回填 owner_account_id。
+        // B-04方案A：password_hash=NULL，must_change_password=TRUE；owner 须先走
+        //   POST /auth/setup-password 用一次性 token 设密后才能登录。
         Long orgId = jdbc.queryForObject(
                 "INSERT INTO org(type, name, status) VALUES (?, ?, 'ACTIVE') RETURNING id",
                 Long.class, type, body.name());
         String ownerRole = "PROPERTY".equals(type) ? "PL" : "VL";
-        String hash = bcrypt.encode(generatePassword());   // 随机口令(审计 M-3)
         Long ownerAccountId = jdbc.queryForObject(
-                "INSERT INTO account(org_id, username, name, phone, role_template, status, is_owner, password_hash)"
-                        + " VALUES (?, ?, ?, ?, ?, 'ACTIVE', TRUE, ?) RETURNING id",
-                Long.class, orgId, body.ownerAccount(), body.ownerAccount(), body.ownerPhone(), ownerRole, hash);
+                "INSERT INTO account(org_id, username, name, phone, role_template, status, is_owner,"
+                        + " password_hash, must_change_password)"
+                        + " VALUES (?, ?, ?, ?, ?, 'ACTIVE', TRUE, NULL, TRUE) RETURNING id",
+                Long.class, orgId, body.ownerAccount(), body.ownerAccount(), body.ownerPhone(), ownerRole);
         jdbc.update("UPDATE org SET owner_account_id = ?, updated_at = now() WHERE id = ?", ownerAccountId, orgId);
 
-        // 审计（敏感动作必落）：org.create。
+        // 发放一次性 setupToken（明文仅此响应体出现一次，带外转交 owner）。
+        long creatorId = Long.parseLong(s.accountId());
+        String setupToken = issueSetupToken(ownerAccountId, creatorId, orgId);
+
+        // 审计（敏感动作必落）：org.create。绝不记 setupToken 明文。
         Map<String, Object> after = new LinkedHashMap<>();
         after.put("type", type);
         after.put("name", body.name());
         after.put("ownerAccountId", String.valueOf(ownerAccountId));
         after.put("ownerAccount", body.ownerAccount());
+        after.put("setupTokenIssued", true);
         audit.write(s, "org.create", "org", String.valueOf(orgId), "PLATFORM", null, null, null, after);
 
         return new OrgDto(String.valueOf(orgId), type, body.name(),
-                String.valueOf(ownerAccountId), "ACTIVE");
+                String.valueOf(ownerAccountId), "ACTIVE", setupToken);
     }
 
     // ── [3] PATCH /orgs/{id}/owner ────────────────────────────────────────────
-    // x-permission=org.manage，x-data-scope=platform。BR-M1-02/12：不转移账号，仅改绑手机+(可选)重置密码。
+    // x-permission=org.manage，x-data-scope=platform。BR-M1-02/12：不转移账号，仅改绑手机+(可选)重置。
+    // B-04方案A：resetPassword=true 时改用 issueSetupToken 替代随机口令，响应体返回明文 token。
     @PatchMapping("/orgs/{id}/owner")
     @RequirePermission("org.manage")
     @Transactional
@@ -214,24 +225,37 @@ public class OrgSystemM1Controller {
                 "SELECT phone FROM account WHERE id = ?",
                 rs -> rs.next() ? rs.getString("phone") : null, ownerAccountId);
 
-        // 写：改绑手机；可选重置密码（敏感动作）。
+        // 写：改绑手机；可选重置凭据（B-04方案A：不生成可登录口令，发放 setupToken+must_change_password=TRUE）。
         jdbc.update("UPDATE account SET phone = ?, updated_at = now() WHERE id = ?",
                 body.newPhone(), ownerAccountId);
+        String setupToken = null;
         if (resetPassword) {
-            jdbc.update("UPDATE account SET password_hash = ?, updated_at = now() WHERE id = ?",
-                    bcrypt.encode(generatePassword()), ownerAccountId);   // 随机口令(审计 M-3)
+            // 清除旧口令，设首登改密标志；owner 须走 /auth/setup-password 设密。
+            jdbc.update("UPDATE account SET password_hash = NULL, must_change_password = TRUE,"
+                    + " updated_at = now() WHERE id = ?", ownerAccountId);
+            long creatorId = Long.parseLong(s.accountId());
+            setupToken = issueSetupToken(ownerAccountId, creatorId, orgId);
         }
 
-        // 审计（交接留痕 BR-M1-08；reset-password 敏感动作必落）：org.owner.rebind。
+        // 审计（交接留痕 BR-M1-08；reset-password 敏感动作必落）：org.owner.rebind。绝不记 token 明文。
         Map<String, Object> before = new LinkedHashMap<>();
         before.put("phone", oldPhone);
         Map<String, Object> after = new LinkedHashMap<>();
         after.put("phone", body.newPhone());
         after.put("passwordReset", resetPassword);
+        if (resetPassword) {
+            after.put("setupTokenIssued", true);
+        }
         audit.write(s, "org.owner.rebind", "account", String.valueOf(ownerAccountId),
                 "PLATFORM", null, "负责人交接", before, after);
 
-        return Map.of();   // 200 空体
+        // 响应：resetPassword=true 时带 ownerSetupToken（明文一次性，带外转交）；否则空体。
+        if (setupToken != null) {
+            Map<String, Object> resp = new LinkedHashMap<>();
+            resp.put("ownerSetupToken", setupToken);
+            return resp;
+        }
+        return Map.of();
     }
 
     // ── [4] GET /audit-log ────────────────────────────────────────────────────
@@ -247,10 +271,15 @@ public class OrgSystemM1Controller {
 
         StringBuilder where = new StringBuilder(" WHERE 1=1");
         List<Object> args = new ArrayList<>();
-        // range：平台全量；物业/服务商 → 本组织成员产生的审计。
+        // range：平台全量；物业/服务商 → 本组织成员产生的审计 + 平台代本组织操作的留痕。
+        // BR-M1-15（M-07b）：proxy_for=本组织 id 的代操作记录（actor 为平台 SA/SE，不属本组织成员），
+        // 被代方亦应可见——否则平台代物业/服务商所做操作对被代方不透明。proxy_for 为 TEXT，
+        // 生产写路径（MasterWrite/Playbook/ProviderM3）存 String.valueOf(orgId)，故按字符串参数化比对。
         if (!s.isPlatform()) {
-            where.append(" AND actor_id IN (SELECT id FROM account WHERE org_id = ?)");
+            where.append(" AND (actor_id IN (SELECT id FROM account WHERE org_id = ?)"
+                    + " OR proxy_for = ?)");
             args.add(Long.valueOf(s.orgId()));
+            args.add(s.orgId());
         }
         if (!isBlank(from)) {
             where.append(" AND tm >= ?::timestamptz");
@@ -299,12 +328,14 @@ public class OrgSystemM1Controller {
 
     // ── helpers ────────────────────────────────────────────────────────────────
 
+    /** 列表端点用：ownerSetupToken 始终 null（令牌仅在写动作 201/200 响应中出现一次）。 */
     private static final RowMapper<OrgDto> ORG_MAPPER = (rs, i) -> new OrgDto(
             String.valueOf(rs.getLong("id")),
             rs.getString("type"),
             rs.getString("name"),
             idOrNull(rs, "owner_account_id"),
-            rs.getString("status"));
+            rs.getString("status"),
+            null);
 
     private RowMapper<AuditLogDto> auditMapper() {
         return (rs, i) -> new AuditLogDto(
@@ -380,6 +411,50 @@ public class OrgSystemM1Controller {
         m.put("cocomm.manage", new PermMeta("催收员佣金", "own-org"));
         m.put("cocomm.self.view", new PermMeta("我的佣金", "own-org"));
         return m;
+    }
+
+    // ── B-04方案A：一次性凭据交付令牌工具 ────────────────────────────────────────
+
+    /**
+     * 生成一次性 setupToken 明文并写入 credential_setup_token 表（仅存 SHA-256 哈希，TTL 24h）。
+     * 返回明文 token，由调用方一次性放入响应体，带外转交 owner；此后只可通过 /auth/setup-password 消费。
+     * 所有参数均参数化，无 SQL 注入风险。
+     *
+     * HIGH-4：先作废该账号所有旧 token（used_at=NULL → 标废），再插新 token，均在同一事务内完成。
+     * 防止旧 token 泄漏后仍可被利用：新 token 签发 → 旧 token 立即失效。
+     */
+    private String issueSetupToken(long accountId, long createdByAccountId, long orgId) {
+        // 先作废该账号所有未使用旧 token（防止旧 token 泄漏后仍可被利用）。
+        jdbc.update(
+                "UPDATE credential_setup_token SET used_at = now()"
+                        + " WHERE account_id = ? AND used_at IS NULL",
+                accountId);
+        String token = generateSetupTokenPlain();
+        String hash  = sha256hex(token);
+        jdbc.update(
+                "INSERT INTO credential_setup_token(account_id, token_hash, expires_at, created_by, org_id)"
+                        + " VALUES (?, ?, now() + interval '24 hours', ?, ?)",
+                accountId, hash, createdByAccountId, orgId);
+        return token;
+    }
+
+    /** 生成 48 位 base62 随机串（高熵，用作 setupToken 明文）。 */
+    private String generateSetupTokenPlain() {
+        String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+        StringBuilder sb = new StringBuilder(48);
+        for (int i = 0; i < 48; i++) sb.append(alphabet.charAt(rnd.nextInt(alphabet.length())));
+        return sb.toString();
+    }
+
+    /** SHA-256(input) → hex，用于存 credential_setup_token.token_hash（绝不存明文）。 */
+    static String sha256hex(String input) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(input.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
     }
 
     // ── 低级工具 ──────────────────────────────────────────────────────────────

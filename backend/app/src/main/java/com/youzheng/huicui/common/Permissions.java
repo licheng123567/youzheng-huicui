@@ -31,9 +31,9 @@ public final class Permissions {
             // 服务商负责人：承接/拒接/分配/退案 + 处置/上报本商催收员风险 + 管本商成员
             case "VL" -> Set.of("case.accept", "case.assign", "case.return", "cocomm.manage", "payreq.create",
                     "qc.dispose", "qc.escalate", "member.manage");
-            // 催收员：抢单/释放/跟进/通话/承诺/开工单(case.ticket)/缴费链接/标回款。工单由物业处理(ticket.handle 归 PL/PC)
+            // 催收员：抢单/释放/跟进/通话/承诺/开工单(case.ticket)/缴费链接。回款登记/冲正属 PC/SA，CO 无权(矩阵:58-59)
             case "CO" -> Set.of("case.claim", "case.release", "case.follow", "case.call",
-                    "case.promise", "case.ticket", "case.paylink", "case.repay.mark", "cocomm.self.view");
+                    "case.promise", "case.ticket", "case.paylink", "cocomm.self.view");
             default -> Set.of();
         };
     }

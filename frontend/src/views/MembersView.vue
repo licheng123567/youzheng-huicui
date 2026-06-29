@@ -32,20 +32,51 @@ async function load() {
   if (isPlatform()) orgs.value = ((await api.GET('/orgs', { params: { query: { page: 1, size: 50 } } as any })).data as any)?.items ?? []
 }
 
+// B-04方案A：一次性凭据交付令牌展示（新建组织/改绑重置后服务端返回）
+const setupTokenDlg = ref(false)
+const setupTokenVal = ref('')
+const setupTokenLabel = ref('')
+function showSetupToken(token: string, label: string) {
+  setupTokenVal.value = token
+  setupTokenLabel.value = label
+  setupTokenDlg.value = true
+}
+function copySetupToken() {
+  navigator.clipboard.writeText(setupTokenVal.value).then(() => {
+    ElMessage.success('已复制到剪贴板，请带外告知负责人/成员使用 /auth/setup-password 设密（Token 24h 有效，一次性）')
+  }).catch(() => {
+    ElMessage.warning('复制失败，请手动选取上方 Token 文本')
+  })
+}
+
 // 组织管理（平台·org.manage）：新建组织+绑负责人 / 改绑负责人
 const oDlg = ref(false); const oForm = ref<any>({ type: 'PROPERTY', name: '', ownerAccount: '', ownerPhone: '' })
 async function createOrg() {
-  const { error } = await api.POST('/orgs', { body: { ...oForm.value } as any })
+  const { data, error } = await api.POST('/orgs', { body: { ...oForm.value } as any })
   if (error) { ElMessage.error('建组织失败：' + ((error as any)?.message ?? '')); return }
-  ElMessage.success('已建组织+绑负责人（初始随机口令，请重置告知）'); oDlg.value = false; load()
+  oDlg.value = false; load()
+  // B-04方案A：展示一次性 setupToken，平台须带外告知 owner
+  const token = (data as any)?.ownerSetupToken
+  if (token) {
+    showSetupToken(token, '负责人初始凭据（带外转交，24h 有效，一次性）')
+  } else {
+    ElMessage.success('已建组织+绑负责人')
+  }
 }
 async function rebindOwner(o: any) {
   try {
     const { ElMessageBox } = await import('element-plus')
     const { value: newPhone } = await ElMessageBox.prompt('新负责人手机（改绑+可选重置交接 US-M1-09）', '改绑负责人 ' + o.name, { inputValidator: (v: string) => /^\d{6,}$/.test(v) || '请输入有效号码' })
-    const { error } = await api.PATCH('/orgs/{id}/owner', { params: { path: { id: String(o.id) } }, body: { newPhone, resetPassword: true } as any })
+    const { data, error } = await api.PATCH('/orgs/{id}/owner', { params: { path: { id: String(o.id) } }, body: { newPhone, resetPassword: true } as any })
     if (error) { ElMessage.error('改绑失败：' + ((error as any)?.message ?? '')); return }
-    ElMessage.success('已改绑负责人'); load()
+    load()
+    // B-04方案A：展示一次性 setupToken
+    const token = (data as any)?.ownerSetupToken
+    if (token) {
+      showSetupToken(token, '负责人重置凭据（带外转交，24h 有效，一次性）')
+    } else {
+      ElMessage.success('已改绑负责人')
+    }
   } catch { /* 取消 */ }
 }
 
@@ -66,7 +97,7 @@ async function createMember() {
   }
   const { error } = await api.POST('/members', { body: body as any })
   if (error) { ElMessage.error('创建失败：' + ((error as any)?.message ?? '')); return }
-  ElMessage.success('已创建（默认随机初始口令，请用「重置密码」设定并告知）'); cDlg.value = false; load()
+  ElMessage.success('已创建（须用「重置密码」发放一次性凭据告知成员）'); cDlg.value = false; load()
 }
 // 编辑成员（PATCH /members/{id} · MemberPatch{name?, permissions?, dataScope?}）
 const eDlg = ref(false)
@@ -107,14 +138,21 @@ async function toggle(row: any) {
   if (error) { ElMessage.error((op === 'disable' ? '停用' : '启用') + '失败：' + ((error as any)?.message ?? '负责人不可停用')); return }
   ElMessage.success(op === 'disable' ? '已停用（私海案件回流公海）' : '已启用'); load()
 }
-// 重置密码（H-2 后响应不回传明文，故管理员显式设定 newPassword 才知道）
+// 重置密码（B-04方案A：响应返回 setupToken，展示后带外告知成员）
 const pDlg = ref(false)
-const pForm = ref<any>({ id: '', name: '', newPassword: '', notify: false })
-function openReset(row: any) { pForm.value = { id: row.id, name: row.name, newPassword: '', notify: false }; pDlg.value = true }
+const pForm = ref<any>({ id: '', name: '' })
+function openReset(row: any) { pForm.value = { id: row.id, name: row.name }; pDlg.value = true }
 async function submitReset() {
-  const { error } = await api.POST('/members/{id}/reset-password', { params: { path: { id: pForm.value.id } }, body: { newPassword: pForm.value.newPassword || null, notify: pForm.value.notify } as any })
+  const { data, error } = await api.POST('/members/{id}/reset-password', { params: { path: { id: pForm.value.id } }, body: {} as any })
   if (error) { ElMessage.error('重置失败：' + ((error as any)?.message ?? '')); return }
-  ElMessage.success(pForm.value.newPassword ? '已重置为指定口令' : '已重置为随机口令（需短信通知员工）'); pDlg.value = false
+  pDlg.value = false
+  // B-04方案A：展示一次性 setupToken
+  const token = (data as any)?.setupToken
+  if (token) {
+    showSetupToken(token, '成员凭据（带外告知 ' + pForm.value.name + '，24h 有效，一次性）')
+  } else {
+    ElMessage.success('已重置凭据')
+  }
 }
 // 督导
 const sDlg = ref(false)
@@ -159,6 +197,21 @@ onMounted(load)
         <el-table-column label="操作" width="110"><template #default="{row}"><el-button size="small" @click="rebindOwner(row)">改绑负责人</el-button></template></el-table-column>
       </el-table>
     </template>
+
+    <!-- B-04方案A：一次性凭据交付 Token 展示弹窗（复制按钮+带外告知说明） -->
+    <el-dialog v-model="setupTokenDlg" title="一次性凭据 Token（带外转交）" width="500px" :close-on-click-modal="false">
+      <el-alert type="warning" :closable="false" style="margin-bottom:12px"
+        :title="setupTokenLabel + ' — 此 Token 仅展示一次，关闭后不可再查，请立即复制并带外告知。'" />
+      <el-input :model-value="setupTokenVal" readonly type="textarea" :rows="3"
+        style="font-family:monospace;font-size:13px;word-break:break-all" />
+      <div style="font-size:12px;color:#999;margin-top:6px">
+        收到 Token 的负责人/成员须访问 <b>POST /auth/setup-password</b>（{token, newPassword}）设置初始密码后方可登录；首次登录后强制改密。
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="copySetupToken">复制 Token</el-button>
+        <el-button @click="setupTokenDlg=false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="oDlg" title="新建组织+绑负责人（POST /orgs · org.manage）" width="440px">
       <el-form label-width="100px">
@@ -210,13 +263,10 @@ onMounted(load)
       <template #footer><el-button @click="eDlg=false">取消</el-button><el-button type="primary" @click="submitEdit">保存</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="pDlg" :title="`重置密码 · ${pForm.name}`" width="420px">
-      <el-alert type="info" :closable="false" style="margin-bottom:10px" title="出于安全，系统不回显口令。请在此设定新口令并自行告知员工；留空则随机生成（需短信通知）。" />
-      <el-form label-width="90px">
-        <el-form-item label="新口令"><el-input v-model="pForm.newPassword" placeholder="留空=随机" show-password /></el-form-item>
-        <el-form-item label="短信通知"><el-switch v-model="pForm.notify" /></el-form-item>
-      </el-form>
-      <template #footer><el-button @click="pDlg=false">取消</el-button><el-button type="primary" @click="submitReset">重置</el-button></template>
+    <el-dialog v-model="pDlg" :title="`重置密码 · ${pForm.name}（B-04方案A·一次性凭据）`" width="420px">
+      <el-alert type="info" :closable="false" style="margin-bottom:10px"
+        title="重置后系统将生成一次性凭据 Token（24h 有效，一次性），请在下一步弹窗中复制并带外告知成员。成员用此 Token 走 /auth/setup-password 设密后方可登录。" />
+      <template #footer><el-button @click="pDlg=false">取消</el-button><el-button type="primary" @click="submitReset">重置并获取 Token</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="sDlg" :title="`督导 · ${sForm.name}`" width="420px">

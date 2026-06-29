@@ -53,6 +53,7 @@ public class OwnerH5M7Controller {
         List<OwnerBillRow> rows = jdbc.query(
                 "SELECT pl.status AS pl_status,"
                         + " (pl.expires_at < now()) AS pl_expired,"
+                        + " pl.case_id AS case_id,"
                         + " c.project_id AS project_id,"
                         + " c.project_name AS community,"
                         + " c.due_cents AS due_cents,"
@@ -65,6 +66,7 @@ public class OwnerH5M7Controller {
                     OwnerBillRow r = new OwnerBillRow();
                     r.plStatus = rs.getString("pl_status");
                     r.plExpired = rs.getBoolean("pl_expired");
+                    r.caseId = rs.getLong("case_id");
                     r.projectId = rs.getLong("project_id");
                     r.community = rs.getString("community");
                     r.dueCents = rs.getLong("due_cents");
@@ -108,8 +110,13 @@ public class OwnerH5M7Controller {
 
         List<String> arrearagePeriods = parseStringArray(r.arrearagsPeriods);
 
-        // 政策分期 BR-M7-06：承诺分期 ≠ 政策分期；地基期返 null（留 TODO 接政策/减免规则分期）。
-        List<InstallmentDto> installments = null;
+        // 分期展示 BR-M7-03/06：分期不是业主自选，而是协调员在跟进时录入的承诺分期
+        //   （promise_installment，BR-M4-13，经 POST /cases/{id}/promises 落库）。
+        //   H5 只读把"协调员已设的分期计划"展示出来：取该案最近一条 promise 的分期明细
+        //   （seq→period「第N期」、due_date→dueDate、amount_cents→amountCents、state→status）。
+        //   无任何分期承诺则返 null（≠ 空数组，对齐契约 [array,'null']，前端据此判定不展示分期段）。
+        //   业主侧只读：仅 SELECT，绝不写/改分期。
+        List<InstallmentDto> installments = loadInstallments(r.caseId);
 
         // onlinePay 恒 false（本期线下缴·BR-M7-05）。
         return new OwnerBillDto(
@@ -124,6 +131,35 @@ public class OwnerH5M7Controller {
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    /**
+     * 读该案"协调员已设的分期计划"→ InstallmentDto[]（只读，业主不可改）。
+     * 数据源 = 最近一条 promise 的 promise_installment 明细（BR-M4-13 承诺分期，协调员跟进时录入）。
+     * 该案无任何分期承诺 → 返 null（契约 installments 为 [array,'null']；null 表示无分期计划）。
+     * 映射：seq→period「第N期」、due_date→dueDate(yyyy-MM-dd)、amount_cents→amountCents、state→status。
+     */
+    private List<InstallmentDto> loadInstallments(long caseId) {
+        List<InstallmentDto> list = jdbc.query(
+                "SELECT pi.seq AS seq, pi.due_date AS due_date,"
+                        + " pi.amount_cents AS amount_cents, pi.state AS state"
+                        + " FROM promise_installment pi"
+                        + " WHERE pi.promise_id = ("
+                        + "   SELECT id FROM promise WHERE case_id = ?"
+                        + "   ORDER BY created_at DESC, id DESC LIMIT 1)"
+                        + " ORDER BY pi.seq",
+                (rs, i) -> {
+                    java.sql.Date d = rs.getDate("due_date");
+                    long amt = rs.getLong("amount_cents");
+                    return new InstallmentDto(
+                            "第" + rs.getInt("seq") + "期",
+                            d == null ? null : d.toString(),   // java.sql.Date#toString = yyyy-MM-dd
+                            rs.wasNull() ? null : amt,
+                            rs.getString("state"));
+                },
+                caseId);
+        // 无分期承诺 → null（对齐契约 [array,'null']，前端据此不渲染分期段）。
+        return list.isEmpty() ? null : list;
+    }
 
     /** jsonb 文本 → List<String>（arrearags_periods）。空/异常返回空列表，绝不抛 5xx。 */
     private List<String> parseStringArray(String jsonText) {
@@ -173,6 +209,7 @@ public class OwnerH5M7Controller {
     private static final class OwnerBillRow {
         String plStatus;
         boolean plExpired;
+        long caseId;
         long projectId;
         String community;
         long dueCents;

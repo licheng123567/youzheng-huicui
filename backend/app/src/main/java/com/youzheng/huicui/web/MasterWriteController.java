@@ -350,8 +350,7 @@ public class MasterWriteController {
     // =====================================================================
     // [7p] POST /batches/{id}/playbook:sync — syncBatchPlaybook（一键同步手册为项目最新 BR-M2-18b）
     //   放弃批次自定义、重新继承项目最新手册，同步后 source=INHERITED、playbookDrift=false。
-    //   DDL playbook 仅 project_id 无 batch_id（批次手册经 project 折叠，见 PlaybookController）→ 当前无批次级自定义可清，
-    //   语义上为幂等 no-op（恒已是 INHERITED），仅落审计留痕；待批次级手册存储落地后此处清除批次覆盖+基线。
+    //   V915 起 playbook 有 batch_id 维：删该批次级覆盖行（含 baseline）→ 回退继承项目级，drift 自然消失。
     //   权限 playbook.adopt（对齐契约 syncBatchPlaybook x-permission），own-org；契约 200 无响应体。
     // =====================================================================
     @PostMapping("/batches/{id}/playbook:sync")
@@ -362,7 +361,9 @@ public class MasterWriteController {
         long batchId = parseIdOr404(id);
         BatchRef batch = loadBatchOwnOrg(s, batchId);   // 不存在→404；越权→403
 
-        // 当前无批次级手册存储 → no-op；留痕“恢复继承项目最新手册”。
+        // 删批次级覆盖手册（含基线列）→ 回退继承项目最新；source=INHERITED、playbookDrift 自然消失。
+        jdbc.update("DELETE FROM playbook WHERE batch_id = ?", batchId);
+
         String proxyFor = proxyForOrg(s, batch.orgId());
         audit(s, "playbook.sync.batch", "batch", batchId, "sync-to-project-latest", proxyFor,
                 Map.of("batchId", batchId, "source", "INHERITED"));

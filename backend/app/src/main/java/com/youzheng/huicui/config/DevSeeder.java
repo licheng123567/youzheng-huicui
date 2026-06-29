@@ -2,6 +2,7 @@ package com.youzheng.huicui.config;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Component;
@@ -32,6 +33,7 @@ import org.springframework.stereotype.Component;
  * 与 project.pay_info 使 OwnerBill 字段非空；M10 报表走聚合查询无需专门种子。
  * 见 {@link #seedM6Evidence} / {@link #seedM7Bill}。全部幂等，物理隔离。
  */
+@Profile("dev")
 @Component
 public class DevSeeder implements CommandLineRunner {
 
@@ -121,6 +123,7 @@ public class DevSeeder implements CommandLineRunner {
             seedProxyAuditLog(cuihu);
             seedSeaReturnedCase(proj, provider);
             seedBatchReduceDrift(proj);
+            seedBatchPlaybookDrift(proj);
         }
 
         // 案件级 provider_id 回填（V913）：DevSeeder 经 SQL 直插案件、绕过 dispatch/accept 控制器，
@@ -912,6 +915,53 @@ public class DevSeeder implements CommandLineRunner {
                         + "baseline_project_updated_at) "
                         + "VALUES (?, ?, '8折', 30000, FALSE, 'COLLECTOR_SELF', now() - interval '1 day')",
                 projId, firstBatch);
+    }
+
+    /**
+     * 批次级作战手册覆盖 drift（batch-sync-drift.spec.ts:42 手册闭环 · issue #2）。
+     * e2e 进 /batches 取首行(ORDER BY b.id DESC → 翠湖 id 最大批次)，需该批 getBatch.playbookDrift=true：
+     *  (a) 项目级现行手册(batch_id IS NULL)更新 updated_at=现在（V910 已种 翠湖一期 v1.0 项目级手册）；
+     *  (b) 该批次级覆盖手册(batch_id=首批次，status=PUBLISHED)，baseline_project_updated_at=过去时刻；
+     *  (c) 项目级手册 updated_at 更晚 → 项目级 > 基线 → playbookDrift=true（getBatch/deriveOverride 判定）。
+     * 注：drift 批次=reduce 同一首批次，但 reduce 测试(:18/:29)与手册测试(:42)互不删对方覆盖行——
+     *     reduce sync 仅删 reduce_tier(batch_id)，playbook sync 仅删 playbook(batch_id)，故同批共存。
+     *     批次手册采纳/恢复 e2e(batch-playbook-adopt.spec)操作另一批次(B-CH-2026-01·非首批次)，不触本 drift 种子。
+     * 幂等：首批次已有任一批次级手册行则整体跳过（:42 一键同步会删覆盖行，重启后重新种回）。
+     *
+     * @param projId 项目 id（翠湖一期）
+     */
+    private void seedBatchPlaybookDrift(Long projId) {
+        if (projId == null) return;
+        // e2e 首批次：翠湖项目下 id 最大批次（与 BatchesM2Controller ORDER BY b.id DESC 对齐）。
+        Long firstBatch = jdbc.query(
+                "SELECT id FROM batch WHERE project_id = ? ORDER BY id DESC LIMIT 1",
+                rs -> rs.next() ? rs.getLong(1) : null, projId);
+        if (firstBatch == null) return;
+        // 幂等：首批次已有批次级手册行则跳过。
+        Integer ovExists = jdbc.queryForObject(
+                "SELECT count(*) FROM playbook WHERE batch_id = ?", Integer.class, firstBatch);
+        if (ovExists != null && ovExists > 0) return;
+
+        // 采纳人：翠湖物业 PL（与项目级手册 adopted_by 同口径）。
+        Long plid = jdbc.query(
+                "SELECT a.id FROM account a JOIN project p ON p.org_id = a.org_id "
+                        + "WHERE p.id = ? AND a.role_template = 'PL' LIMIT 1",
+                rs -> rs.next() ? rs.getLong(1) : null, projId);
+
+        // (a) 确保项目级现行手册 updated_at=现在（晚于下面覆盖行的过去基线）。V910 已种项目级 v1.0。
+        jdbc.update(
+                "UPDATE playbook SET updated_at = now() "
+                        + "WHERE project_id = ? AND batch_id IS NULL AND status = 'PUBLISHED'",
+                projId);
+
+        // (b) 批次级覆盖手册：baseline_project_updated_at=1 天前（早于项目级当前 updated_at → drift）。
+        jdbc.update(
+                "INSERT INTO playbook(project_id, batch_id, version, content, status, adopt_mode, "
+                        + "adopted_by, adopted_at, baseline_project_version, baseline_project_updated_at) "
+                        + "VALUES (?, ?, 'v1.0-batch', "
+                        + "'翠湖首批次自定义手册：针对本批高额欠费户加强分期引导。', "
+                        + "'PUBLISHED', 'FORCE_MANUAL', ?, now(), 'v1.0', now() - interval '1 day')",
+                projId, firstBatch, plid);
     }
 
     /** 按 username 取 account.id（不存在返 null）。 */
