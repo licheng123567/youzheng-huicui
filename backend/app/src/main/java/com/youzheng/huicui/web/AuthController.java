@@ -5,9 +5,11 @@ import com.youzheng.huicui.error.BizError;
 import com.youzheng.huicui.security.CurrentSubject;
 import com.youzheng.huicui.security.JwtService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
@@ -37,6 +39,10 @@ public class AuthController {
     private final BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder();
     private final ObjectMapper om = new ObjectMapper();
 
+    /** dev 固定短信验证码，从 huicui.auth.dev-sms-code 读取（prod 留空，sms-code 端点拒绝服务）。 */
+    @Value("${huicui.auth.dev-sms-code:}")
+    private String devSmsCode;
+
     public AuthController(JdbcTemplate jdbc, JwtService jwt) {
         this.jdbc = jdbc;
         this.jwt = jwt;
@@ -55,8 +61,6 @@ public class AuthController {
     private final Map<String, SmsCode> smsCodes = new ConcurrentHashMap<>();
     private static final long TICKET_TTL_MS = 5 * 60 * 1000L;
     private static final long SMS_TTL_MS = 5 * 60 * 1000L;
-    // dev 固定码（仅 dev：DevSeeder 在跑即视为 dev）。生产务必改随机码经短信通道下发，且不得回显前端。
-    private static final String DEV_SMS_CODE = "000000";
 
     @PostMapping("/login")
     public LoginResult login(@RequestBody Map<String, Object> body) {
@@ -115,8 +119,12 @@ public class AuthController {
     @PostMapping("/sms-code")
     public Map<String, Object> smsCode(@RequestBody Map<String, Object> body) {
         String phone = req(body, "phone");
-        // dev 存固定码 + TTL（生产：随机码经短信通道下发 + 限流429）。绝不回显 code。
-        smsCodes.put(phone, new SmsCode(DEV_SMS_CODE, System.currentTimeMillis() + SMS_TTL_MS));
+        // prod：devSmsCode 为空 → 短信通道未接入，拒绝服务（503）。绝不回显 code。
+        // dev：devSmsCode 由 huicui.auth.dev-sms-code 配置（application-dev.yml），默认 "000000"。
+        if (devSmsCode == null || devSmsCode.isBlank()) {
+            throw new ApiException(BizError.SERVICE_503, "短信通道未接入，dev-sms-code 未配置");
+        }
+        smsCodes.put(phone, new SmsCode(devSmsCode, System.currentTimeMillis() + SMS_TTL_MS));
         return Map.of("sent", true, "ttlSeconds", SMS_TTL_MS / 1000);
     }
 
@@ -150,6 +158,7 @@ public class AuthController {
      *   此端点无需登录（security=[]，public）。
      */
     @PostMapping("/setup-password")
+    @Transactional
     public Map<String, Object> setupPassword(@RequestBody Map<String, Object> body) {
         String token = req(body, "token");
         String newPassword = req(body, "newPassword");
@@ -160,11 +169,14 @@ public class AuthController {
         // 计算 SHA-256(token) → hash，与数据库比对。
         String hash = OrgSystemM1Controller.sha256hex(token);
 
-        // 查有效令牌（未使用+未过期）并取 account_id。
+        // HIGH-3 原子一次性消费：UPDATE ... SET used_at=now() WHERE token_hash=? AND used_at IS NULL
+        //   AND expires_at > now() RETURNING account_id。
+        // 行级锁 + 原子 CAS：并发重放中仅一个事务成功更新（rowsAffected=1），其余得 0 行 → 409。
+        // 不再使用 SELECT → 消费 的两步模式，彻底消除 TOCTOU 竞态（审计 HIGH-3）。
         Long accountId = jdbc.query(
-                "SELECT account_id FROM credential_setup_token"
+                "UPDATE credential_setup_token SET used_at = now()"
                         + " WHERE token_hash = ? AND used_at IS NULL AND expires_at > now()"
-                        + " LIMIT 1",
+                        + " RETURNING account_id",
                 rs -> rs.next() ? rs.getLong("account_id") : null,
                 hash);
         if (accountId == null) {
@@ -180,18 +192,12 @@ public class AuthController {
             throw new ApiException(BizError.PERM_403, "账号已停用，无法设置密码");
         }
 
-        // 原子更新：设密码 + 清首登改密标志。
+        // 设密码 + 清首登改密标志（token 已于上步原子消费，不存在重放窗口）。
         String newHash = bcrypt.encode(newPassword);
         jdbc.update(
                 "UPDATE account SET password_hash = ?, must_change_password = FALSE,"
                         + " updated_at = now() WHERE id = ?",
                 newHash, accountId);
-
-        // 消费 token（一次性：设 used_at，防重放）。
-        jdbc.update(
-                "UPDATE credential_setup_token SET used_at = now()"
-                        + " WHERE token_hash = ? AND used_at IS NULL",
-                hash);
 
         return Map.of("ok", true);
     }

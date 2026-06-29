@@ -239,6 +239,10 @@ public class PayReduceRepayM4Controller {
     public RepayLineDto createRepayLine(@PathVariable("id") String id,
                                         @RequestBody(required = false) Map<String, Object> body) {
         CurrentSubject s = SubjectContext.get();
+        // B-01·旧 JWT 防穿透：回款登记/冲正仅 PL/PC(物业核实) 与平台代理可操作，CO 无论是否持有均拒。
+        if ("CO".equals(s.role())) {
+            throw new ApiException(BizError.PERM_403, "催收员不可登记/冲正回款，须由物业核实方操作");
+        }
         long caseId = parseCaseId(id);
         // case-actor 行级：CO 仅持有本人/PL-PC 本物业/SA-SE 平台（防同 org 非持有 CO 越权标他案回款）。
         CaseScopeM4Service.CaseRow c = scope.requireCaseActor(s, caseId);
@@ -286,6 +290,10 @@ public class PayReduceRepayM4Controller {
     public Map<String, Object> reverseRepayLine(@PathVariable("id") String id,
                                                 @RequestBody(required = false) Map<String, Object> body) {
         CurrentSubject s = SubjectContext.get();
+        // B-01·旧 JWT 防穿透：回款冲正与登记口径一致，CO 一律拒。
+        if ("CO".equals(s.role())) {
+            throw new ApiException(BizError.PERM_403, "催收员不可登记/冲正回款，须由物业核实方操作");
+        }
         long repayId = parseGenericId(id);
         String reason = parseRequiredString(body, "reason");    // 缺→422
         RepayLineRow rl = lockRepayLine(repayId);               // 不存在→404

@@ -18,7 +18,8 @@ public enum BizError {
     BIZ_PAYOUT_INVERT(422, "BIZ_PAYOUT_INVERT"),         // 防倒挂：付佣比例 > 收佣比例
     // ── M4 缴费链接/回款 ──
     BIZ_SMS_COOLDOWN(409, "BIZ_SMS_COOLDOWN"),           // 同案缴费短信冷却未到 BR-M4-14a
-    BIZ_QUOTA_EXHAUSTED(409, "BIZ_QUOTA_EXHAUSTED");     // 短信/分钟余量不足（M9 预付费，地基期可不触发）
+    BIZ_QUOTA_EXHAUSTED(409, "BIZ_QUOTA_EXHAUSTED"),     // 短信/分钟余量不足（M9 预付费，地基期可不触发）
+    SERVICE_503(503, "SERVICE_503");                      // 服务暂不可用（prod SMS 通道未接入等）
 
     public final int httpStatus;
     public final String code;

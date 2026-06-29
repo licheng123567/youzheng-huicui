@@ -419,8 +419,16 @@ public class OrgSystemM1Controller {
      * 生成一次性 setupToken 明文并写入 credential_setup_token 表（仅存 SHA-256 哈希，TTL 24h）。
      * 返回明文 token，由调用方一次性放入响应体，带外转交 owner；此后只可通过 /auth/setup-password 消费。
      * 所有参数均参数化，无 SQL 注入风险。
+     *
+     * HIGH-4：先作废该账号所有旧 token（used_at=NULL → 标废），再插新 token，均在同一事务内完成。
+     * 防止旧 token 泄漏后仍可被利用：新 token 签发 → 旧 token 立即失效。
      */
     private String issueSetupToken(long accountId, long createdByAccountId, long orgId) {
+        // 先作废该账号所有未使用旧 token（防止旧 token 泄漏后仍可被利用）。
+        jdbc.update(
+                "UPDATE credential_setup_token SET used_at = now()"
+                        + " WHERE account_id = ? AND used_at IS NULL",
+                accountId);
         String token = generateSetupTokenPlain();
         String hash  = sha256hex(token);
         jdbc.update(

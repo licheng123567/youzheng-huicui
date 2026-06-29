@@ -18,7 +18,6 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -47,8 +46,8 @@ import java.util.Set;
  *   用 ?::jsonb 写、Jackson readTree 读。敏感动作（create/disable/enable/reset_password/update）必落 audit_log。
  *
  * B-04方案A：
- *   - createMember：INSERT must_change_password=TRUE，响应暂不改（成员已知初始口令 DEV_INITIAL_PASSWORD，
- *     生产须走 reset-password 后发放 setupToken 告知成员）。
+ *   - createMember：INSERT password_hash=NULL + must_change_password=TRUE，发放一次性 setupToken；
+ *     响应体返回 setupToken 明文，管理员带外转交成员。禁止任何环境使用硬编码初始口令。
  *   - resetMemberPassword：不再接受 newPassword 明文入参，改为发放一次性 setupToken（哈希存
  *     credential_setup_token）；响应体返回 setupToken 明文，管理员带外转交成员。
  */
@@ -56,12 +55,10 @@ import java.util.Set;
 public class MemberM1Controller {
 
     private static final Set<String> ROLE_ENUM = Set.of("SA", "SE", "PL", "PC", "VL", "CO");
-    private static final String DEV_INITIAL_PASSWORD = "Huicui@123";   // 创建员工 dev 初始口令
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
     private final AuditService audit;
-    private final BCryptPasswordEncoder bcrypt;
     private final CaseStateService state;
     private final SecureRandom rnd = new SecureRandom();
 
@@ -70,7 +67,6 @@ public class MemberM1Controller {
         this.jdbc = jdbc;
         this.json = json;
         this.audit = audit;
-        this.bcrypt = new BCryptPasswordEncoder();
         this.state = state;
     }
 
@@ -127,13 +123,14 @@ public class MemberM1Controller {
     }
 
     // ── [2] POST /members ─────────────────────────────────────────────────────
-    // B-04方案A：createMember 写 must_change_password=TRUE（DEV_INITIAL_PASSWORD 仅 dev 用；
-    //   生产员工须管理员用 reset-password 发放 setupToken 后告知，首登强制改密）。
+    // B-04方案A：createMember 写 password_hash=NULL + must_change_password=TRUE，发放一次性 setupToken；
+    //   响应体返回 setupToken 明文（管理员带外转交成员，成员走 /auth/setup-password 设密）。
+    //   禁止任何环境使用硬编码初始口令。
     @PostMapping("/members")
     @RequirePermission("member.manage")
     @Transactional
     @ResponseStatus(HttpStatus.CREATED)
-    public MemberDto createMember(@RequestBody(required = false) Map<String, Object> body) {
+    public Map<String, Object> createMember(@RequestBody(required = false) Map<String, Object> body) {
         CurrentSubject s = SubjectContext.get();
         String username = requireStr(body, "username");
         String name = requireStr(body, "name");
@@ -173,17 +170,17 @@ public class MemberM1Controller {
 
         long orgId = orgIdLong(s);   // 均落操作人本组织
         String permJson = toJsonArrayOrNull(permissions);
-        // B-04方案A：must_change_password=TRUE；dev 暂用 DEV_INITIAL_PASSWORD，生产应随后立即走 reset-password。
-        String passwordHash = bcrypt.encode(DEV_INITIAL_PASSWORD);
+        // B-04方案A：password_hash=NULL + must_change_password=TRUE；绝不使用硬编码初始口令。
+        // 成员须走 /auth/setup-password 消费一次性 setupToken 设密后才能登录。
 
         Long newId;
         try {
             newId = jdbc.queryForObject(
                     "INSERT INTO account(org_id, username, name, phone, role_template, status,"
                             + " is_owner, permissions, password_hash, must_change_password)"
-                            + " VALUES (?, ?, ?, ?, ?, 'ACTIVE', FALSE, ?::jsonb, ?, TRUE) RETURNING id",
+                            + " VALUES (?, ?, ?, ?, ?, 'ACTIVE', FALSE, ?::jsonb, NULL, TRUE) RETURNING id",
                     Long.class,
-                    orgId, username, name, phone, role, permJson, passwordHash);
+                    orgId, username, name, phone, role, permJson);
         } catch (DuplicateKeyException e) {
             // uq_account_username 冲突 → 业务幂等/重复，409。
             throw new ApiException(BizError.STATE_409, "用户名已存在: " + username);
@@ -192,15 +189,32 @@ public class MemberM1Controller {
             throw new ApiException(BizError.STATE_409, "创建成员失败: " + username);
         }
 
+        // 发放一次性 setupToken（先作废旧 token，再签发新 token——原子化在 issueSetupToken 内完成）。
+        long creatorId = Long.parseLong(s.accountId());
+        String setupToken = issueSetupToken(newId, creatorId, orgId);
+
         Map<String, Object> after = new LinkedHashMap<>();
         after.put("username", username);
         after.put("role", role);
         after.put("permissions", permissions == null ? List.of() : permissions);
+        after.put("setupTokenIssued", true);
         audit.write(s, "member.create", "account", String.valueOf(newId), null, null, after);
 
-        // 新建成员一定属操作人本组织 → manageable=true。
-        return new MemberDto(String.valueOf(newId), String.valueOf(orgId), username, name, phone,
+        // 响应体：member 信息 + setupToken 明文（管理员带外转交成员，绝不落日志）。
+        MemberDto dto = new MemberDto(String.valueOf(newId), String.valueOf(orgId), username, name, phone,
                 role, "ACTIVE", false, true);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("id", dto.id());
+        resp.put("orgId", dto.orgId());
+        resp.put("username", dto.username());
+        resp.put("name", dto.name());
+        resp.put("phone", dto.phone());
+        resp.put("role", dto.role());
+        resp.put("status", dto.status());
+        resp.put("isOwner", dto.isOwner());
+        resp.put("manageable", dto.manageable());
+        resp.put("setupToken", setupToken);
+        return resp;
     }
 
     // ── [3] PATCH /members/{id} ───────────────────────────────────────────────
@@ -449,8 +463,16 @@ public class MemberM1Controller {
      * 生成一次性 setupToken 并写入 credential_setup_token（仅存 SHA-256 哈希，TTL 24h）。
      * 返回明文 token，由调用方一次性放入响应体，带外转交成员。
      * 所有参数均参数化，无 SQL 注入风险。复用 OrgSystemM1Controller.sha256hex（包内 static）。
+     *
+     * HIGH-4：先作废该账号所有旧 token（used_at=NULL → 标废），再插新 token，均在同一事务内完成。
+     * 防止旧 token 泄漏后仍可被利用：新 token 签发 → 旧 token 立即失效。
      */
     private String issueSetupToken(long accountId, long createdByAccountId, long orgId) {
+        // 先作废该账号所有未使用旧 token（防止旧 token 泄漏后仍可被利用）。
+        jdbc.update(
+                "UPDATE credential_setup_token SET used_at = now()"
+                        + " WHERE account_id = ? AND used_at IS NULL",
+                accountId);
         String token = generateSetupTokenPlain();
         String hash  = OrgSystemM1Controller.sha256hex(token);
         jdbc.update(

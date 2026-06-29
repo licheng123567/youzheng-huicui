@@ -74,8 +74,9 @@ class HoldCapConcurrencyIT {
         // 路径从 backend/app（maven 工作目录）出发：../db/migration 指向 backend/db/migration。
         Flyway flyway = Flyway.configure()
                 .dataSource(dataSource)
-                // 核心 schema V1-V7（不含 dev 种子 V9xx）
-                .locations("filesystem:../db/migration")
+                // 核心 schema V1-V7 + classpath 追加迁移 V911-V916（provider_id_at_repay/settlement_snapshot 等）
+                // 不加 classpath:db/seed 避免种子数据依赖
+                .locations("filesystem:../db/migration", "classpath:db/migration")
                 .baselineOnMigrate(false)
                 .load();
         // 迁移失败须暴露（路径错/脚本错应让测试 fail，不可静默吞掉）。

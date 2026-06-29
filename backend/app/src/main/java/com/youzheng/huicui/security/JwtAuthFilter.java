@@ -6,6 +6,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -30,6 +31,10 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private final JwtService jwt;
     private final JdbcTemplate jdbc;
     private final ObjectMapper om = new ObjectMapper();
+
+    /** prod profile 下 DB 异常时失败关闭（fail-closed）；dev 沿用宽松降级（fail-open）。 */
+    @Value("${spring.profiles.active:dev}")
+    private String activeProfile;
 
     public JwtAuthFilter(JwtService jwt, JdbcTemplate jdbc) {
         this.jwt = jwt;
@@ -83,10 +88,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     }
 
     /**
-     * 查 account.must_change_password。列不存在（迁移未跑）时降级 false，避免 5xx。
+     * 查 account.must_change_password。
+     *
+     * MEDIUM-5 fail-closed/fail-open 策略：
+     *   - prod profile：DB 异常时返回 true（fail-closed），强制触发 must-change-password 拦截，拒绝请求。
+     *     宁可合法请求被短暂拒绝，也不允许未改密账号在 DB 不可用时绕过检查。
+     *   - dev profile：DB 异常时降级 false（fail-open），避免 5xx，方便本地开发。
+     *
+     * 列不存在（迁移未跑）时与 DB 异常同口径——prod fail-closed，dev fail-open。
      */
     private boolean isMustChangeRequired(String accountId) {
         if (accountId == null || accountId.isBlank()) return false;
+        boolean isProd = "prod".equals(activeProfile);
         try {
             long id = Long.parseLong(accountId);
             Boolean v = jdbc.query(
@@ -95,8 +108,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     id);
             return Boolean.TRUE.equals(v);
         } catch (Exception e) {
-            // 列不存在或 DB 异常：降级放行，不因此拦截合法请求
-            return false;
+            // prod：fail-closed — DB 异常时拒绝放行（强制改密检查），防止绕过。
+            // dev：fail-open  — 降级放行，不因 DB 异常拦截合法开发请求。
+            return isProd;
         }
     }
 
