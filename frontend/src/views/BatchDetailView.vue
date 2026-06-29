@@ -6,6 +6,7 @@ import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import { useRoleFields } from '../composables/useRoleFields'
 import CoordinatorPicker from '../components/CoordinatorPicker.vue'
+import { caseStatusLabel, reduceDecideLabel, poolLabel } from '../constants/enums'
 
 // 批次详情 /batches/:id：GET /batches/{id}(双线视角) + GET /cases?batchId 案件清单 + 减免档位 + 协调员 + 作战手册。
 // 含 M2-B：批次协调员维护 / 减免覆盖编辑·恢复继承 / 手册采纳·恢复继承 / BR-M2-18b 覆盖同步(drift+一键同步)。
@@ -18,7 +19,6 @@ const tiersSource = ref<string | null>(null) // INHERITED | CUSTOM | null(无权
 const tiersPermDenied = ref(false)
 const yuan = (c?: number | null) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
 const sourceLabel = (s: string | null) => s === 'CUSTOM' ? '批次自定义' : s === 'INHERITED' ? '继承项目默认' : ''
-const decideLabel = (d?: string) => d === 'COLLECTOR_SELF' ? '催收员自决' : d === 'OFFLINE_INTERNAL' ? '线下内部流程' : d === 'PL_APPROVE' ? '物业负责人审批' : (d ?? '—')
 
 async function loadBatch() {
   const { data, error } = await api.GET('/batches/{id}', { params: { path: { id: bid } } })
@@ -143,7 +143,7 @@ onMounted(loadAll)
         </div>
       </div>
       <div class="desc">
-        <div class="r"><div class="k">状态</div><div class="v">{{ b.status }}</div></div>
+        <div class="r"><div class="k">状态</div><div class="v" :title="b.status">{{ caseStatusLabel(b.status) }}</div></div>
         <!-- 资金双线：收佣/付佣各自整项渲染，视角无对应字段时整项不出(H-03) -->
         <div v-if="showCommInRate" class="r"><div class="k">收佣比例</div><div class="v num">{{ ratePct(b.commInRate) }}</div></div>
         <div v-if="showPayOutRate" class="r"><div class="k">付佣比例</div><div class="v num">{{ ratePct(b.payOutRate) }}</div></div>
@@ -182,7 +182,7 @@ onMounted(loadAll)
           <tr v-for="(t,ti) in tiers" :key="ti">
             <td>{{ t.discount }}</td>
             <td class="num">{{ yuan(t.capCents) }}</td>
-            <td>{{ decideLabel(t.decide) }}</td>
+            <td :title="t.decide">{{ reduceDecideLabel(t.decide) }}</td>
             <td>{{ t.waivePenalty?'是':'否' }}</td>
           </tr>
           <tr v-if="!tiers.length"><td colspan="4" class="empty-cell">暂无减免档位</td></tr>
@@ -222,8 +222,8 @@ onMounted(loadAll)
             <td>{{ c.ownerName }}</td>
             <td>{{ c.room }}</td>
             <td class="num">{{ yuan(c.dueCents) }}</td>
-            <td>{{ c.status }}</td>
-            <td>{{ c.pool }}</td>
+            <td :title="c.status">{{ caseStatusLabel(c.status) }}</td>
+            <td :title="c.pool">{{ poolLabel(c.pool) }}</td>
           </tr>
           <tr v-if="!cases.length"><td colspan="6" class="empty-cell">暂无案件</td></tr>
         </tbody>

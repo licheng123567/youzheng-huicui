@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '../../stores/auth'
 import { api } from '../../api/client'
+import { promiseStateLabel, ticketStatusLabel } from '../../constants/enums'
 
 // 移动案件作业台:详情 + 角色化动作(拨号提示/取最新录音→AI复盘/登记承诺/转工单/标记回款/发缴费链接/建议法务)。
 // 动作请求体与 PC CaseDetailView 完全一致,复用同一批后端端点。
@@ -172,10 +173,10 @@ onMounted(load)
         <div class="tl" v-if="promises.length || tickets.length">
           <div class="e" v-for="p in promises" :key="'p' + p.id">
             <span class="tm">{{ p.date }}</span> 登记承诺 {{ yuan(p.amountCents) }}
-            <div class="mini">状态：{{ p.state || p.status || '—' }}</div>
+            <div class="mini" :title="p.state || p.status">状态：{{ (p.state || p.status) ? promiseStateLabel(p.state || p.status) : '—' }}</div>
           </div>
           <div class="e" v-for="t in tickets" :key="'t' + t.id">
-            <span class="tm">工单</span> {{ t.type }} · {{ t.status }}
+            <span class="tm">工单</span> {{ t.type }} · <span :title="t.status">{{ ticketStatusLabel(t.status) }}</span>
             <div class="mini" v-if="t.note">{{ t.note }}</div>
           </div>
         </div>

@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
+import { billingTypeLabel } from '../constants/enums'
 
 // 充值（将挂 /recharge）：充值流水(GET /billing/recharge-log) + 平台充值(POST /billing/recharge·billing.recharge 门控)。
 // 逻辑自包含，不依赖未建路由；脱敏/权限沿用 api 返回。
@@ -95,7 +96,7 @@ onMounted(() => {
       </thead>
       <tbody>
         <tr v-for="(row, i) in log" :key="row.id || i">
-          <td><span class="tag" :class="typeTag(row.type)">{{ row.type || '—' }}</span></td>
+          <td><span class="tag" :class="typeTag(row.type)" :title="row.type">{{ row.type ? billingTypeLabel(row.type) : '—' }}</span></td>
           <td class="num" :style="{ color: row.delta >= 0 ? 'var(--success)' : 'var(--danger)' }">{{ row.delta >= 0 ? '+' : '' }}{{ row.delta != null ? row.delta : '—' }}</td>
           <td class="num">{{ row.balance != null ? row.balance : '—' }}</td>
           <td>{{ row.ref || '—' }}</td>

@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { useAuth } from '../stores/auth'
 import { api } from '../api/client'
 import { permLabel } from '../constants/permissions'
+import { roleTemplateLabel } from '../constants/enums'
 
 // 个人中心：资料查看(GET /me 已有) + 自助改密(POST /me/password · v1.3.0)。
 const auth = useAuth()
@@ -14,14 +15,8 @@ const form = ref({ oldPassword: '', newPassword: '', confirm: '' })
 function open() { form.value = { oldPassword: '', newPassword: '', confirm: '' }; dlg.value = true }
 
 // ===== 纯展示辅助（仅 UI 表现层，不参与数据流）=====
-// 角色码 → 中文标签（缺省回落原码）
-const ROLE_LABEL: Record<string, string> = {
-  SA: '平台管理员', SE: '平台员工',
-  PA: '物业负责人', PC: '物业协调员',
-  CA: '服务商负责人', CC: '催收员',
-  ADMIN: '管理员'
-}
-const roleLabel = computed<string>(() => ROLE_LABEL[me.value?.role ?? ''] ?? (me.value?.role ?? '—'))
+// 角色码 → 中文标签（复用 enums.ts RoleTemplate，缺省回落原码）
+const roleLabel = computed<string>(() => roleTemplateLabel(me.value?.role))
 // 姓名首字（头像）
 const nameInitial = computed<string>(() => { const n = me.value?.name; return n ? String(n).charAt(0) : '我' })
 // 组织类型 → .tag 配色
@@ -50,7 +45,7 @@ async function submit() {
           <div class="sub">账号 ID：{{ me.accountId }}</div>
         </div>
         <div class="profile-tags">
-          <span class="tag pri">{{ roleLabel }}</span>
+          <span class="tag pri" :title="me.role">{{ roleLabel }}</span>
           <span v-if="me.org?.name" class="tag" :class="orgTypeTag">{{ me.org.name }}</span>
         </div>
       </div>
@@ -59,7 +54,7 @@ async function submit() {
       <div class="desc">
         <div class="r"><div class="k">账号 ID</div><div class="v">{{ me.accountId }}</div></div>
         <div class="r"><div class="k">姓名</div><div class="v">{{ me.name }}</div></div>
-        <div class="r"><div class="k">角色</div><div class="v"><span class="tag pri">{{ roleLabel }}</span></div></div>
+        <div class="r"><div class="k">角色</div><div class="v"><span class="tag pri" :title="me.role">{{ roleLabel }}</span></div></div>
         <div class="r"><div class="k">组织</div><div class="v"><span v-if="me.org?.name" class="tag" :class="orgTypeTag">{{ me.org.name }}</span><span v-else>—</span></div></div>
         <div class="r"><div class="k">数据范围</div><div class="v">{{ me.dataScope ? JSON.stringify(me.dataScope) : 'platform 全量' }}</div></div>
         <div class="r"><div class="k">权限点</div><div class="v"><span v-for="p in me.permissions" :key="p" class="tag inf" style="margin:2px 4px 2px 0" :title="p">{{ permLabel(p) }}</span></div></div>

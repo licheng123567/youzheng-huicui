@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
+import { evidenceSceneLabel, evidenceStatusLabel } from '../constants/enums'
 
 // M6 存证：GET /evidence(三方隔离·物业可见/服务商空) + 验真(GET /evidence/{id}/verify·public 防篡改校验)。
 // H-02: 本页为只读列表/验真/证书下载入口；存证「创建」入口分离在案件作业台(发起存证)，仅 evidence.create 可见。
@@ -62,8 +63,8 @@ onMounted(load)
       <tbody>
         <tr v-for="row in items" :key="row.id">
           <td>{{ row.certNo || '—' }}</td>
-          <td>{{ row.scene || '—' }}</td>
-          <td><span class="tag" :class="statusTag(row.status)">{{ row.status }}</span></td>
+          <td :title="row.scene">{{ evidenceSceneLabel(row.scene) }}</td>
+          <td><span class="tag" :class="statusTag(row.status)" :title="row.status">{{ evidenceStatusLabel(row.status) }}</span></td>
           <td>{{ row.issuedAt || '—' }}</td>
           <td>
             <a class="btn txt" @click="doVerify(row)">验真</a>
@@ -87,7 +88,7 @@ onMounted(load)
         </div>
         <div class="desc">
           <div class="r"><div class="k">存证号</div><div class="v">{{ verify.certNo }}</div></div>
-          <div class="r"><div class="k">场景</div><div class="v">{{ verify.scene }}</div></div>
+          <div class="r"><div class="k">场景</div><div class="v" :title="verify.scene">{{ evidenceSceneLabel(verify.scene) }}</div></div>
           <div class="r"><div class="k">出证时间</div><div class="v">{{ verify.issuedAt }}</div></div>
           <div class="r"><div class="k">哈希</div><div class="v" style="word-break:break-all"><code>{{ verify.hash }}</code></div></div>
         </div>

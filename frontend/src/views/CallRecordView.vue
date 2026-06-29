@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
+import { callRecStatusLabel } from '../constants/enums'
 
 // US-M4-12 独立通话记录页：GET /recordings/{callId}(CallRecording) + ai-review。
 const route = useRoute(); const router = useRouter()
@@ -31,14 +32,14 @@ onMounted(async () => {
       <span>{{ rec.status==='READY' ? '▶' : '·' }}</span>
       <div style="flex:1;height:4px;background:#e4e7ed;border-radius:2px;position:relative"><div style="width:0;height:100%;background:var(--primary);border-radius:2px"></div></div>
       <span>{{ rec.durationSec ?? 0 }}s</span>
-      <span class="tag" :class="rec.status==='READY'?'suc':rec.status==='FAILED'?'dan':'war'">{{ rec.status }}</span>
+      <span class="tag" :class="rec.status==='READY'?'suc':rec.status==='FAILED'?'dan':'war'" :title="rec.status">{{ callRecStatusLabel(rec.status) }}</span>
     </div>
 
     <!-- 键值信息 -->
     <div class="sec-title">通话信息</div>
     <div class="desc">
       <div class="r"><div class="k">来源</div><div class="v">{{ rec.source ?? '—' }}</div></div>
-      <div class="r"><div class="k">状态</div><div class="v"><span class="tag" :class="rec.status==='READY'?'suc':rec.status==='FAILED'?'dan':'war'">{{ rec.status }}</span></div></div>
+      <div class="r"><div class="k">状态</div><div class="v"><span class="tag" :class="rec.status==='READY'?'suc':rec.status==='FAILED'?'dan':'war'" :title="rec.status">{{ callRecStatusLabel(rec.status) }}</span></div></div>
       <div class="r"><div class="k">时长</div><div class="v num">{{ rec.durationSec ?? 0 }}s</div></div>
       <div class="r"><div class="k">号码</div><div class="v">{{ rec.phone ?? '—' }}</div></div>
       <div class="r"><div class="k">录制时间</div><div class="v">{{ rec.recordedAt ?? '—' }}</div></div>

@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../../api/client'
+import { poolLabel } from '../../constants/enums'
 
 // 移动案件列表:关键字 + 状态筛选(GET /cases),点卡片进作业。
 const router = useRouter()
@@ -63,7 +64,7 @@ onMounted(load)
         <span class="due">{{ yuan(cs.dueCents) }}</span>
       </div>
       <div class="row" style="margin-top:6px">
-        <span class="mini">{{ cs.projectName || cs.acctNo || '' }}<template v-if="cs.pool"> · {{ cs.pool }}</template></span>
+        <span class="mini">{{ cs.projectName || cs.acctNo || '' }}<template v-if="cs.pool"> · <span :title="cs.pool">{{ poolLabel(cs.pool) }}</span></template></span>
         <span class="badge" :class="statusBadge(cs.status)">{{ statusLabel(cs.status) }}</span>
       </div>
     </div>

@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
+import { roleTemplateLabel, dataScopeLabel, settingsDomainLabel } from '../constants/enums'
 import type { components } from '../api/schema'
 
 type SettingsInput = components['schemas']['SettingsInput']
@@ -235,7 +236,7 @@ onMounted(() => { load(); loadMore() })
       </thead>
       <tbody>
         <tr v-for="row in items" :key="row.domain">
-          <td><b>{{ row.domain }}</b></td>
+          <td><b :title="row.domain">{{ settingsDomainLabel(row.domain) }}</b></td>
           <td class="num">{{ row.version }}</td>
           <td>{{ row.effectiveAt }}</td>
           <td><code style="font-size:12px">{{ fmt(domainOf(row)) }}</code></td>
@@ -258,9 +259,9 @@ onMounted(() => { load(); loadMore() })
       <tbody>
         <tr v-for="(row, i) in matrix" :key="i">
           <td>{{ row.feature }}</td>
-          <td>{{ row.role }}</td>
+          <td :title="row.role">{{ roleTemplateLabel(row.role) }}</td>
           <td>{{ row.permission }}</td>
-          <td>{{ row.dataScope }}</td>
+          <td :title="row.dataScope">{{ dataScopeLabel(row.dataScope) }}</td>
         </tr>
         <tr v-if="!matrix.length"><td colspan="4" class="note" style="text-align:center">暂无权限矩阵</td></tr>
       </tbody>

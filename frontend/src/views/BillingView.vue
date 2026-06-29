@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
+import { billingTypeLabel } from '../constants/enums'
 
 // 计费(M9-B)：能力用量(GET /billing/usage·按次 STT/SMS/存证/法务·月→日→明细下钻) + 充值流水(recharge-log)
 //          + 平台充值(recharge) + 短信发送明细(GET /sms-records·成功/失败/未达·失败汇总·导出 US-M9-04/BR-M9-08)。
@@ -273,7 +274,7 @@ onMounted(load)
         </thead>
         <tbody>
           <tr v-for="(row, i) in log" :key="i">
-            <td><span class="tag" :class="logTagClass(row.type)">{{ row.type }}</span></td>
+            <td><span class="tag" :class="logTagClass(row.type)" :title="row.type">{{ billingTypeLabel(row.type) }}</span></td>
             <td class="num" :style="{ color: row.delta >= 0 ? 'var(--success)' : 'var(--danger)' }">{{ row.delta >= 0 ? '+' : '' }}{{ row.delta }}</td>
             <td class="num">{{ row.balance }}</td>
             <td>{{ row.ref || '—' }}</td>

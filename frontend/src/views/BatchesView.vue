@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import { useRoleFields } from '../composables/useRoleFields'
+import { caseStatusLabel } from '../constants/enums'
 
 // GET /batches → BatchView(平台双线/物业只收佣/服务商只付佣)。SA 派单(M3)；物业可导入批次/作废(批次2)。
 const auth = useAuth()
@@ -147,7 +148,7 @@ onMounted(load)
         <tr v-for="row in items" :key="row.id">
           <td class="num">{{ row.id }}</td>
           <td><a class="link" @click="$router.push(`/batches/${row.id}`)">{{ row.code }}</a></td>
-          <td><span class="tag" :class="statusTag(row.status)">{{ row.status }}</span></td>
+          <td><span class="tag" :class="statusTag(row.status)" :title="row.status">{{ caseStatusLabel(row.status) }}</span></td>
           <!-- 收佣比例：仅平台/物业视角整列渲染(服务商视角字段级无→整列不出 H-03) -->
           <td v-if="showCommInRate" class="num">{{ ratePct(row.commInRate) }}</td>
           <!-- 付佣比例：仅平台/服务商视角整列渲染(物业视角字段级无→整列不出，不显占位串 H-03) -->
@@ -177,7 +178,7 @@ onMounted(load)
             <el-table :data="dispCases" border size="small" max-height="240" style="margin-top:6px" @selection-change="(v:any)=>caseSel=v">
               <el-table-column type="selection" width="40" />
               <el-table-column prop="ownerName" label="业主" /><el-table-column prop="room" label="房号" />
-              <el-table-column prop="status" label="状态" /><el-table-column prop="acctNo" label="户号" />
+              <el-table-column label="状态"><template #default="{row}"><span :title="row.status">{{ caseStatusLabel(row.status) }}</span></template></el-table-column><el-table-column prop="acctNo" label="户号" />
             </el-table>
             <span style="color:#606266">已选 {{ caseSel.length }} 件（US-M3-01 同批部分案件派不同服务商）</span>
           </el-form-item>

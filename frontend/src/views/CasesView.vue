@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import type { components } from '../api/schema'
+import { poolLabel } from '../constants/enums'
 
 // GET /cases（契约客户端）。跨层级筛选：项目/批次/状态/关键字(q) + 批次号直达。金额 *_cents 分→元展示。
 type CaseStatus = components['schemas']['CaseStatusEnum']
@@ -157,7 +158,7 @@ onMounted(() => {
           <td>{{ row.projectName || '—' }}</td>
           <td class="num">{{ yuan(row.dueCents) }}</td>
           <td><span class="tag" :class="statusTag(row.status)">{{ statusName(row.status) }}</span></td>
-          <td>{{ row.pool || '—' }}</td>
+          <td :title="row.pool">{{ row.pool ? poolLabel(row.pool) : '—' }}</td>
         </tr>
         <tr v-if="!loading && !items.length">
           <td colspan="7" style="text-align:center;color:var(--sec);padding:32px 0">暂无数据</td>

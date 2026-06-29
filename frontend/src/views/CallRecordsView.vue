@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
+import { callRecStatusLabel } from '../constants/enums'
 
 // US-M4-12 / BR-M4-22 通话记录查询：GET /recordings 全过滤+分页，点开行进 CallRecordView(AI 复盘/详情)。
 // 可见范围由后端 range 裁剪；结案后 phone 由后端脱敏为 '***'，前端直显。
@@ -132,7 +133,7 @@ onMounted(load)
           <td>{{ row.id }}</td>
           <td>{{ row.caseId ?? '—' }}</td>
           <td>{{ sourceName(row.source) }}</td>
-          <td><span class="tag" :class="statusTag(row.status)">{{ row.status }}</span></td>
+          <td><span class="tag" :class="statusTag(row.status)" :title="row.status">{{ callRecStatusLabel(row.status) }}</span></td>
           <td>{{ row.recordedAt ?? '—' }}</td>
           <td class="num">{{ fmtDur(row.durationSec) }}</td>
           <td>{{ row.phone ?? '—' }}</td>

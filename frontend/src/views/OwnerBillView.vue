@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
+import { promiseStateLabel, payReqStatusLabel } from '../constants/enums'
+// 分期状态：值含 PAID(已付款)走支付状态映射，其余兜底承诺状态映射；二者均回退原值不空白。
+const instStatusLabel = (s?: string | null) => (s === 'PAID' ? payReqStatusLabel(s) : promiseStateLabel(s))
 
 // M7 业主自助 H5：公开页(免登录)。业主扫码/短信链接进入 → GET /pay/{token} 查账单。
 // 用原生 fetch(不走 authed client，public 端点无需 Bearer)。
@@ -63,7 +66,7 @@ onMounted(async () => {
             <span>{{ it.period }} · 到期 {{ it.dueDate }}</span>
             <span>
               <span class="num">{{ yuan(it.amountCents) }}</span>
-              <span class="ob-tag" :class="it.status==='PAID' ? 'suc' : 'war'">{{ it.status }}</span>
+              <span class="ob-tag" :class="it.status==='PAID' ? 'suc' : 'war'" :title="it.status">{{ instStatusLabel(it.status) }}</span>
             </span>
           </div>
         </div>

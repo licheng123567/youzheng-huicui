@@ -7,6 +7,7 @@ import { useAuth } from '../stores/auth'
 import { useRoleFields } from '../composables/useRoleFields'
 import ProjectEditDialog from '../components/ProjectEditDialog.vue'
 import CoordinatorPicker from '../components/CoordinatorPicker.vue'
+import { statusLabel, reduceDecideLabel } from '../constants/enums'
 
 // GET /projects/{id} → oneOf(Project|ProjectForProvider)；viewRole 判别。
 // + 档案编辑(H-07/US-M2-01) + 协调员维护(US-M2-02) + 减免阶梯(BR-M2-18a) + 作战手册采纳(US-M5-07)。
@@ -18,7 +19,6 @@ const pid = String(route.params.id)
 const p = ref<any>(null)
 const playbook = ref<any>(null)
 const yuan = (c?: number | null) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
-const decideLabel = (d?: string) => d === 'COLLECTOR_SELF' ? '催收员自决' : d === 'OFFLINE_INTERNAL' ? '线下内部流程' : d === 'PL_APPROVE' ? '物业负责人审批' : (d ?? '—')
 
 // ===== 纯展示辅助（仅 UI 表现层，不参与数据流）=====
 // 决定权 → ds-admin .tag 配色
@@ -118,7 +118,7 @@ onMounted(load)
       <div class="r"><div class="k">合同类型</div><div class="v">{{ p.contractType ?? '—' }}</div></div>
       <!-- 资金双线：收佣比例整项仅平台/物业渲染，服务商视角字段级无→整项不出(H-03) -->
       <div v-if="showCommInRate" class="r"><div class="k">收佣比例</div><div class="v num">{{ ratePct(p.commInRate) }}</div></div>
-      <div class="r"><div class="k">状态</div><div class="v">{{ p.status }}</div></div>
+      <div class="r"><div class="k">状态</div><div class="v" :title="p.status">{{ statusLabel(p.status) }}</div></div>
     </div>
 
     <!-- US-M2-02 关联协调员 -->
@@ -147,7 +147,7 @@ onMounted(load)
         <tr v-for="(t,i) in (p.reduceTiers ?? [])" :key="i">
           <td>{{ t.discount }}</td>
           <td class="num">{{ yuan(t.capCents) }}</td>
-          <td><span class="tag" :class="decideTag(t.decide)">{{ decideLabel(t.decide) }}</span></td>
+          <td><span class="tag" :class="decideTag(t.decide)" :title="t.decide">{{ reduceDecideLabel(t.decide) }}</span></td>
           <td>{{ t.waivePenalty ? '是' : '否' }}</td>
         </tr>
         <tr v-if="!(p.reduceTiers && p.reduceTiers.length)"><td colspan="4" class="note" style="text-align:center">尚无减免阶梯。</td></tr>

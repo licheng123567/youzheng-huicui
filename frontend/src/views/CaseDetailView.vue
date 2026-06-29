@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
+import { caseStatusLabel, poolLabel, promiseStateLabel, callRecStatusLabel, legalDocTypeLabel, legalDocStatusLabel, legalStageLabel } from '../constants/enums'
 
 // M4 催收三栏接打台：左画像 / 中三Tab(沟通记录·项目资料·作战手册) / 右操作区。动作按 /me 权限门控。
 const route = useRoute(); const router = useRouter(); const auth = useAuth()
@@ -415,8 +416,8 @@ onMounted(function () { loadAll(); loadCloseReasons() })
       </div>
       <!-- 状态徽标（省略原型画像风险标签 ptags：后端无数据） -->
       <div class="ptags" style="margin-top:12px">
-        <span class="tag" :class="caseStatusTag(d.case?.status)">{{ d.case?.status }}</span>
-        <span v-if="d.case?.pool" class="tag inf">{{ d.case.pool }}</span>
+        <span class="tag" :class="caseStatusTag(d.case?.status)" :title="d.case?.status">{{ caseStatusLabel(d.case?.status) }}</span>
+        <span v-if="d.case?.pool" class="tag inf" :title="d.case.pool">{{ poolLabel(d.case.pool) }}</span>
         <span v-if="redacted" class="tag inf">已脱敏</span>
       </div>
       <div class="pstats" style="margin-top:12px">
@@ -437,7 +438,7 @@ onMounted(function () { loadAll(); loadCloseReasons() })
         </tr>
         <tr><td>应收</td><td class="r">{{ yuan(d.case?.dueCents) }}</td></tr>
         <tr><td>减免后</td><td class="r" style="color:var(--success)">{{ yuan(d.case?.reduceAfterCents ?? d.case?.dueCents) }}</td></tr>
-        <tr><td><b>状态</b></td><td class="r" style="font-weight:400"><span class="tag" :class="caseStatusTag(d.case?.status)">{{ d.case?.status }}</span></td></tr>
+        <tr><td><b>状态</b></td><td class="r" style="font-weight:400"><span class="tag" :class="caseStatusTag(d.case?.status)" :title="d.case?.status">{{ caseStatusLabel(d.case?.status) }}</span></td></tr>
       </tbody></table>
 
       <!-- 联系方式（脱敏收敛态不渲染明细） -->
@@ -471,7 +472,7 @@ onMounted(function () { loadAll(); loadCloseReasons() })
       <template v-if="promises.length">
         <div style="font-size:13px;color:var(--reg);background:#fffbeb;border:1px solid #f5dab1;border-radius:6px;padding:9px;margin-top:4px">
           {{ promises[0].date }} {{ yuan(promises[0].amountCents) }}
-          <span class="tag war" style="font-size:11px;margin-left:6px">{{ promises[0].state || '待兑现' }}</span>
+          <span class="tag war" style="font-size:11px;margin-left:6px" :title="promises[0].state">{{ promises[0].state ? promiseStateLabel(promises[0].state) : '待兑现' }}</span>
           <span v-if="promises[0].installments?.length" class="tag inf" style="font-size:11px;margin-left:4px">{{ promises[0].installments.length }} 期</span>
         </div>
       </template>
@@ -608,7 +609,7 @@ onMounted(function () { loadAll(); loadCloseReasons() })
           <button class="btn sm" style="width:100%" @click="getLatest">🔄 获取最新通话录音</button>
           <div v-if="recReady" class="rec-ready">
             <div class="rr-meta">
-              <span class="tag" :class="recStatusTag(recObj.status)">{{ recObj.status }}</span>
+              <span class="tag" :class="recStatusTag(recObj.status)" :title="recObj.status">{{ callRecStatusLabel(recObj.status) }}</span>
               最新通话 · {{ recObj.durationSec }}s
             </div>
             <button v-if="recObj.status === 'READY'" class="btn sm" style="width:100%;margin-top:7px" @click="loadReview(recObj.id)">查看并标注（AI 复盘）→</button>
@@ -659,7 +660,7 @@ onMounted(function () { loadAll(); loadCloseReasons() })
           <!-- 法务文书列表：登记送达入口 -->
           <template v-if="legalDocs.length">
             <div v-for="doc in legalDocs" :key="doc.id" class="note" style="font-size:12px;border:1px solid var(--bd);border-radius:6px;padding:7px 9px;margin-bottom:6px">
-              <div>{{ doc.type }} <span class="tag inf">{{ doc.status }}</span></div>
+              <div><span :title="doc.type">{{ legalDocTypeLabel(doc.type) }}</span> <span class="tag inf" :title="doc.status">{{ legalDocStatusLabel(doc.status) }}</span></div>
               <div v-if="doc.status !== 'DELIVERED' && auth.has('legal.create')" class="toolbar" style="margin-top:5px">
                 <el-button size="small" @click="deliverLegal(doc)">登记送达</el-button>
               </div>
@@ -670,7 +671,7 @@ onMounted(function () { loadAll(); loadCloseReasons() })
         <!-- CO 法务进度只读（case.legalStage） -->
         <template v-if="d.case?.legalStage">
           <div class="sec-title" style="margin-top:14px">法务进度</div>
-          <div class="alert info" style="margin-top:0;font-size:12px">当前法务阶段：<b>{{ d.case.legalStage }}</b>（只读，由协调员主导）。</div>
+          <div class="alert info" style="margin-top:0;font-size:12px">当前法务阶段：<b :title="d.case.legalStage">{{ legalStageLabel(d.case.legalStage) }}</b>（只读，由协调员主导）。</div>
         </template>
 
         <!-- 危险操作（作废/坏账 → 结案 dlg） -->

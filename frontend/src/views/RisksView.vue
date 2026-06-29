@@ -3,6 +3,7 @@ import { onMounted, ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
+import { riskLevelLabel, riskVerdictLabel, disposeTaskStatusLabel } from '../constants/enums'
 
 // M5 质检：风险看板(GET /risks·全量检测) + 处置归属(VL/PL 处置自己员工风险) + 平台复核 + 处置跟踪(仅平台)。
 const auth = useAuth()
@@ -70,12 +71,12 @@ onMounted(load)
       </thead>
       <tbody>
         <tr v-for="row in risks" :key="row.id">
-          <td><span class="tag" :class="levelTag(row.level)">{{ row.level }}</span></td>
+          <td><span class="tag" :class="levelTag(row.level)" :title="row.level">{{ riskLevelLabel(row.level) }}</span></td>
           <td>{{ row.type || '—' }}</td>
           <td>{{ row.collector || '—' }}</td>
           <td>{{ row.segmentTs || '—' }}</td>
           <td>
-            <span v-if="row.reviewed" class="tag suc">{{ row.reviewed }}</span>
+            <span v-if="row.reviewed" class="tag suc" :title="row.reviewed">{{ riskVerdictLabel(row.reviewed) }}</span>
             <span v-else style="color:var(--sec)">待复核</span>
           </td>
           <td>
@@ -110,7 +111,7 @@ onMounted(load)
           <tr v-for="t in tasks" :key="t.id">
             <td>{{ t.provider || '—' }}</td>
             <td>{{ t.taskType || '—' }}</td>
-            <td>{{ t.status || '—' }}</td>
+            <td :title="t.status">{{ disposeTaskStatusLabel(t.status) }}</td>
             <td>{{ t.tm || '—' }}</td>
           </tr>
           <tr v-if="!tasks.length">

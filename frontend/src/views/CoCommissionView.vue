@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
+import { channelLabel } from '../constants/enums'
 
 // 内催佣金（服务商内部）独立子页：催收员佣金名册 → 某人批次穿透 → 勾选未结明细生成佣金单 → 确认支付。
 // 资金双线硬隔离：平台/物业不可见（后端裁剪，前端仅按返回展示，跨线/越权 → 403 仅提示）。
@@ -147,7 +148,7 @@ onMounted(load)
         <el-table-column prop="ownerName" label="业主" />
         <el-table-column prop="room" label="房号" />
         <el-table-column label="回款"><template #default="{row}">{{ yuan(row.amountCents) }}</template></el-table-column>
-        <el-table-column prop="channel" label="渠道" />
+        <el-table-column label="渠道"><template #default="{row}"><span :title="row.channel">{{ channelLabel(row.channel) }}</span></template></el-table-column>
         <el-table-column prop="paidAt" label="日期" />
       </el-table>
       <div style="margin-top:6px;color:#606266">已选 {{ gSel.length }} 笔，合计回款 {{ yuan(gSel.reduce((s,l)=>s+(l.amountCents||0),0)) }}</div>

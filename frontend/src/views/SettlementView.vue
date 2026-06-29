@@ -3,6 +3,7 @@ import { onMounted, ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
+import { payReqStatusLabel, channelLabel } from '../constants/enums'
 
 // M9 结算·资金双线：side=IN(收佣 平台↔物业)/OUT(付佣 平台↔服务商)。
 // 生成链：勾选未结回款明细→生成支付申请单→发送→详情→完成(凭证)/撤销。内催佣金链独立面板。
@@ -225,7 +226,7 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
       <tbody>
         <tr v-for="row in prs" :key="row.id">
           <td>{{ row.code }}</td>
-          <td><span class="tag" :class="row.status==='PAID'?'suc':row.status==='VOIDED'?'inf':'war'">{{ row.status }}</span></td>
+          <td><span class="tag" :class="row.status==='PAID'?'suc':row.status==='VOIDED'?'inf':'war'" :title="row.status">{{ payReqStatusLabel(row.status) }}</span></td>
           <td class="num">{{ yuan(row.baseCents) }}</td>
           <td class="num">{{ pct(row.commRate) }}</td>
           <td class="num">{{ yuan(row.commCents) }}</td>
@@ -308,7 +309,7 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
         <el-table-column type="selection" width="40" />
         <el-table-column prop="ownerName" label="业主" /><el-table-column prop="room" label="房号" />
         <el-table-column label="回款"><template #default="{row}">{{ yuan(row.amountCents) }}</template></el-table-column>
-        <el-table-column prop="channel" label="渠道" /><el-table-column prop="paidAt" label="日期" />
+        <el-table-column label="渠道"><template #default="{row}"><span :title="row.channel">{{ channelLabel(row.channel) }}</span></template></el-table-column><el-table-column prop="paidAt" label="日期" />
       </el-table>
       <div style="margin-top:6px;color:#606266">已选 {{ gSel.length }} 笔，合计 {{ yuan(gSel.reduce((s,l)=>s+(l.amountCents||0),0)) }}</div>
       <template #footer><el-button @click="gdlg=false">取消</el-button><el-button type="primary" :disabled="!gSel.length" @click="submitGenerate">生成</el-button></template>
@@ -319,7 +320,7 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
       <template v-if="detail">
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="单号">{{ detail.code }}</el-descriptions-item>
-          <el-descriptions-item label="状态">{{ detail.status }}</el-descriptions-item>
+          <el-descriptions-item label="状态"><span :title="detail.status">{{ payReqStatusLabel(detail.status) }}</span></el-descriptions-item>
           <el-descriptions-item label="基数">{{ yuan(detail.baseCents) }}</el-descriptions-item>
           <el-descriptions-item label="比例">{{ pct(detail.commRate) }}</el-descriptions-item>
           <el-descriptions-item label="应结佣金">{{ yuan(detail.commCents) }}</el-descriptions-item>
@@ -374,7 +375,7 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
         <el-table-column type="selection" width="40" />
         <el-table-column prop="ownerName" label="业主" /><el-table-column prop="room" label="房号" />
         <el-table-column label="回款"><template #default="{row}">{{ yuan(row.amountCents) }}</template></el-table-column>
-        <el-table-column prop="channel" label="渠道" /><el-table-column prop="paidAt" label="日期" />
+        <el-table-column label="渠道"><template #default="{row}"><span :title="row.channel">{{ channelLabel(row.channel) }}</span></template></el-table-column><el-table-column prop="paidAt" label="日期" />
       </el-table>
       <div style="margin-top:6px;color:#606266">已选 {{ cSel.length }} 笔，合计回款 {{ yuan(cSel.reduce((s,l)=>s+(l.amountCents||0),0)) }}</div>
       <template #footer><el-button @click="cdlg2=false">取消</el-button><el-button type="primary" :disabled="!cSel.length" @click="submitGenCoPayDoc">生成佣金单</el-button></template>

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAuth } from '../stores/auth'
 import { api } from '../api/client'
 import { permLabel } from '../constants/permissions'
+import { orgTypeLabel, caseStatusLabel, activityTypeLabel } from '../constants/enums'
 
 // 角色工作台(GET /workbench · BR-M4-20/20a)：CO/PC=今日驾驶舱(待办列表+KPI可点筛)；管理角色=仪表盘。
 const auth = useAuth()
@@ -172,7 +173,7 @@ function fullScreen() { if (cockpitId.value) router.push(`/cases/${cockpitId.val
             <div class="t">
               {{ cpCase?.ownerName || cpTitle }}
               <template v-if="cpCase?.room"> · {{ cpCase.room }}</template>
-              <span v-if="cpCase?.status" class="tag" :class="caseStatusTag(cpCase.status)">{{ cpCase.status }}</span>
+              <span v-if="cpCase?.status" class="tag" :class="caseStatusTag(cpCase.status)" :title="cpCase.status">{{ caseStatusLabel(cpCase.status) }}</span>
             </div>
             <div class="ops">
               <button class="btn pl sm" @click="fullScreen()">全屏 ⤢</button>
@@ -203,7 +204,7 @@ function fullScreen() { if (cockpitId.value) router.push(`/cases/${cockpitId.val
             <div class="sec-title">最近动态</div>
             <div class="tl" v-if="cpTimeline.length">
               <div class="e" v-for="ev in cpTimeline" :key="ev.id">
-                <span class="tag" :class="tlTag(ev.type)">{{ ev.type }}</span>
+                <span class="tag" :class="tlTag(ev.type)" :title="ev.type">{{ activityTypeLabel(ev.type) }}</span>
                 {{ ev.content }}
                 <b style="float:right;color:var(--ph);font-weight:400">{{ String(ev.createdAt || '').slice(0, 16).replace('T', ' ') }}</b>
               </div>
@@ -249,7 +250,7 @@ function fullScreen() { if (cockpitId.value) router.push(`/cases/${cockpitId.val
           <span class="k">角色</span>
           <span class="v">{{ me.role }}（工作台 {{ wb?.layout === 'cockpit' ? '今日驾驶舱' : '仪表盘' }}）</span>
         </div>
-        <div class="r"><span class="k">组织</span><span class="v">{{ me.org?.name }}（{{ me.org?.type }}）</span></div>
+        <div class="r"><span class="k">组织</span><span class="v">{{ me.org?.name }}（<span :title="me.org?.type">{{ orgTypeLabel(me.org?.type) }}</span>）</span></div>
         <div class="r">
           <span class="k">数据范围</span>
           <span class="v">{{ me.dataScope ? JSON.stringify(me.dataScope) : 'platform 全量（dataScope=null）' }}</span>

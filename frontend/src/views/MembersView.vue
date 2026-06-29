@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import { roleLabel, roleHint } from '../constants/roles'
 import { permLabel } from '../constants/permissions'
+import { orgTypeLabel, statusLabel } from '../constants/enums'
 
 // 成员管理/督导(M1/M10·member.manage)：本组织成员 CRUD/停用启用/重置密码 + 督导记录。
 const auth = useAuth()
@@ -201,7 +202,7 @@ onMounted(load)
           <td>{{ row.phone || '—' }}</td>
           <td>{{ roleLabel(row.role) }}</td>
           <td>
-            <span class="tag" :class="row.status==='ACTIVE' ? 'suc' : 'inf'">{{ row.status }}</span>
+            <span class="tag" :class="row.status==='ACTIVE' ? 'suc' : 'inf'" :title="row.status">{{ statusLabel(row.status) }}</span>
             <span v-if="row.isOwner" class="tag war" style="margin-left:4px">负责人</span>
           </td>
           <td v-if="auth.has('member.manage')">
@@ -258,8 +259,8 @@ onMounted(load)
         <tbody>
           <tr v-for="row in orgs" :key="row.id">
             <td>{{ row.name || '—' }}</td>
-            <td><span class="tag" :class="row.type==='PLATFORM' ? 'pri' : (row.type==='PROVIDER' ? 'war' : 'inf')">{{ row.type }}</span></td>
-            <td><span class="tag" :class="row.status==='ACTIVE' ? 'suc' : 'inf'">{{ row.status }}</span></td>
+            <td><span class="tag" :class="row.type==='PLATFORM' ? 'pri' : (row.type==='PROVIDER' ? 'war' : 'inf')" :title="row.type">{{ orgTypeLabel(row.type) }}</span></td>
+            <td><span class="tag" :class="row.status==='ACTIVE' ? 'suc' : 'inf'" :title="row.status">{{ statusLabel(row.status) }}</span></td>
             <td>{{ row.ownerAccountId || '—' }}</td>
             <td><button class="btn txt" @click="rebindOwner(row)">改绑负责人</button></td>
           </tr>

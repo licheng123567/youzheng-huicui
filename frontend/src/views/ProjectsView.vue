@@ -6,6 +6,7 @@ import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import { useRoleFields } from '../composables/useRoleFields'
 import ProjectEditDialog from '../components/ProjectEditDialog.vue'
+import { statusLabel } from '../constants/enums'
 
 // 真 GET /projects（契约客户端，类型来自 schema.d.ts）。资金双线：平台/物业见 commInRate，服务商视角字段级无。
 const router = useRouter()
@@ -65,7 +66,7 @@ const statusTag = (s?: string) => (s === '启用' || s === 'ACTIVE' || s === 'EN
           <td>{{ row.org || '—' }}</td>
           <td>{{ row.area || '—' }}</td>
           <td v-if="showCommInRate" class="num">{{ ratePct(row.commInRate) }}</td>
-          <td><span class="tag" :class="statusTag(row.status)">{{ row.status || '—' }}</span></td>
+          <td><span class="tag" :class="statusTag(row.status)" :title="row.status">{{ statusLabel(row.status) }}</span></td>
         </tr>
         <tr v-if="!loading && !items.length">
           <td :colspan="showCommInRate ? 6 : 5" style="text-align:center;color:var(--sec);padding:32px 0">暂无数据</td>

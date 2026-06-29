@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
+import { payReqStatusLabel, channelLabel } from '../constants/enums'
 
 // 付佣对账（OUT 线·服务商↔平台）独立子页：对账汇总 + 支付申请单。
 // OUT 线生成方=服务商；完成(付款+上传支付凭证)恒由平台受理(契约 x-data-scope=platform)。
@@ -150,7 +151,7 @@ onMounted(load)
       <tbody>
         <tr v-for="row in prs" :key="row.id">
           <td>{{ row.code }}</td>
-          <td><span class="tag" :class="row.status==='PAID'?'suc':row.status==='VOIDED'?'inf':'war'">{{ row.status }}</span></td>
+          <td><span class="tag" :class="row.status==='PAID'?'suc':row.status==='VOIDED'?'inf':'war'" :title="row.status">{{ payReqStatusLabel(row.status) }}</span></td>
           <td class="num">{{ yuan(row.baseCents) }}</td>
           <td class="num">{{ pct(row.commRate) }}</td>
           <td class="num">{{ yuan(row.commCents) }}</td>
@@ -180,7 +181,7 @@ onMounted(load)
         <el-table-column prop="ownerName" label="业主" />
         <el-table-column prop="room" label="房号" />
         <el-table-column label="回款"><template #default="{row}">{{ yuan(row.amountCents) }}</template></el-table-column>
-        <el-table-column prop="channel" label="渠道" />
+        <el-table-column label="渠道"><template #default="{row}"><span :title="row.channel">{{ channelLabel(row.channel) }}</span></template></el-table-column>
         <el-table-column prop="paidAt" label="日期" />
       </el-table>
       <div style="margin-top:6px;color:#606266">已选 {{ gSel.length }} 笔，合计回款 {{ yuan(gSel.reduce((s,l)=>s+(l.amountCents||0),0)) }}</div>
@@ -195,7 +196,7 @@ onMounted(load)
       <template v-if="detail">
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="单号">{{ detail.code }}</el-descriptions-item>
-          <el-descriptions-item label="状态">{{ detail.status }}</el-descriptions-item>
+          <el-descriptions-item label="状态"><span :title="detail.status">{{ payReqStatusLabel(detail.status) }}</span></el-descriptions-item>
           <el-descriptions-item label="基数">{{ yuan(detail.baseCents) }}</el-descriptions-item>
           <el-descriptions-item label="比例">{{ pct(detail.commRate) }}</el-descriptions-item>
           <el-descriptions-item label="应结佣金">{{ yuan(detail.commCents) }}</el-descriptions-item>
