@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuth } from '../stores/auth'
 import { api } from '../api/client'
+import { permLabel } from '../constants/permissions'
 
 // 角色工作台(GET /workbench · BR-M4-20/20a)：CO/PC=今日驾驶舱(待办列表+KPI可点筛)；管理角色=仪表盘。
 const auth = useAuth()
@@ -256,7 +257,7 @@ function fullScreen() { if (cockpitId.value) router.push(`/cases/${cockpitId.val
         <div class="r" style="border-bottom:none">
           <span class="k">权限点</span>
           <span class="v" style="display:flex;flex-wrap:wrap;gap:6px">
-            <span v-for="p in me.permissions" :key="p" class="tag inf">{{ p }}</span>
+            <span v-for="p in me.permissions" :key="p" class="tag inf" :title="p">{{ permLabel(p) }}</span>
           </span>
         </div>
       </div>

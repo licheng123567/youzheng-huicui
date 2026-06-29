@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import { roleLabel, roleHint } from '../constants/roles'
+import { permLabel } from '../constants/permissions'
 
 // 成员管理/督导(M1/M10·member.manage)：本组织成员 CRUD/停用启用/重置密码 + 督导记录。
 const auth = useAuth()
@@ -308,7 +309,7 @@ onMounted(load)
         <el-form-item label="权限子集">
           <div style="font-size:12px;color:#999;margin-bottom:4px">勾选可授予的权限（上限为当前主体持有权限）</div>
           <el-checkbox-group v-model="cForm.permissions" style="display:flex;flex-wrap:wrap;gap:4px">
-            <el-checkbox v-for="p in myPermissions" :key="p" :label="p" style="margin-right:0">{{ p }}</el-checkbox>
+            <el-checkbox v-for="p in myPermissions" :key="p" :label="p" style="margin-right:0" :title="p">{{ permLabel(p) }}</el-checkbox>
           </el-checkbox-group>
         </el-form-item>
       </el-form>
@@ -321,7 +322,7 @@ onMounted(load)
         <el-form-item label="权限子集">
           <div style="font-size:12px;color:#999;margin-bottom:4px">勾选可授予的权限（上限为当前主体持有权限）</div>
           <el-checkbox-group v-model="eForm.permissions" style="display:flex;flex-wrap:wrap;gap:4px">
-            <el-checkbox v-for="p in myPermissions" :key="p" :label="p" style="margin-right:0">{{ p }}</el-checkbox>
+            <el-checkbox v-for="p in myPermissions" :key="p" :label="p" style="margin-right:0" :title="p">{{ permLabel(p) }}</el-checkbox>
           </el-checkbox-group>
         </el-form-item>
         <el-form-item label="数据范围">

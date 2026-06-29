@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAuth } from '../stores/auth'
 import { api } from '../api/client'
+import { permLabel } from '../constants/permissions'
 
 // 个人中心：资料查看(GET /me 已有) + 自助改密(POST /me/password · v1.3.0)。
 const auth = useAuth()
@@ -61,7 +62,7 @@ async function submit() {
         <div class="r"><div class="k">角色</div><div class="v"><span class="tag pri">{{ roleLabel }}</span></div></div>
         <div class="r"><div class="k">组织</div><div class="v"><span v-if="me.org?.name" class="tag" :class="orgTypeTag">{{ me.org.name }}</span><span v-else>—</span></div></div>
         <div class="r"><div class="k">数据范围</div><div class="v">{{ me.dataScope ? JSON.stringify(me.dataScope) : 'platform 全量' }}</div></div>
-        <div class="r"><div class="k">权限点</div><div class="v"><span v-for="p in me.permissions" :key="p" class="tag inf" style="margin:2px 4px 2px 0">{{ p }}</span></div></div>
+        <div class="r"><div class="k">权限点</div><div class="v"><span v-for="p in me.permissions" :key="p" class="tag inf" style="margin:2px 4px 2px 0" :title="p">{{ permLabel(p) }}</span></div></div>
       </div>
     </div>
 
