@@ -128,7 +128,7 @@ onMounted(load)
     <div class="card-h">
       <div class="t"><span class="bar"></span>批次（催收单）</div>
       <div class="ops">
-        <span class="note" style="margin:0">GET /batches · 共 {{ total }}</span>
+        <span class="note" style="margin:0">批次列表 · 共 {{ total }}</span>
         <button v-if="auth.has('batch.import')" class="btn sm" @click="openImport">+ 导入批次</button>
       </div>
     </div>

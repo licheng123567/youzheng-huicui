@@ -3,7 +3,8 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
-import { roleTemplateLabel, dataScopeLabel, settingsDomainLabel } from '../constants/enums'
+import { roleTemplateLabel, dataScopeLabel, settingsDomainLabel, scriptSourceLabel, scriptStatusLabel } from '../constants/enums'
+import { permLabel } from '../constants/permissions'
 import type { components } from '../api/schema'
 
 type SettingsInput = components['schemas']['SettingsInput']
@@ -260,7 +261,7 @@ onMounted(() => { load(); loadMore() })
         <tr v-for="(row, i) in matrix" :key="i">
           <td>{{ row.feature }}</td>
           <td :title="row.role">{{ roleTemplateLabel(row.role) }}</td>
-          <td>{{ row.permission }}</td>
+          <td :title="row.permission">{{ permLabel(row.permission) }}</td>
           <td :title="row.dataScope">{{ dataScopeLabel(row.dataScope) }}</td>
         </tr>
         <tr v-if="!matrix.length"><td colspan="4" class="note" style="text-align:center">暂无权限矩阵</td></tr>
@@ -291,9 +292,9 @@ onMounted(() => { load(); loadMore() })
         <tr v-for="row in scripts" :key="row.id">
           <td>{{ row.scene }}</td>
           <td>{{ row.intent }}</td>
-          <td>{{ row.source }}</td>
+          <td>{{ scriptSourceLabel(row.source) }}</td>
           <td class="num">承诺 {{ ((row.promiseRate??0)*100).toFixed(0) }}% / 回款 {{ ((row.repayRate??0)*100).toFixed(0) }}%</td>
-          <td><span class="tag" :class="row.status==='EFFECTIVE'?'suc':row.status==='RETIRED'?'inf':'war'">{{ row.status }}</span></td>
+          <td><span class="tag" :class="row.status==='EFFECTIVE'?'suc':row.status==='RETIRED'?'inf':'war'">{{ scriptStatusLabel(row.status) }}</span></td>
           <td><button v-if="auth.has('ai.config') && row.variant" class="btn txt" @click="promote(row)">变体晋升</button></td>
         </tr>
         <tr v-if="!scripts.length"><td colspan="6" class="note" style="text-align:center">暂无话术</td></tr>

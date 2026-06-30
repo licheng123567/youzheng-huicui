@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
+import { statusLabel } from '../constants/enums'
 
 // 组织管理（平台·org.manage）：组织目录 + 新建组织(绑唯一负责人) + 改绑负责人。
 // 自包含视图，挂 /org-mgmt；不依赖 router/main.ts/AppLayout 改动。
@@ -110,7 +111,7 @@ onMounted(load)
           <td><span class="tag" :class="typeTag(row.type)">{{ typeLabel(row.type) }}</span></td>
           <td>{{ row.name || '—' }}</td>
           <td>{{ row.ownerAccountId || '—' }}</td>
-          <td><span class="tag" :class="row.status==='ACTIVE' ? 'suc' : 'inf'">{{ row.status || '—' }}</span></td>
+          <td><span class="tag" :class="row.status==='ACTIVE' ? 'suc' : 'inf'">{{ statusLabel(row.status) }}</span></td>
           <td><button class="btn txt" @click="rebindOwner(row)">改绑负责人</button></td>
         </tr>
         <tr v-if="!orgs.length">
