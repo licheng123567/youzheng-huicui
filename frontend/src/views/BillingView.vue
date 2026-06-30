@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
+import DsDrawer from '../components/DsDrawer.vue'
 import { billingTypeLabel } from '../constants/enums'
 
 // 计费(M9-B)：能力用量(GET /billing/usage·按次 STT/SMS/存证/法务·月→日→明细下钻) + 充值流水(recharge-log)
@@ -288,7 +289,7 @@ onMounted(load)
     </div>
 
     <!-- 平台充值弹窗（含校验表单 / el-input-number — 保留 EL 原样） -->
-    <el-dialog v-model="dlg" title="平台充值（billing.recharge·仅平台）" width="420px">
+    <DsDrawer v-model="dlg" title="平台充值">
       <el-form label-width="90px">
         <el-form-item label="组织"><el-select v-model="form.orgId" placeholder="选择组织"><el-option v-for="o in orgs" :key="o.id" :label="o.name" :value="o.id" /></el-select></el-form-item>
         <el-form-item label="类型"><el-select v-model="form.type"><el-option label="STT 转写分钟" value="STT" /><el-option label="SMS 短信条数(仅物业)" value="SMS" /></el-select></el-form-item>
@@ -296,7 +297,7 @@ onMounted(load)
         <el-form-item label="备注"><el-input v-model="form.note" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="dlg=false">取消</el-button><el-button type="primary" @click="recharge">充值</el-button></template>
-    </el-dialog>
+    </DsDrawer>
   </div>
 </template>
 

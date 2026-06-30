@@ -149,6 +149,10 @@ td .btn.txt{margin-right:4px;}
 .mask.on .drawer{transform:translateX(0);}
 .dh{height:56px;border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 22px;font-size:16px;font-weight:600;flex:none;} .dh .x{margin-left:auto;cursor:pointer;color:var(--sec);font-size:20px;}
 .dbody{flex:1;overflow:auto;padding:22px;} .df-footer{border-top:1px solid var(--bd);padding:14px 22px;display:flex;justify-content:flex-end;gap:12px;flex:none;}
+/* 抽屉拖拽调节宽度手柄（左边框 7px 热区） */
+.dr-resize{position:absolute;left:0;top:0;width:7px;height:100%;cursor:ew-resize;z-index:3;background:transparent;transition:background .15s;}
+.dr-resize:hover,.dr-resize.dragging{background:var(--primary-l);}
+.dr-resize::before{content:"";position:absolute;left:2px;top:50%;transform:translateY(-50%);width:3px;height:34px;border-radius:2px;background:var(--bd2);}
 .dialog{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:#fff;border-radius:8px;z-index:1001;display:none;width:460px;max-width:92vw;box-shadow:0 12px 40px rgba(0,0,0,.18);} .dialog.on{display:block;}
 .dialog .dh{height:52px;} .dialog .dc{padding:22px;}
 

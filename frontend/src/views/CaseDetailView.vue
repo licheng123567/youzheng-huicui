@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import { caseStatusLabel, poolLabel, promiseStateLabel, callRecStatusLabel, legalDocTypeLabel, legalDocStatusLabel, legalStageLabel } from '../constants/enums'
+import DsDrawer from '../components/DsDrawer.vue'
 
 // M4 催收三栏接打台：左画像 / 中三Tab(沟通记录·项目资料·作战手册) / 右操作区。动作按 /me 权限门控。
 const route = useRoute(); const router = useRouter(); const auth = useAuth()
@@ -748,29 +749,29 @@ onMounted(function () { loadAll(); loadCloseReasons() })
     </el-dialog>
 
     <!-- 工单处理 -->
-    <el-dialog v-model="hdlg" title="处理工单（POST /tickets/{id}/handle）" width="440px">
+    <DsDrawer v-model="hdlg" title="处理工单" :width="440">
       <el-form label-width="80px">
         <el-form-item label="处理结果"><el-input v-model="hForm.result" type="textarea" :rows="2" /></el-form-item>
         <el-form-item label="回执"><el-input v-model="hForm.receipt" placeholder="回执地址/说明" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="hdlg=false">取消</el-button><el-button type="primary" @click="submitHandle">提交</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
     <!-- 通话结果标记 -->
     <!-- M-01: 标记码 SSOT 来自 CaseDetail.markCodes(enabled 项)，无来源回退 MARK_CODES_FALLBACK -->
-    <el-dialog v-model="mkdlg" title="通话结果标记（POST /recordings/{id}/ai-review）" width="400px">
+    <DsDrawer v-model="mkdlg" title="通话结果标记" :width="400">
       <el-form label-width="80px"><el-form-item label="结果码"><el-select v-model="mkForm.mark"><el-option v-for="m in markCodes" :key="m.code" :label="m.label" :value="m.code" /></el-select></el-form-item></el-form>
       <template #footer><el-button @click="mkdlg=false">取消</el-button><el-button type="primary" @click="submitMark">标记</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
     <!-- M-08: 新增联系人(标签 + 主号) -->
-    <el-dialog v-model="cdlg" title="新增联系人（POST /cases/{id}/contacts）" width="400px">
+    <DsDrawer v-model="cdlg" title="新增联系人" :width="400">
       <el-form label-width="80px">
         <el-form-item label="电话"><el-input v-model="cForm.phone" placeholder="联系号码" /></el-form-item>
         <el-form-item label="标签"><el-select v-model="cForm.label"><el-option v-for="l in ['本人','配偶','亲属','单位','补充']" :key="l" :label="l" :value="l" /></el-select></el-form-item>
         <el-form-item label="设为主号"><el-switch v-model="cForm.isPrimary" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="cdlg=false">取消</el-button><el-button type="primary" @click="submitContact">提交</el-button></template>
-    </el-dialog>
+    </DsDrawer>
   </div>
 </template>

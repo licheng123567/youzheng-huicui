@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { api } from '../api/client'
 import type { components } from '../api/schema'
+import DsDrawer from './DsDrawer.vue'
 
 type ProjectInput = components['schemas']['ProjectInput']
 
@@ -150,7 +151,7 @@ async function submit() {
 </script>
 
 <template>
-  <el-dialog :model-value="modelValue" :title="(project?.id ? '编辑项目档案（PUT /projects/{id}）' : '新建项目（POST /projects）')" width="720px"
+  <DsDrawer :model-value="modelValue" :title="(project?.id ? '编辑项目档案' : '新建项目')" :width="720"
     @update:model-value="(v:boolean)=>emit('update:modelValue', v)">
     <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
       <el-divider content-position="left">基本信息</el-divider>
@@ -198,5 +199,5 @@ async function submit() {
       <el-button @click="close">取消</el-button>
       <el-button type="primary" :loading="saving" @click="submit">{{ project?.id ? '保存' : '新建' }}</el-button>
     </template>
-  </el-dialog>
+  </DsDrawer>
 </template>

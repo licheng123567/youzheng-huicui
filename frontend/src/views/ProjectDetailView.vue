@@ -7,6 +7,7 @@ import { useAuth } from '../stores/auth'
 import { useRoleFields } from '../composables/useRoleFields'
 import ProjectEditDialog from '../components/ProjectEditDialog.vue'
 import CoordinatorPicker from '../components/CoordinatorPicker.vue'
+import DsDrawer from '../components/DsDrawer.vue'
 import { statusLabel, reduceDecideLabel } from '../constants/enums'
 
 // GET /projects/{id} → oneOf(Project|ProjectForProvider)；viewRole 判别。
@@ -197,12 +198,12 @@ onMounted(load)
     </el-dialog>
 
     <!-- 作战手册采纳 -->
-    <el-dialog v-model="dlg" title="采纳作战手册（POST /projects/{id}/playbook · playbook.adopt）" width="560px">
+    <DsDrawer v-model="dlg" title="采纳作战手册" :width="560">
       <el-form label-width="70px">
         <el-form-item label="版本"><el-input v-model="form.version" placeholder="如 v1.1" /></el-form-item>
         <el-form-item label="内容"><el-input v-model="form.content" type="textarea" :rows="8" placeholder="作战手册正文（通话前策略/话术指引）" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="dlg=false">取消</el-button><el-button type="primary" @click="adopt">采纳发布</el-button></template>
-    </el-dialog>
+    </DsDrawer>
   </div>
 </template>

@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { statusLabel } from '../constants/enums'
+import DsDrawer from '../components/DsDrawer.vue'
 
 // 组织管理（平台·org.manage）：组织目录 + 新建组织(绑唯一负责人) + 改绑负责人。
 // 自包含视图，挂 /org-mgmt；不依赖 router/main.ts/AppLayout 改动。
@@ -121,7 +122,7 @@ onMounted(load)
     </table>
 
     <!-- 新建组织（POST /orgs · OrgInput） -->
-    <el-dialog v-model="oDlg" title="新建组织 + 绑负责人（POST /orgs · org.manage）" width="440px">
+    <DsDrawer v-model="oDlg" title="新建组织 + 绑负责人" :width="440">
       <el-form label-width="100px">
         <el-form-item label="类型">
           <el-select v-model="oForm.type">
@@ -137,7 +138,7 @@ onMounted(load)
         <el-button @click="oDlg=false">取消</el-button>
         <el-button type="primary" @click="createOrg">创建</el-button>
       </template>
-    </el-dialog>
+    </DsDrawer>
 
     <!-- B-04方案A：一次性凭据交付 Token 展示弹窗（容错；契约未必返回） -->
     <el-dialog v-model="setupTokenDlg" title="一次性凭据 Token（带外转交）" width="500px" :close-on-click-modal="false">

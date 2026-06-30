@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import { useRoleFields } from '../composables/useRoleFields'
 import { caseStatusLabel } from '../constants/enums'
+import DsDrawer from '../components/DsDrawer.vue'
 
 // GET /batches → BatchView(平台双线/物业只收佣/服务商只付佣)。SA 派单(M3)；物业可导入批次/作废(批次2)。
 const auth = useAuth()
@@ -167,7 +168,7 @@ onMounted(load)
     </table>
 
     <!-- 派单/重派 -->
-    <el-dialog v-model="dlg" :title="(form.redispatch?'重派':'派单')+'（POST /batches/{id}/'+(form.redispatch?'redispatch':'dispatch')+'）'" width="640px">
+    <DsDrawer v-model="dlg" :title="(form.redispatch?'重派':'派单')" :width="640">
       <el-form label-width="120px">
         <el-form-item label="方式"><el-radio-group v-model="form.mode"><el-radio-button label="WHOLE">整批</el-radio-button><el-radio-button label="SPLIT">拆分</el-radio-button></el-radio-group></el-form-item>
         <template v-if="form.mode==='SPLIT'">
@@ -198,10 +199,10 @@ onMounted(load)
         <el-form-item label="付佣比例(小数)"><el-input-number v-model="form.payOutRate" :min="0" :max="1" :step="0.01" /><span style="margin-left:8px;color:#909399">0.2=20%（须≤收佣，防倒挂）</span></el-form-item>
       </el-form>
       <template #footer><el-button @click="dlg=false">取消</el-button><el-button type="primary" :loading="acting===form.batchId" @click="submitDispatch">{{ form.redispatch?'重派':(form.mode==='SPLIT'?'拆分派单':'整批派单') }}</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
     <!-- 导入批次 -->
-    <el-dialog v-model="impDlg" title="导入批次（POST /batches/import · 创建批次+案件）" width="820px">
+    <DsDrawer v-model="impDlg" title="导入批次" :width="820">
       <el-form :inline="true" label-width="90px">
         <el-form-item label="项目 id"><el-input v-model="imp.projectId" style="width:120px" placeholder="如 1" /></el-form-item>
         <el-form-item label="收佣比例"><el-input-number v-model="imp.commInRate" :min="0" :max="1" :step="0.01" /><span style="margin-left:6px;color:#909399">分数 0.3=30%</span></el-form-item>
@@ -242,7 +243,7 @@ onMounted(load)
         <el-button @click="impDlg=false; impResult=null">关闭</el-button>
         <el-button type="primary" @click="submitImport">导入</el-button>
       </template>
-    </el-dialog>
+    </DsDrawer>
   </div>
 </template>
 

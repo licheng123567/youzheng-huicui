@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
+import DsDrawer from '../components/DsDrawer.vue'
 
 // M3 公海：GET /sea(SeaCase 含竞争态/来源徽标/正在查看N人)。动作按 /me 权限点门控(FE authz)。
 const auth = useAuth()
@@ -253,7 +254,7 @@ const evTag = (ev: string) => EV_TAG[ev] ?? 'inf'
       按角色登录看不同动作：CO(jx_co1) 见抢单 / VL(jx_vl) 见承接拒接 / SA(admin) 见开放抢单。服务端 x-permission+状态机双重校验。
     </div>
 
-    <el-dialog v-model="adlg" title="指派催收员（POST /cases/{id}/assign · 按余量推荐 BR-M3-23）" width="480px">
+    <DsDrawer v-model="adlg" title="指派催收员" :width="480">
       <div style="color:#909399;font-size:12px;margin-bottom:6px">持有上限 holdCap={{ capHoldCap }}；点行选定（默认选余量最大的推荐者）</div>
       <el-table :data="caps" border size="small" highlight-current-row @row-click="(r:any)=>aForm.collectorId=r.collectorId" style="cursor:pointer">
         <el-table-column width="40"><template #default="{row}"><el-radio :model-value="aForm.collectorId" :label="row.collectorId"><span></span></el-radio></template></el-table-column>
@@ -264,10 +265,10 @@ const evTag = (ev: string) => EV_TAG[ev] ?? 'inf'
       </el-table>
       <el-form label-width="90px" style="margin-top:10px"><el-form-item label="催收员 id"><el-input v-model="aForm.collectorId" placeholder="点上表行或手填" /></el-form-item></el-form>
       <template #footer><el-button @click="adlg=false">取消</el-button><el-button type="primary" @click="submitAssign">指派</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
     <!-- SA/SE 单案再派（POST /cases/{id}/redispatch · US-M3-02 · 门控 case.dispatch） -->
-    <el-dialog v-model="rdlg" title="单案再派（POST /cases/{id}/redispatch · 改派目标服务商）" width="440px">
+    <DsDrawer v-model="rdlg" title="单案再派" :width="440">
       <el-alert type="info" :closable="false" style="margin-bottom:10px"
         title="将平台公海案件改派至目标服务商；不可再派回原退回服务商（409 BIZ_REDISPATCH_GUARD）。" />
       <el-form label-width="90px">
@@ -278,10 +279,10 @@ const evTag = (ev: string) => EV_TAG[ev] ?? 'inf'
         </el-form-item>
       </el-form>
       <template #footer><el-button @click="rdlg=false">取消</el-button><el-button type="primary" :loading="acting===redispatchForm.id+'再派'" @click="submitRedispatch">再派</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
     <!-- 批量分配（POST /cases/assign-batch · BR-M3-25 · 门控 case.assign） -->
-    <el-dialog v-model="bdlg" title="批量分配（POST /cases/assign-batch · 不整批回滚）" width="520px">
+    <DsDrawer v-model="bdlg" title="批量分配" :width="520">
       <div style="color:#909399;font-size:12px;margin-bottom:8px">已选 {{ selectedCaseIds.length }} 件，指派给同一催收员；超持有上限的将被拒（BR-M3-06）。</div>
       <el-form label-width="100px">
         <el-form-item label="催收员 id"><el-input v-model="batchForm.collectorId" placeholder="催收员 id" /></el-form-item>
@@ -297,10 +298,10 @@ const evTag = (ev: string) => EV_TAG[ev] ?? 'inf'
         </el-table>
       </template>
       <template #footer><el-button @click="bdlg=false">关闭</el-button><el-button type="primary" :loading="acting==='batch'" @click="submitBatchAssign">分配</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
     <!-- 释放记录（GET /providers/{id}/release-records · BR-M3-27 · own-org 可见） -->
-    <el-drawer v-model="reldlg" title="本商释放记录（GET /providers/{id}/release-records）" size="520px">
+    <DsDrawer v-model="reldlg" title="本商释放记录" :width="520">
       <el-table v-loading="releaseLoading" :data="releaseRecords" border size="small">
         <el-table-column label="类型" width="80"><template #default="{ row }"><el-tag size="small" :type="row.kind==='AUTO'?'warning':'info'">{{ row.kind==='AUTO'?'自动回流':'主动释放' }}</el-tag></template></el-table-column>
         <el-table-column prop="caseId" label="案件" width="150" />
@@ -308,6 +309,6 @@ const evTag = (ev: string) => EV_TAG[ev] ?? 'inf'
         <el-table-column label="时间"><template #default="{ row }">{{ row.at ? String(row.at).slice(0,16).replace('T',' ') : '—' }}</template></el-table-column>
       </el-table>
       <el-empty v-if="!releaseLoading && !releaseRecords.length" description="暂无释放记录" :image-size="60" />
-    </el-drawer>
+    </DsDrawer>
   </div>
 </template>

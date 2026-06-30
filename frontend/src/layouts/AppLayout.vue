@@ -105,6 +105,10 @@ function iconPaths(path: string): string {
 
 const avatarChar = computed(() => (auth.me?.name ?? '?').charAt(0))
 
+// 构建时由 Vite define 注入
+const version = __APP_VERSION__
+const buildTime = __BUILD_TIME__
+
 function logout() {
   auth.logout()
   router.push('/login')
@@ -131,6 +135,10 @@ function logout() {
           </a>
         </template>
       </nav>
+      <div style="flex:1"></div>
+      <div style="padding:8px 20px 14px;font-size:11px;color:#8492a6;border-top:1px solid rgba(255,255,255,.08)" :title="'构建时间: ' + buildTime">
+        {{ version }}
+      </div>
     </aside>
 
     <!-- 主区 -->

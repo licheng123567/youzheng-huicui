@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import { riskLevelLabel, riskVerdictLabel, disposeTaskStatusLabel } from '../constants/enums'
+import DsDrawer from '../components/DsDrawer.vue'
 
 // M5 质检：风险看板(GET /risks·全量检测) + 处置归属(VL/PL 处置自己员工风险) + 平台复核 + 处置跟踪(仅平台)。
 const auth = useAuth()
@@ -121,7 +122,7 @@ onMounted(load)
       </table>
     </template>
 
-    <el-dialog v-model="ddlg" title="风险处置（POST /risks/{id}/dispose）" width="420px">
+    <DsDrawer v-model="ddlg" title="风险处置">
       <el-form label-width="80px">
         <el-form-item label="处置方式">
           <el-select v-model="dform.action" style="width:100%">
@@ -133,9 +134,9 @@ onMounted(load)
         <el-form-item label="说明"><el-input v-model="dform.note" type="textarea" :rows="2" placeholder="可选" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="ddlg=false">取消</el-button><el-button type="primary" @click="submitDispose">提交处置</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="rdlg" title="平台复核（GET /risks/{id}/review）" width="420px">
+    <DsDrawer v-model="rdlg" title="平台复核">
       <el-form label-width="80px">
         <el-form-item label="判定">
           <el-select v-model="rform.verdict">
@@ -147,6 +148,6 @@ onMounted(load)
         <el-form-item label="说明"><el-input v-model="rform.note" type="textarea" :rows="2" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="rdlg=false">取消</el-button><el-button type="primary" @click="submitReview">提交复核</el-button></template>
-    </el-dialog>
+    </DsDrawer>
   </div>
 </template>

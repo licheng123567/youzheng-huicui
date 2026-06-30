@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { payReqStatusLabel, channelLabel } from '../constants/enums'
+import DsDrawer from '../components/DsDrawer.vue'
 
 // 付佣对账（OUT 线·服务商↔平台）独立子页：对账汇总 + 支付申请单。
 // OUT 线生成方=服务商；完成(付款+上传支付凭证)恒由平台受理(契约 x-data-scope=platform)。
@@ -220,7 +221,7 @@ onMounted(load)
     </el-dialog>
 
     <!-- 完成付款：支付凭证必填、上传入口、无默认 URL -->
-    <el-dialog v-model="cdlg" title="支付完成（必带支付凭证 BR-M9-12d）" width="460px">
+    <DsDrawer v-model="cdlg" title="支付完成" :width="460">
       <el-form label-width="100px">
         <el-form-item label="凭证类型"><el-tag>支付凭证</el-tag></el-form-item>
         <el-form-item label="上传凭证" required>
@@ -237,10 +238,10 @@ onMounted(load)
         <el-button @click="cdlg=false">取消</el-button>
         <el-button type="primary" :disabled="!cform.fileUrl?.trim()" @click="submitComplete">完成付款</el-button>
       </template>
-    </el-dialog>
+    </DsDrawer>
 
     <!-- 撤回：原因必填 -->
-    <el-dialog v-model="rdlg" title="撤回支付申请单（仅 PENDING 可撤 BR-M9-12d）" width="440px">
+    <DsDrawer v-model="rdlg" title="撤回支付申请单" :width="440">
       <el-form label-width="100px">
         <el-form-item label="撤回原因" required>
           <el-input v-model="rform.reason" type="textarea" :rows="3" placeholder="请填写撤回原因（必填）" />
@@ -251,6 +252,6 @@ onMounted(load)
         <el-button @click="rdlg=false">取消</el-button>
         <el-button type="primary" :disabled="!rform.reason?.trim()" @click="submitRevoke">确认撤回</el-button>
       </template>
-    </el-dialog>
+    </DsDrawer>
   </div>
 </template>

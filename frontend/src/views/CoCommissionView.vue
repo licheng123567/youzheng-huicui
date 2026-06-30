@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { channelLabel } from '../constants/enums'
+import DsDrawer from '../components/DsDrawer.vue'
 
 // 内催佣金（服务商内部）独立子页：催收员佣金名册 → 某人批次穿透 → 勾选未结明细生成佣金单 → 确认支付。
 // 资金双线硬隔离：平台/物业不可见（后端裁剪，前端仅按返回展示，跨线/越权 → 403 仅提示）。
@@ -134,7 +135,7 @@ onMounted(load)
     </table>
 
     <!-- 生成佣金单：人 → 批次 → 未结明细勾选 → POST /co-pay-docs -->
-    <el-dialog v-model="gdlg" :title="`生成佣金单 · ${gCollector?.name ?? ''}（人→批次→明细勾选 POST /co-pay-docs）`" width="760px">
+    <DsDrawer v-model="gdlg" :title="`生成佣金单 · ${gCollector?.name ?? ''}`" :width="760">
       <el-form :inline="true">
         <el-form-item label="批次">
           <el-select v-model="gBatchId" style="width:380px" placeholder="选择该催收员的批次" @change="loadLines">
@@ -156,10 +157,10 @@ onMounted(load)
         <el-button @click="gdlg=false">取消</el-button>
         <el-button type="primary" :disabled="!gSel.length" @click="submitGenerate">生成佣金单</el-button>
       </template>
-    </el-dialog>
+    </DsDrawer>
 
     <!-- 佣金单详情 -->
-    <el-dialog v-model="ddlg" title="佣金支付单详情（GET /co-pay-docs/{id}）" width="640px">
+    <DsDrawer v-model="ddlg" title="佣金支付单详情" :width="640">
       <template v-if="detail">
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="催收员">{{ detail.collectorName ?? detail.collectorId }}</el-descriptions-item>
@@ -182,6 +183,6 @@ onMounted(load)
           <el-table-column label="佣金"><template #default="{row}">{{ yuan(row.commCents) }}</template></el-table-column>
         </el-table>
       </template>
-    </el-dialog>
+    </DsDrawer>
   </div>
 </template>

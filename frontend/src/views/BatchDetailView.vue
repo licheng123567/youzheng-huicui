@@ -7,6 +7,7 @@ import { useAuth } from '../stores/auth'
 import { useRoleFields } from '../composables/useRoleFields'
 import CoordinatorPicker from '../components/CoordinatorPicker.vue'
 import { caseStatusLabel, reduceDecideLabel, poolLabel } from '../constants/enums'
+import DsDrawer from '../components/DsDrawer.vue'
 
 // 批次详情 /batches/:id：GET /batches/{id}(双线视角) + GET /cases?batchId 案件清单 + 减免档位 + 协调员 + 作战手册。
 // 含 M2-B：批次协调员维护 / 减免覆盖编辑·恢复继承 / 手册采纳·恢复继承 / BR-M2-18b 覆盖同步(drift+一键同步)。
@@ -255,13 +256,13 @@ onMounted(loadAll)
     </el-dialog>
 
     <!-- BC-03 手册采纳对话框 -->
-    <el-dialog v-model="pbDlg" title="采纳批次作战手册（POST /batches/{id}/playbook · playbook.adopt）" width="560px">
+    <DsDrawer v-model="pbDlg" title="采纳批次作战手册" :width="560">
       <el-form label-width="70px">
         <el-form-item label="版本"><el-input v-model="pbForm.version" placeholder="如 v1.1" /></el-form-item>
         <el-form-item label="内容"><el-input v-model="pbForm.content" type="textarea" :rows="8" placeholder="批次自定义作战手册正文" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="pbDlg=false">取消</el-button><el-button type="primary" @click="adoptPlaybook">采纳发布</el-button></template>
-    </el-dialog>
+    </DsDrawer>
   </div>
 </template>
 

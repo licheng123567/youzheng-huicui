@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import { roleTemplateLabel, dataScopeLabel, settingsDomainLabel, scriptSourceLabel, scriptStatusLabel } from '../constants/enums'
 import { permLabel } from '../constants/permissions'
+import DsDrawer from '../components/DsDrawer.vue'
 import type { components } from '../api/schema'
 
 type SettingsInput = components['schemas']['SettingsInput']
@@ -301,7 +302,7 @@ onMounted(() => { load(); loadMore() })
       </tbody>
     </table>
 
-    <el-dialog v-model="aiDlg" title="编辑 AI 配置（PUT /ai-config · ai.config）" width="460px">
+    <DsDrawer v-model="aiDlg" title="编辑 AI 配置" :width="460">
       <el-form label-width="110px">
         <el-form-item label="LLM provider"><el-input v-model="aiForm.llm.provider" /></el-form-item>
         <el-form-item label="LLM model"><el-input v-model="aiForm.llm.model" /></el-form-item>
@@ -309,9 +310,9 @@ onMounted(() => { load(); loadMore() })
         <el-form-item label="ASR provider"><el-input v-model="aiForm.asr.provider" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="aiDlg=false">取消</el-button><el-button type="primary" @click="saveAi">保存</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="scDlg" title="新建话术（POST /script-lib · ai.config）" width="440px">
+    <DsDrawer v-model="scDlg" title="新建话术" :width="440">
       <el-form label-width="80px">
         <el-form-item label="场景"><el-input v-model="scForm.scene" /></el-form-item>
         <el-form-item label="意图"><el-input v-model="scForm.intent" /></el-form-item>
@@ -319,9 +320,9 @@ onMounted(() => { load(); loadMore() })
         <el-form-item label="话术"><el-input v-model="scForm.text" type="textarea" :rows="3" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="scDlg=false">取消</el-button><el-button type="primary" @click="createScript">新建</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="rotDlg" title="编辑轮转配置 ROTATION（PUT /settings·写新版本）" width="400px">
+    <DsDrawer v-model="rotDlg" title="编辑轮转配置" :width="400">
       <el-form label-width="120px">
         <el-form-item label="持有上限 holdCap"><el-input-number v-model="rotForm.holdCap" :min="1" /></el-form-item>
         <el-form-item label="最大轮转 maxRotations"><el-input-number v-model="rotForm.maxRotations" :min="0" /></el-form-item>
@@ -330,9 +331,9 @@ onMounted(() => { load(); loadMore() })
         </el-form-item>
       </el-form>
       <template #footer><el-button @click="rotDlg=false">取消</el-button><el-button type="primary" @click="saveRotation">保存新版本</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="timerDlg" title="编辑时效参数 TIMERS（PUT /settings·只对新计时案件生效 BR-M3-19）" width="460px">
+    <DsDrawer v-model="timerDlg" title="编辑时效参数" :width="460">
       <el-alert type="info" :closable="false" style="margin-bottom:10px"
         title="建议值：T1=48h(派单时限) / T2=168h(服务商处置) / TC=168h(无跟进释放) / MAXCYCLE=90天。变更仅对新计时案件生效。" />
       <el-form label-width="180px">
@@ -345,9 +346,9 @@ onMounted(() => { load(); loadMore() })
         </el-form-item>
       </el-form>
       <template #footer><el-button @click="timerDlg=false">取消</el-button><el-button type="primary" @click="saveTimers">保存新版本</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="markDlg" title="编辑标记码 MARK_CODES（connected/effectiveFollowUp 影响 T_collector 重置 BR-M4-12）" width="720px">
+    <DsDrawer v-model="markDlg" title="编辑标记码" :width="720">
       <div style="margin-bottom:10px;display:flex;align-items:center;gap:8px">
         <span style="color:#606266;font-size:13px">生效时间</span>
         <el-date-picker v-model="markEffectiveAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="留空=立即生效" style="width:240px" />
@@ -362,9 +363,9 @@ onMounted(() => { load(); loadMore() })
         <el-table-column label="操作" width="70"><template #default="{$index}"><el-button size="small" text type="danger" @click="delMarkRow($index)">删除</el-button></template></el-table-column>
       </el-table>
       <template #footer><el-button @click="markDlg=false">取消</el-button><el-button type="primary" @click="saveMarkCodes">保存新版本</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="closeDlg" title="编辑结案原因 CLOSE_REASONS（PUT /settings·写新版本）" width="640px">
+    <DsDrawer v-model="closeDlg" title="编辑结案原因" :width="640">
       <div style="margin-bottom:10px;display:flex;align-items:center;gap:8px">
         <span style="color:#606266;font-size:13px">生效时间</span>
         <el-date-picker v-model="closeEffectiveAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="留空=立即生效" style="width:240px" />
@@ -381,9 +382,9 @@ onMounted(() => { load(); loadMore() })
         <el-table-column label="操作" width="70"><template #default="{$index}"><el-button size="small" text type="danger" @click="delCloseRow($index)">删除</el-button></template></el-table-column>
       </el-table>
       <template #footer><el-button @click="closeDlg=false">取消</el-button><el-button type="primary" @click="saveCloseReasons">保存新版本</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="smsDlg" title="编辑短信配置 SMS（签名/模板由平台统一配置 BR-M9-09，物业不创建）" width="600px">
+    <DsDrawer v-model="smsDlg" title="编辑短信配置" :width="600">
       <el-form label-width="160px">
         <el-form-item label="同案冷却(分钟)"><el-input-number v-model="smsForm.cooldownMinutes" :min="0" /></el-form-item>
         <el-form-item label="条数预警阈值"><el-input-number v-model="smsForm.warnThreshold" :min="0" /></el-form-item>
@@ -400,6 +401,6 @@ onMounted(() => { load(); loadMore() })
         <el-table-column label="操作" width="70"><template #default="{$index}"><el-button size="small" text type="danger" @click="delSmsTpl($index)">删除</el-button></template></el-table-column>
       </el-table>
       <template #footer><el-button @click="smsDlg=false">取消</el-button><el-button type="primary" @click="saveSms">保存新版本</el-button></template>
-    </el-dialog>
+    </DsDrawer>
   </div>
 </template>

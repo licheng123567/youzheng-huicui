@@ -6,6 +6,7 @@ import { useAuth } from '../stores/auth'
 import { roleLabel, roleHint } from '../constants/roles'
 import { permLabel } from '../constants/permissions'
 import { orgTypeLabel, statusLabel } from '../constants/enums'
+import DsDrawer from '../components/DsDrawer.vue'
 
 // 成员管理/督导(M1/M10·member.manage)：本组织成员 CRUD/停用启用/重置密码 + 督导记录。
 const auth = useAuth()
@@ -286,7 +287,7 @@ onMounted(load)
       </template>
     </el-dialog>
 
-    <el-dialog v-model="oDlg" title="新建组织+绑负责人（POST /orgs · org.manage）" width="440px">
+    <DsDrawer v-model="oDlg" title="新建组织+绑负责人" :width="440">
       <el-form label-width="100px">
         <el-form-item label="类型"><el-select v-model="oForm.type"><el-option label="物业" value="PROPERTY" /><el-option label="服务商" value="PROVIDER" /></el-select></el-form-item>
         <el-form-item label="组织名"><el-input v-model="oForm.name" /></el-form-item>
@@ -294,9 +295,9 @@ onMounted(load)
         <el-form-item label="负责人手机"><el-input v-model="oForm.ownerPhone" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="oDlg=false">取消</el-button><el-button type="primary" @click="createOrg">创建</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="cDlg" title="新增成员（POST /members · 本组织 · BR-M1-04a）" width="480px">
+    <DsDrawer v-model="cDlg" title="新增成员" :width="480">
       <el-form label-width="90px">
         <el-form-item label="账号"><el-input v-model="cForm.username" /></el-form-item>
         <el-form-item label="姓名"><el-input v-model="cForm.name" /></el-form-item>
@@ -315,9 +316,9 @@ onMounted(load)
         </el-form-item>
       </el-form>
       <template #footer><el-button @click="cDlg=false">取消</el-button><el-button type="primary" @click="createMember">创建</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="eDlg" :title="`编辑成员 · ${eForm.name}（PATCH /members/{id}）`" width="500px">
+    <DsDrawer v-model="eDlg" :title="`编辑成员 · ${eForm.name}`" :width="500">
       <el-form label-width="90px">
         <el-form-item label="姓名"><el-input v-model="eForm.name" /></el-form-item>
         <el-form-item label="权限子集">
@@ -334,9 +335,9 @@ onMounted(load)
         </el-form-item>
       </el-form>
       <template #footer><el-button @click="eDlg=false">取消</el-button><el-button type="primary" @click="submitEdit">保存</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="pDlg" :title="`重置密码 · ${pForm.name}（B-04方案A·一次性凭据）`" width="420px">
+    <DsDrawer v-model="pDlg" :title="`重置密码 · ${pForm.name}`" :width="420">
       <el-alert type="info" :closable="false" style="margin-bottom:10px"
         title="重置后系统将生成一次性凭据 Token（24h 有效，一次性），请在下一步弹窗中复制并带外告知成员。成员用此 Token 走 /auth/setup-password 设密后方可登录。" />
       <el-form label-width="100px">
@@ -349,14 +350,14 @@ onMounted(load)
         </el-form-item>
       </el-form>
       <template #footer><el-button @click="pDlg=false">取消</el-button><el-button type="primary" @click="submitReset">重置并获取 Token</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="sDlg" :title="`督导 · ${sForm.name}`" width="420px">
+    <DsDrawer v-model="sDlg" :title="`督导 · ${sForm.name}`" :width="420">
       <el-form label-width="80px">
         <el-form-item label="动作"><el-select v-model="sForm.action"><el-option label="提醒 REMIND" value="REMIND" /><el-option label="谈话 TALK" value="TALK" /><el-option label="培训 TRAINING" value="TRAINING" /><el-option label="记录 NOTE" value="NOTE" /></el-select></el-form-item>
         <el-form-item label="说明"><el-input v-model="sForm.note" type="textarea" :rows="2" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="sDlg=false">取消</el-button><el-button type="primary" @click="submitSup">记录</el-button></template>
-    </el-dialog>
+    </DsDrawer>
   </div>
 </template>

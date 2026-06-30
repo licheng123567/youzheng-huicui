@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import type { components } from '../api/schema'
+import DsDrawer from '../components/DsDrawer.vue'
 
 // 话术库（平台·飞轮护城河 BR-M5-06/06a）。独立页，挂 /script-lib。
 // 列表 GET /script-lib；新建 POST /script-lib(ScriptInput)；变体晋升 POST /script-lib/{id}/variant/promote。
@@ -114,7 +115,7 @@ onMounted(load)
       </tbody>
     </table>
 
-    <el-dialog v-model="dlg" title="新建话术（POST /script-lib · 候选）" width="460px">
+    <DsDrawer v-model="dlg" title="新建话术">
       <el-form label-width="80px">
         <el-form-item label="场景" required>
           <el-input v-model="form.scene" placeholder="如：首次外呼/承诺爽约跟进" />
@@ -133,6 +134,6 @@ onMounted(load)
         <el-button @click="dlg = false">取消</el-button>
         <el-button type="primary" @click="createScript">新建</el-button>
       </template>
-    </el-dialog>
+    </DsDrawer>
   </div>
 </template>

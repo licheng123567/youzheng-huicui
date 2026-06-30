@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import { payReqStatusLabel, channelLabel } from '../constants/enums'
+import DsDrawer from '../components/DsDrawer.vue'
 
 // M9 结算·资金双线：side=IN(收佣 平台↔物业)/OUT(付佣 平台↔服务商)。
 // 生成链：勾选未结回款明细→生成支付申请单→发送→详情→完成(凭证)/撤销。内催佣金链独立面板。
@@ -344,7 +345,7 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
     </el-dialog>
 
     <!-- 完成 -->
-    <el-dialog v-model="cdlg" :title="(side==='IN'?'确认收款':'支付完成')+'（必带凭证 BR-M9-12d）'" width="440px">
+    <DsDrawer v-model="cdlg" :title="(side==='IN'?'确认收款':'支付完成')" :width="440">
       <el-form label-width="100px">
         <el-form-item label="凭证类型"><el-tag>{{ cform.type==='RECEIPT'?'收款凭证':'支付凭证' }}</el-tag></el-form-item>
         <el-form-item label="上传凭证" required>
@@ -359,7 +360,7 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
         <el-form-item label="版本(乐观锁)"><el-input-number v-model="cform.version" :min="1" disabled /></el-form-item>
       </el-form>
       <template #footer><el-button @click="cdlg=false">取消</el-button><el-button type="primary" @click="submitComplete">完成</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
     <!-- M-05 内催佣金穿透组单：催收员 → 批次(比例) → 未结明细勾选 → POST /co-pay-docs -->
     <el-dialog v-model="cdlg2" :title="`生成佣金单 · ${cCollector?.name ?? ''}（人→批次→明细勾选 POST /co-pay-docs）`" width="760px">

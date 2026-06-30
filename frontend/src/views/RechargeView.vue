@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
+import DsDrawer from '../components/DsDrawer.vue'
 import { billingTypeLabel } from '../constants/enums'
 
 // 充值（将挂 /recharge）：充值流水(GET /billing/recharge-log) + 平台充值(POST /billing/recharge·billing.recharge 门控)。
@@ -109,7 +110,7 @@ onMounted(() => {
     </table>
 
     <!-- 新充值弹窗（RechargeInput：仅预付项 STT/SMS · qty>=1 · billing.recharge 门控） -->
-    <el-dialog v-model="dlg" title="新充值（billing.recharge · 仅平台）" width="420px">
+    <DsDrawer v-model="dlg" title="新充值">
       <el-form label-width="90px">
         <el-form-item label="组织">
           <el-select v-model="form.orgId" placeholder="选择组织" style="width:100%">
@@ -133,6 +134,6 @@ onMounted(() => {
         <el-button @click="dlg = false">取消</el-button>
         <el-button type="primary" @click="recharge">充值</el-button>
       </template>
-    </el-dialog>
+    </DsDrawer>
   </div>
 </template>

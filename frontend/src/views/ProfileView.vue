@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { useAuth } from '../stores/auth'
 import { api } from '../api/client'
 import { permLabel } from '../constants/permissions'
+import DsDrawer from '../components/DsDrawer.vue'
 import { roleTemplateLabel } from '../constants/enums'
 
 // 个人中心：资料查看(GET /me 已有) + 自助改密(POST /me/password · v1.3.0)。
@@ -77,14 +78,14 @@ async function submit() {
     </div>
 
     <!-- 改密弹窗：含校验，保留 Element Plus 原样 -->
-    <el-dialog v-model="dlg" title="修改密码（自助 · 校验旧密码）" width="400px">
+    <DsDrawer v-model="dlg" title="修改密码">
       <el-form label-width="90px">
         <el-form-item label="旧密码"><el-input v-model="form.oldPassword" type="password" show-password /></el-form-item>
         <el-form-item label="新密码"><el-input v-model="form.newPassword" type="password" show-password placeholder="至少 6 位" /></el-form-item>
         <el-form-item label="确认新密码"><el-input v-model="form.confirm" type="password" show-password /></el-form-item>
       </el-form>
       <template #footer><el-button @click="dlg = false">取消</el-button><el-button type="primary" @click="submit">确认修改</el-button></template>
-    </el-dialog>
+    </DsDrawer>
   </div>
 </template>
 
