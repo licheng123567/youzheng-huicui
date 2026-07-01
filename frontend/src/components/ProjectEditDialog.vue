@@ -86,13 +86,13 @@ function emptyForm() {
     feeCycle: '季付',
     penalty: '',
     payInfo: '',
-    commInPct: 30,
+    commInPct: 10,
     coordinatorIds: [] as string[],
     litiCreditCode: '',
     litiLegal: '',
     litiAddr: '',
     reduceEnabled: false,
-    reduceTiers: [{ discount: '9折', capYuan: null as number | null, waivePenalty: false, decide: 'COLLECTOR_SELF' }] as { discount: string; capYuan: number | null; waivePenalty: boolean; decide: string }[],
+    reduceTiers: [{ discountPct: 10, capYuan: null as number | null, waivePenalty: false, decide: 'COLLECTOR_SELF' }] as { discountPct: number; capYuan: number | null; waivePenalty: boolean; decide: string }[],
     playbook: '',
     status: '启用',
   }
@@ -125,15 +125,17 @@ watch(() => props.modelValue, (open) => {
       feeCycle: p.feeCycle || '季付',
       penalty: p.penalty ?? '',
       payInfo: p.payInfo ?? '',
-      commInPct: p.commInRate != null ? Number((p.commInRate * 100).toFixed(2)) : 30,
+      commInPct: p.commInRate != null ? Number((p.commInRate * 100).toFixed(2)) : 10,
       coordinatorIds: Array.isArray(p.coordinators) ? p.coordinators.map((c: any) => String(c.id ?? '')).filter((x: string) => x) : [],
       litiCreditCode: p.litigation?.creditCode ?? '',
       litiLegal: p.litigation?.legal ?? '',
       litiAddr: p.litigation?.addr ?? '',
       reduceEnabled: Array.isArray(p.reduceTiers) && p.reduceTiers.length > 0,
-      reduceTiers: Array.isArray(p.reduceTiers) ? p.reduceTiers.map((t: any) => ({
-        discount: t.discount ?? '', capYuan: t.capCents != null ? Number((t.capCents / 100).toFixed(0)) : null, waivePenalty: t.waivePenalty ?? false, decide: t.decide || 'COLLECTOR_SELF',
-      })) : [{ discount: '', capYuan: null, waivePenalty: false, decide: 'COLLECTOR_SELF' }],
+      reduceTiers: Array.isArray(p.reduceTiers) ? p.reduceTiers.map((t: any) => {
+        const d = (t.discount ?? '') as string; const m = (d || '').match(/[\d.]+/); const n = m ? parseFloat(m[0]) : NaN
+        const pct = !isNaN(n) ? (n < 10 ? 100 - Math.round(n * 10) : 100 - Math.round(n)) : 10
+        return { discountPct: pct, capYuan: t.capCents != null ? Number((t.capCents / 100).toFixed(0)) : null, waivePenalty: t.waivePenalty ?? false, decide: t.decide || 'COLLECTOR_SELF' }
+      }) : [{ discountPct: 10, capYuan: null, waivePenalty: false, decide: 'COLLECTOR_SELF' }],
       playbook: p.playbookContent ?? '',
       status: p.status ?? '启用',
     }
@@ -160,7 +162,7 @@ function removeContractFile(i: number) { form.value.contractFiles.splice(i, 1) }
 
 // ── 减免阶梯行 ──
 function addReduceTier() {
-  form.value.reduceTiers.push({ discount: '', capYuan: null, waivePenalty: false, decide: 'COLLECTOR_SELF' })
+  form.value.reduceTiers.push({ discountPct: 10, capYuan: null, waivePenalty: false, decide: 'COLLECTOR_SELF' })
 }
 function removeReduceTier(i: number) { form.value.reduceTiers.splice(i, 1) }
 
@@ -236,14 +238,13 @@ async function submit() {
 async function syncReduce(projectId: string) {
   const f = form.value
   if (!f.reduceEnabled) return
-  const tiers = f.reduceTiers.filter((t) => t.discount.trim())
+  const tiers = f.reduceTiers.filter((t) => t.discountPct > 0)
   if (!tiers.length) return
-  const body = tiers.map((t) => ({
-    discount: t.discount,
-    capCents: t.capYuan != null ? Math.round(t.capYuan * 100) : null,
-    waivePenalty: t.waivePenalty,
-    decide: t.decide,
-  }))
+  const body = tiers.map((t) => {
+    const p = 100 - t.discountPct // e.g. 10→90, 20→80, 5→95
+    const label = p % 10 === 0 ? String(p / 10) + '折' : String(p) + '折'
+    return { discount: label, capCents: t.capYuan != null ? Math.round(t.capYuan * 100) : null, waivePenalty: t.waivePenalty, decide: t.decide }
+  })
   await api.PUT('/projects/{id}/reduce-tiers', { params: { path: { id: projectId } }, body } as any)
 }
 
@@ -290,14 +291,12 @@ async function syncPlaybook(projectId: string) {
           </el-select>
         </el-form-item>
         <el-form-item label="市 *">
-          <el-select v-model="form.city" style="width:100%" :disabled="!form.province" @change="onCityChange">
-            <el-option value="" label="选择城市" />
+          <el-select v-model="form.city" style="width:100%" placeholder="选择城市" :disabled="!form.province" @change="onCityChange">
             <el-option v-for="c in cityOpts" :key="c" :label="c" :value="c" />
           </el-select>
         </el-form-item>
         <el-form-item label="区 / 县">
-          <el-select v-model="form.district" style="width:100%" :disabled="!form.city">
-            <el-option value="" label="选择区县" />
+          <el-select v-model="form.district" style="width:100%" placeholder="选择区县" :disabled="!form.city">
             <el-option v-for="d in districtOpts" :key="d" :label="d" :value="d" />
           </el-select>
         </el-form-item>
@@ -368,7 +367,7 @@ async function syncPlaybook(projectId: string) {
           阶梯折扣 + 是否减免违约金 + 决定权：<b>催收员自决</b>档系统直接生效；<b>线下内部流程</b>档系统仅提示并留痕。
         </div>
         <el-table :data="form.reduceTiers" border size="small">
-          <el-table-column label="折扣" width="120"><template #default="{row}"><el-input v-model="row.discount" size="small" placeholder="如 9折" /></template></el-table-column>
+          <el-table-column label="减免 %" width="130"><template #default="{row}"><el-input-number v-model="row.discountPct" size="small" :min="1" :max="99" :step="1" style="width:100%" /> <span style="font-size:12px;color:var(--sec)">%（{{ (100 - row.discountPct) % 10 === 0 ? (100 - row.discountPct) / 10 : (100 - row.discountPct) }}折）</span></template></el-table-column>
           <el-table-column label="减免上限(元)"><template #default="{row}"><el-input-number v-model="row.capYuan" size="small" :min="0" :controls="false" placeholder="不限" style="width:100%" /></template></el-table-column>
           <el-table-column label="含违约金减免" width="110"><template #default="{row}"><el-switch v-model="row.waivePenalty" size="small" /></template></el-table-column>
           <el-table-column label="决定权" width="150"><template #default="{row}">

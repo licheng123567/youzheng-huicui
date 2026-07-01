@@ -50,13 +50,13 @@ const statusTag = (s?: string) => (s === '启用' || s === 'ACTIVE' || s === 'EN
     <table v-loading="loading">
       <thead>
         <tr>
-          <th style="width:70px">ID</th>
+          <th style="width:60px">ID</th>
           <th>项目</th>
           <th>物业</th>
-          <th style="width:100px">区域</th>
+          <th>区域</th>
           <!-- 资金双线：收佣比例整列仅平台/物业视角渲染，服务商视角整列(含列头)不出，不以占位串泄露字段存在性(H-03) -->
-          <th v-if="showCommInRate" style="width:110px">收佣比例</th>
-          <th style="width:90px">状态</th>
+          <th v-if="showCommInRate">收佣比例</th>
+          <th style="width:80px">状态</th>
         </tr>
       </thead>
       <tbody>
