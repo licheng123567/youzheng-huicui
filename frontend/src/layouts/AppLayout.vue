@@ -135,8 +135,7 @@ function logout() {
           </a>
         </template>
       </nav>
-      <div style="flex:1"></div>
-      <div style="padding:8px 20px 14px;font-size:11px;color:#8492a6;border-top:1px solid rgba(255,255,255,.08)" :title="'构建时间: ' + buildTime">
+      <div style="padding:8px 20px 14px;font-size:11px;color:#8492a6;border-top:1px solid rgba(255,255,255,.08);flex:none" :title="'构建时间: ' + buildTime">
         {{ version }}
       </div>
     </aside>
