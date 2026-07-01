@@ -34,13 +34,13 @@ const KEY2PATH: Record<string, string | null> = {
   legal: '/legal', myStats: '/my-stats', myLinks: '/my-links',
 }
 const PATH2LABEL: Record<string, string> = {
-  '/dashboard': '工作台', '/batches': '批次', '/sea': '公海', '/projects': '项目',
-  '/cases': '案件', '/call-records': '通话记录', '/risks': '质检', '/evidence': '存证',
-  '/settlement': '收佣对账', '/settlement-out': '付佣对账', '/co-commission': '内催佣金',
-  '/billing': '计费', '/recharge': '充值', '/sms': '短信', '/my-settle': '我的结算',
-  '/members': '成员', '/org-mgmt': '组织管理', '/settings': '设置', '/script-lib': '话术库',
-  '/reports': '报表', '/audit-log': '审计日志', '/notifications': '消息',
-  '/legal': '法务', '/my-stats': '我的统计', '/my-links': '我的缴费链接',
+  '/dashboard': '工作台', '/batches': '撮合派单', '/sea': '公海', '/projects': '项目管理',
+  '/cases': '案件管理', '/call-records': '通话记录', '/risks': '质检/风控', '/evidence': '存证管理',
+  '/settlement': '收佣对账', '/settlement-out': '付佣对账', '/co-commission': '催收员佣金',
+  '/billing': '计费明细', '/recharge': '充值中心', '/sms': '短信通道', '/my-settle': '我的结算',
+  '/members': '成员管理', '/org-mgmt': '组织管理', '/settings': '参数配置', '/script-lib': '平台话术库',
+  '/reports': '经营报表', '/audit-log': '操作日志', '/notifications': '消息中心',
+  '/legal': '送达管理', '/my-stats': '我的业绩', '/my-links': '缴费链接',
 }
 type NavItem = string | { group: string }
 const NAV_BY_ROLE: Record<string, NavItem[]> = {

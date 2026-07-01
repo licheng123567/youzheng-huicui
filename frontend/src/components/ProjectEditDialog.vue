@@ -320,7 +320,7 @@ async function syncPlaybook(projectId: string) {
       </div>
 
       <!-- 收佣比例（独立一行，编号承接③收费标准） -->
-      <el-divider content-position="left" style="margin-top:12px">③-2 平台佣金（收佣比例）</el-divider>
+      <el-divider content-position="left" style="margin-top:12px">④ 平台佣金（收佣比例）</el-divider>
       <el-form-item label="收佣比例(%) *" prop="commInPct">
         <el-input-number v-model="form.commInPct" :min="0" :max="100" :step="1" :precision="2" style="width:200px" />
         <span style="margin-left:12px;color:#909399;font-size:13px">
@@ -329,11 +329,11 @@ async function syncPlaybook(projectId: string) {
       </el-form-item>
 
       <!-- ④ 收款信息 -->
-      <el-divider content-position="left">④ 收款信息</el-divider>
+      <el-divider content-position="left">⑤ 收款信息</el-divider>
       <el-form-item label="收款信息"><el-input v-model="form.payInfo" type="textarea" :rows="2" placeholder="开户银行 / 银行账号 / 账户名称 / 微信收款渠道 等" /></el-form-item>
 
       <!-- ⑤ 协调员 -->
-      <el-divider content-position="left">⑤ 指定协调员（可多选）</el-divider>
+      <el-divider content-position="left">⑥ 指定协调员（可多选）</el-divider>
       <el-form-item label="协调员">
         <el-select v-model="form.coordinatorIds" multiple filterable clearable :loading="coordLoading" placeholder="选择本组织协调员（PC）" style="width:100%">
           <el-option v-for="c in coordOptions" :key="c.id" :label="c.name" :value="c.id" />
@@ -342,7 +342,7 @@ async function syncPlaybook(projectId: string) {
       </el-form-item>
 
       <!-- ⑥ 合同 -->
-      <el-divider content-position="left">⑥ 合同</el-divider>
+      <el-divider content-position="left">⑦ 合同</el-divider>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px">
         <el-form-item label="合同类型">
           <el-select v-model="form.contractType" style="width:100%">
@@ -361,7 +361,7 @@ async function syncPlaybook(projectId: string) {
       </div>
 
       <!-- ⑦ 减免政策 -->
-      <el-divider content-position="left">⑦ 减免政策（项目级底盘 · 后期可在项目档案修改）</el-divider>
+      <el-divider content-position="left">⑧ 减免政策（项目级底盘 · 后期可在项目档案修改）</el-divider>
       <el-checkbox v-model="form.reduceEnabled" style="margin-bottom:8px">创建时设置减免政策</el-checkbox>
       <template v-if="form.reduceEnabled">
         <div style="color:#909399;font-size:12px;margin-bottom:8px">
@@ -382,11 +382,11 @@ async function syncPlaybook(projectId: string) {
       </template>
 
       <!-- ⑧ 作战手册 -->
-      <el-divider content-position="left">⑧ 作战手册（催收策略/注意事项）</el-divider>
+      <el-divider content-position="left">⑨ 作战手册（催收策略/注意事项）</el-divider>
       <el-input v-model="form.playbook" type="textarea" :rows="4" placeholder="本小区催收策略 / 沟通口径 / 注意事项（AI 复盘与话术会参考）" />
 
       <!-- 诉讼要素（注册地址，其他已在 ① 基本信息中） -->
-      <el-divider content-position="left">⑨ 诉讼要素（注册地址可后补）</el-divider>
+      <el-divider content-position="left">⑩ 诉讼要素（注册地址可后补）</el-divider>
       <el-form-item label="注册地址"><el-input v-model="form.litiAddr" placeholder="如：成都市武侯区XX路XX号" /></el-form-item>
     </el-form>
     <template #footer>
