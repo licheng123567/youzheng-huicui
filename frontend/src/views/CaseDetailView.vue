@@ -630,16 +630,16 @@ onMounted(function () { loadAll(); loadCloseReasons() })
           <div style="border-bottom:1px solid var(--bd);margin:12px 0"></div>
         </div>
 
-        <!-- 操作区按钮（复用现有 openAct(kind)；显隐沿用 canAct 判断） -->
-        <div class="sec-title" style="margin:6px 0 6px">催收作业</div>
-        <button v-if="canAct('follow', 'case.follow')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('follow', '写跟进')">写跟进</button>
-        <button v-if="canAct('promise', 'case.promise')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('promise', '登记承诺')">登记承诺</button>
-        <button v-if="canAct('ticket', 'case.ticket')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('ticket', '转工单')">转工单</button>
-        <button v-if="canAct('paylink', 'case.paylink')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('paylink', '发缴费链接')">发缴费链接</button>
-        <button v-if="canAct('repay', 'case.repay.mark')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('repay', '登记还款')">登记还款</button>
-        <button v-if="canAct('follow', 'case.follow')" class="btn sm" style="width:100%;margin-bottom:6px" @click="suggestLegal">建议走法务</button>
-        <button v-if="canAct('release', 'case.release')" class="btn sm" style="width:100%;margin-bottom:6px" @click="lifecycle('释放', '/cases/{id}/release')">释放</button>
-        <button v-if="canAct('return', 'case.return')" class="btn sm" style="width:100%;margin-bottom:6px" @click="lifecycle('退回', '/cases/{id}/return')">退回</button>
+        <!-- 操作区按钮（按原型分组：跟进动作/法务存证/管理/危险操作） -->
+        <!-- 跟进动作 -->
+        <div v-if="canAct('follow','case.follow')||canAct('promise','case.promise')||canAct('ticket','case.ticket')||canAct('paylink','case.paylink')||canAct('repay','case.repay.mark')" style="margin-bottom:10px">
+          <div class="sec-title" style="margin:6px 0 6px">跟进动作</div>
+          <button v-if="canAct('follow','case.follow')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('follow','写跟进记录')">写跟进记录</button>
+          <button v-if="canAct('promise','case.promise')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('promise','登记承诺')">登记承诺</button>
+          <button v-if="canAct('ticket','case.ticket')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('ticket','转工单')">转工单</button>
+          <button v-if="canAct('paylink','case.paylink')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('paylink','发催费单')">发催费单</button>
+          <button v-if="canAct('repay','case.repay.mark')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('repay','标线下回款')">标线下回款</button>
+        </div>
 
         <!-- 缴费链接（本会话创建·重发/作废 BR-M4-14） -->
         <template v-if="payLinks.length">
@@ -653,11 +653,12 @@ onMounted(function () { loadAll(); loadCloseReasons() })
           </div>
         </template>
 
-        <!-- 送达存证（PC/PL/SA：律师函/催收单/诉讼/证据下载/存证清单·复用现有 evidence/legal 入口） -->
-        <template v-if="canAct('legal', 'legal.create') || canAct('evidence', 'evidence.create')">
-          <div class="sec-title" style="margin-top:14px">送达存证</div>
-          <button v-if="canAct('legal', 'legal.create')" class="btn df sm" style="width:100%;margin-bottom:6px" @click="openAct('legal', '申请法务文书')">⚖ 申请法务文书</button>
-          <button v-if="canAct('evidence', 'evidence.create')" class="btn df sm" style="width:100%;margin-bottom:6px" @click="openAct('evidence', '发起存证')">🔒 发起存证（录音/送达/材料包）</button>
+        <!-- 法务/存证 -->
+        <div v-if="canAct('follow','case.follow')||canAct('legal','legal.create')||canAct('evidence','evidence.create')" style="margin-bottom:10px">
+          <div class="sec-title" style="margin:6px 0 6px">法务/存证</div>
+          <button v-if="canAct('follow','case.follow')" class="btn sm" style="width:100%;margin-bottom:6px" @click="suggestLegal">建议法务</button>
+          <button v-if="canAct('legal','legal.create')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('legal','申请律师函')">申请律师函</button>
+          <button v-if="canAct('evidence','evidence.create')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('evidence','发起存证')">发起存证</button>
           <!-- 法务文书列表：登记送达入口 -->
           <template v-if="legalDocs.length">
             <div v-for="doc in legalDocs" :key="doc.id" class="note" style="font-size:12px;border:1px solid var(--bd);border-radius:6px;padding:7px 9px;margin-bottom:6px">
@@ -667,7 +668,7 @@ onMounted(function () { loadAll(); loadCloseReasons() })
               </div>
             </div>
           </template>
-        </template>
+        </div>
 
         <!-- CO 法务进度只读（case.legalStage） -->
         <template v-if="d.case?.legalStage">
@@ -675,13 +676,20 @@ onMounted(function () { loadAll(); loadCloseReasons() })
           <div class="alert info" style="margin-top:0;font-size:12px">当前法务阶段：<b :title="d.case.legalStage">{{ legalStageLabel(d.case.legalStage) }}</b>（只读，由协调员主导）。</div>
         </template>
 
-        <!-- 危险操作（作废/坏账 → 结案 dlg） -->
-        <template v-if="canAct('close', 'case.close')">
-          <div class="sec-title" style="color:var(--dg,#F56C6C);margin-top:14px">终态操作（不可撤销）</div>
-          <button class="btn sm dg" style="width:100%" @click="openAct('close', '结案')">结案 / 坏账</button>
-        </template>
+        <!-- 管理 -->
+        <div v-if="canAct('release','case.release')||canAct('return','case.return')" style="margin-bottom:10px">
+          <div class="sec-title" style="margin:6px 0 6px">管理</div>
+          <button v-if="canAct('release','case.release')" class="btn sm" style="width:100%;margin-bottom:6px" @click="lifecycle('释放','/cases/{id}/release')">释放</button>
+          <button v-if="canAct('return','case.return')" class="btn sm" style="width:100%;margin-bottom:6px" @click="lifecycle('退回','/cases/{id}/return')">退回</button>
+        </div>
 
-        <div v-if="!canAct('follow', 'case.follow') && !canAct('legal', 'legal.create') && !canAct('close', 'case.close')" class="note" style="margin:8px 0 0">当前角色暂无可操作权限。</div>
+        <!-- 危险操作（不可撤销） -->
+        <div v-if="canAct('close','case.close')" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--bd)">
+          <div class="sec-title" style="color:var(--dg,#F56C6C);margin:0 0 6px">危险操作（不可撤销）</div>
+          <button class="btn sm dg" style="width:100%" @click="openAct('close','结案')">撤案/坏账</button>
+        </div>
+
+        <div v-if="!canAct('follow','case.follow')&&!canAct('promise','case.promise')&&!canAct('ticket','case.ticket')&&!canAct('paylink','case.paylink')&&!canAct('repay','case.repay.mark')&&!canAct('legal','legal.create')&&!canAct('evidence','evidence.create')&&!canAct('release','case.release')&&!canAct('return','case.return')&&!canAct('close','case.close')" class="note" style="margin:8px 0 0">当前角色暂无可操作权限。</div>
       </div>
     </div>
 

@@ -150,7 +150,7 @@ async function syncPlaybook() {
 
 // ── 手动添加案件 ──
 const manualDlg = ref(false)
-const mForm = ref({ acctNo: '', ownerName: '', phone: '', room: '', dueYuan: 0, periodFrom: '', periodTo: '', idCard: '', addr: '' })
+const mForm = ref({ acctNo: '', ownerName: '', phone: '', dueYuan: 0, periodFrom: '', periodTo: '', idCard: '', addr: '' })
 const mSaving = ref(false)
 const mPhoneErr = ref(''); const mIdCardErr = ref('')
 
@@ -169,7 +169,7 @@ function validatePhone(v: string) { mPhoneErr.value = v && !/^1\d{10}$/.test(v) 
 function validateIdCard(v: string) { mIdCardErr.value = v && !/^\d{17}[\dXx]$/.test(v) ? '身份证号须为 18 位' : '' }
 
 function openManualAdd() {
-  mForm.value = { acctNo: '', ownerName: '', phone: '', room: '', dueYuan: 0, periodFrom: '', periodTo: '', idCard: '', addr: '' }
+  mForm.value = { acctNo: '', ownerName: '', phone: '', dueYuan: 0, periodFrom: '', periodTo: '', idCard: '', addr: '' }
   mPhoneErr.value = ''; mIdCardErr.value = ''
   manualDlg.value = true
 }
@@ -181,7 +181,7 @@ async function submitManual() {
   if (mIdCardErr.value) { ElMessage.warning('身份证号格式不正确'); return }
   if (f.dueYuan <= 0) { ElMessage.warning('应收金额须 > 0'); return }
   const period = f.periodFrom && f.periodTo ? `${f.periodFrom}~${f.periodTo}` : ''
-  const body: any = { acctNo: f.acctNo, ownerName: f.ownerName, phone: f.phone, room: f.room, dueCents: Math.round(f.dueYuan * 100), arrearPeriod: period }
+  const body: any = { acctNo: f.acctNo, ownerName: f.ownerName, phone: f.phone, dueCents: Math.round(f.dueYuan * 100), arrearPeriod: period }
   if (f.idCard || f.addr) body.litigation = { ...(f.idCard ? { idCard: f.idCard } : {}), ...(f.addr ? { addr: f.addr } : {}) }
   mSaving.value = true
   const { error } = await api.POST('/batches/{id}/cases', { params: { path: { id: bid } }, body } as any)
@@ -354,8 +354,9 @@ onMounted(loadAll)
         <el-form-item label="手机号" required :error="mPhoneErr">
           <el-input v-model="mForm.phone" placeholder="11 位手机号" @blur="validatePhone(mForm.phone)" />
         </el-form-item>
-        <el-form-item label="房号"><el-input v-model="mForm.room" placeholder="如 3-201" /></el-form-item>
-        <el-form-item label="应收金额(元)" required><el-input-number v-model="mForm.dueYuan" :min="0" :step="100" style="width:100%" /></el-form-item>
+        <el-form-item label="应收金额(元)" required>
+          <el-input-number v-model="mForm.dueYuan" :min="0" :step="100" :controls="false" style="width:180px" />
+        </el-form-item>
 
         <el-divider content-position="left">欠费期间（自动计算月数）</el-divider>
         <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center">

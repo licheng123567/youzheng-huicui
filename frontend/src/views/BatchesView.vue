@@ -77,7 +77,7 @@ async function setOpenRate(row: any) {
 const impDlg = ref(false)
 const impStep = ref(0) // 0=录入, 1=校验中, 2=结果
 const importProjects = ref<any[]>([])
-const emptyRow = () => ({ acctNo: '', ownerName: '', phone: '', room: '', dueYuan: 0, periodFrom: '', periodTo: '', idCard: '', addr: '' })
+const emptyRow = () => ({ acctNo: '', ownerName: '', phone: '', dueYuan: 0, periodFrom: '', periodTo: '', idCard: '', addr: '' })
 const imp = ref<any>({ projectId: '', commInRate: 0.1, rows: [emptyRow()] })
 const impResult = ref<any>(null)
 const impSaving = ref(false)
@@ -122,12 +122,11 @@ function handleExcelUpload(e: Event) {
           acctNo: String(r[0] ?? '').trim(),
           ownerName: String(r[1] ?? '').trim(),
           phone: String(r[2] ?? '').trim(),
-          room: String(r[3] ?? '').trim(),
-          dueYuan: parseFloat(String(r[4] ?? '0').replace(/[¥,]/g, '')) || 0,
-          periodFrom: String(r[5] ?? '').trim(),
-          periodTo: String(r[6] ?? '').trim(),
-          idCard: String(r[7] ?? '').trim(),
-          addr: String(r[8] ?? '').trim(),
+          dueYuan: parseFloat(String(r[3] ?? '0').replace(/[¥,]/g, '')) || 0,
+          periodFrom: String(r[4] ?? '').trim(),
+          periodTo: String(r[5] ?? '').trim(),
+          idCard: String(r[6] ?? '').trim(),
+          addr: String(r[7] ?? '').trim(),
         }
         // 必填校验
         if (!row.acctNo || !row.ownerName || !row.phone) { errs.push({ row: i + 1, msg: `必填项缺失（户号/姓名/手机）` }); continue }
@@ -169,7 +168,7 @@ async function submitImport() {
     .filter((r: any) => r.acctNo && r.ownerName && r.phone)
     .map((r: any) => {
     const period = r.periodFrom && r.periodTo ? `${r.periodFrom}~${r.periodTo}` : ''
-    const row: any = { acctNo: r.acctNo, ownerName: r.ownerName, phone: r.phone, room: r.room, dueCents: Math.round(r.dueYuan * 100), arrearPeriod: period }
+    const row: any = { acctNo: r.acctNo, ownerName: r.ownerName, phone: r.phone, dueCents: Math.round(r.dueYuan * 100), arrearPeriod: period }
     const idCard = (r.idCard || '').trim(); const addr = (r.addr || '').trim()
     if (idCard || addr) row.litigation = { ...(idCard ? { idCard } : {}), ...(addr ? { addr } : {}) }
     return row
@@ -343,8 +342,7 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
           <el-table-column label="户号" width="100"><template #default="{row}"><el-input v-model="row.acctNo" size="small" placeholder="必填" /></template></el-table-column>
           <el-table-column label="姓名" width="80"><template #default="{row}"><el-input v-model="row.ownerName" size="small" placeholder="必填" /></template></el-table-column>
           <el-table-column label="手机" width="120"><template #default="{row}"><el-input v-model="row.phone" size="small" placeholder="必填" /></template></el-table-column>
-          <el-table-column label="房号" width="90"><template #default="{row}"><el-input v-model="row.room" size="small" /></template></el-table-column>
-          <el-table-column label="应收(元)" width="110"><template #default="{row}"><el-input-number v-model="row.dueYuan" size="small" :min="0" :controls="false" style="width:90px" /></template></el-table-column>
+          <el-table-column label="应收(元)" width="120"><template #default="{row}"><el-input-number v-model="row.dueYuan" size="small" :min="0" :controls="false" style="width:100px" /></template></el-table-column>
           <el-table-column label="欠费起" width="120"><template #default="{row}"><el-date-picker v-model="row.periodFrom" type="month" value-format="YYYY-MM" placeholder="起始月" size="small" style="width:100%" /></template></el-table-column>
           <el-table-column label="欠费止" width="120"><template #default="{row}"><el-date-picker v-model="row.periodTo" type="month" value-format="YYYY-MM" placeholder="截止月" size="small" style="width:100%" /></template></el-table-column>
           <el-table-column label="时长" width="110"><template #default="{row}"><span style="font-size:12px;color:var(--primary)">{{ calcMonths(row.periodFrom, row.periodTo) || '—' }}</span></template></el-table-column>
