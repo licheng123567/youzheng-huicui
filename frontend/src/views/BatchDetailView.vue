@@ -150,8 +150,9 @@ async function syncPlaybook() {
 
 // ── 手动添加案件 ──
 const manualDlg = ref(false)
-const mForm = ref({ acctNo: '', ownerName: '', phone: '', room: '', dueYuan: 0, periodFrom: '', periodTo: '' })
+const mForm = ref({ acctNo: '', ownerName: '', phone: '', room: '', dueYuan: 0, periodFrom: '', periodTo: '', idCard: '', addr: '' })
 const mSaving = ref(false)
+const mPhoneErr = ref(''); const mIdCardErr = ref('')
 
 const arrearMonths = computed(() => {
   if (!mForm.value.periodFrom || !mForm.value.periodTo) return null
@@ -160,29 +161,33 @@ const arrearMonths = computed(() => {
   if (isNaN(from.getTime()) || isNaN(to.getTime()) || from >= to) return null
   const diffDays = Math.round((to.getTime() - from.getTime()) / 86400000)
   const months = Math.floor(diffDays / 30)
-  return months > 0 ? `${months}个月` : null
+  const remDays = diffDays % 30
+  return months > 0 ? (remDays > 0 ? `${months}个月${remDays}天` : `${months}个月`) : `${diffDays}天`
 })
 
+function validatePhone(v: string) { mPhoneErr.value = v && !/^1\d{10}$/.test(v) ? '手机号须为 11 位数字' : '' }
+function validateIdCard(v: string) { mIdCardErr.value = v && !/^\d{17}[\dXx]$/.test(v) ? '身份证号须为 18 位' : '' }
+
 function openManualAdd() {
-  mForm.value = { acctNo: '', ownerName: '', phone: '', room: '', dueYuan: 0, periodFrom: '', periodTo: '' }
+  mForm.value = { acctNo: '', ownerName: '', phone: '', room: '', dueYuan: 0, periodFrom: '', periodTo: '', idCard: '', addr: '' }
+  mPhoneErr.value = ''; mIdCardErr.value = ''
   manualDlg.value = true
 }
 
 async function submitManual() {
   const f = mForm.value
   if (!f.acctNo || !f.ownerName || !f.phone) { ElMessage.warning('户号/姓名/手机为必填'); return }
+  if (mPhoneErr.value) { ElMessage.warning('手机号格式不正确'); return }
+  if (mIdCardErr.value) { ElMessage.warning('身份证号格式不正确'); return }
   if (f.dueYuan <= 0) { ElMessage.warning('应收金额须 > 0'); return }
   const period = f.periodFrom && f.periodTo ? `${f.periodFrom}~${f.periodTo}` : ''
-  const body = {
-    acctNo: f.acctNo, ownerName: f.ownerName, phone: f.phone, room: f.room,
-    dueCents: Math.round(f.dueYuan * 100), arrearPeriod: period,
-  }
+  const body: any = { acctNo: f.acctNo, ownerName: f.ownerName, phone: f.phone, room: f.room, dueCents: Math.round(f.dueYuan * 100), arrearPeriod: period }
+  if (f.idCard || f.addr) body.litigation = { ...(f.idCard ? { idCard: f.idCard } : {}), ...(f.addr ? { addr: f.addr } : {}) }
   mSaving.value = true
   const { error } = await api.POST('/batches/{id}/cases', { params: { path: { id: bid } }, body } as any)
   mSaving.value = false
   if (error) { ElMessage.error('添加失败：' + ((error as any)?.message ?? '')); return }
   ElMessage.success('已添加案件'); manualDlg.value = false
-  // 重载案件列表
   cases.value = ((await api.GET('/cases', { params: { query: { batchId: bid, page: 1, size: 100 } } as any })).data as any)?.items ?? []
 }
 
@@ -342,13 +347,16 @@ onMounted(loadAll)
     <CoordinatorPicker v-model="coordDlg" :selected="b.coordinators ?? []" title="维护批次协调员（PUT /batches/{id}/coordinators）" @submit="saveCoordinators" />
 
     <!-- 手动添加案件对话 -->
-    <DsDrawer v-model="manualDlg" title="手动添加案件" :width="500">
+    <DsDrawer v-model="manualDlg" title="手动添加案件" :width="520">
       <el-form label-width="90px">
         <el-form-item label="户号" required><el-input v-model="mForm.acctNo" placeholder="如 3-201" /></el-form-item>
         <el-form-item label="业主姓名" required><el-input v-model="mForm.ownerName" placeholder="如 张三" /></el-form-item>
-        <el-form-item label="手机号" required><el-input v-model="mForm.phone" placeholder="如 13800000001" /></el-form-item>
+        <el-form-item label="手机号" required :error="mPhoneErr">
+          <el-input v-model="mForm.phone" placeholder="11 位手机号" @blur="validatePhone(mForm.phone)" />
+        </el-form-item>
         <el-form-item label="房号"><el-input v-model="mForm.room" placeholder="如 3-201" /></el-form-item>
         <el-form-item label="应收金额(元)" required><el-input-number v-model="mForm.dueYuan" :min="0" :step="100" style="width:100%" /></el-form-item>
+
         <el-divider content-position="left">欠费期间（自动计算月数）</el-divider>
         <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center">
           <el-date-picker v-model="mForm.periodFrom" type="month" placeholder="起始月份" value-format="YYYY-MM" style="width:100%" />
@@ -358,6 +366,12 @@ onMounted(loadAll)
         <div v-if="arrearMonths" style="margin-top:8px;color:var(--primary);font-size:14px">
           欠费时长：<b>{{ arrearMonths }}</b>
         </div>
+
+        <el-divider content-position="left">诉讼要素（选填·可后补）</el-divider>
+        <el-form-item label="身份证号" :error="mIdCardErr">
+          <el-input v-model="mForm.idCard" placeholder="18 位身份证号" @blur="validateIdCard(mForm.idCard)" />
+        </el-form-item>
+        <el-form-item label="通讯地址"><el-input v-model="mForm.addr" placeholder="如 成都市武侯区XX路XX号" /></el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="manualDlg = false">取消</el-button>

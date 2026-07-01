@@ -7,6 +7,7 @@ import { useAuth } from '../stores/auth'
 import { useRoleFields } from '../composables/useRoleFields'
 import { caseStatusLabel } from '../constants/enums'
 import DsDrawer from '../components/DsDrawer.vue'
+import * as XLSX from 'xlsx'
 
 // GET /batches → BatchView(平台双线/物业只收佣/服务商只付佣)。SA 派单(M3)；物业可导入批次/作废(批次2)。
 const auth = useAuth()
@@ -93,9 +94,68 @@ function calcMonths(from: string, to: string): string {
   return remDays > 0 ? `${months}个月${remDays}天` : `${months}个月`
 }
 
+// ── Excel 导入解析 + 校验 ──
+const excelFile = ref<File | null>(null)
+const excelErrors = ref<{ row: number; msg: string }[]>([])
+
+function handleExcelUpload(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  excelFile.value = file
+  excelErrors.value = []
+
+  const reader = new FileReader()
+  reader.onload = (ev) => {
+    try {
+      const wb = XLSX.read(ev.target?.result, { type: 'binary' })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const data = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1 })
+      if (data.length < 2) { excelErrors.value.push({ row: 0, msg: 'Excel 至少需要表头+1行数据' }); return }
+
+      // 第一行为表头，从第二行开始解析
+      const rows: any[] = []; const errs: { row: number; msg: string }[] = []
+      for (let i = 1; i < data.length; i++) {
+        const r = data[i]
+        if (!r || r.every((c: any) => !c)) continue // 跳过空行
+        const row: any = {
+          acctNo: String(r[0] ?? '').trim(),
+          ownerName: String(r[1] ?? '').trim(),
+          phone: String(r[2] ?? '').trim(),
+          room: String(r[3] ?? '').trim(),
+          dueYuan: parseFloat(String(r[4] ?? '0').replace(/[¥,]/g, '')) || 0,
+          periodFrom: String(r[5] ?? '').trim(),
+          periodTo: String(r[6] ?? '').trim(),
+          idCard: String(r[7] ?? '').trim(),
+          addr: String(r[8] ?? '').trim(),
+        }
+        // 必填校验
+        if (!row.acctNo || !row.ownerName || !row.phone) { errs.push({ row: i + 1, msg: `必填项缺失（户号/姓名/手机）` }); continue }
+        // 手机校验
+        if (!/^1\d{10}$/.test(row.phone)) { errs.push({ row: i + 1, msg: `手机号 "${row.phone}" 须为 11 位` }); continue }
+        // 身份证校验(选填但有值则校验)
+        if (row.idCard && !/^\d{17}[\dXx]$/.test(row.idCard)) { errs.push({ row: i + 1, msg: `身份证 "${row.idCard}" 须为 18 位` }); continue }
+        rows.push(row)
+      }
+
+      excelErrors.value = errs
+      if (rows.length) {
+        // 替换现有行（保留已有手动录入吗？直接追加）
+        const existing = imp.value.rows.filter((r: any) => r.acctNo || r.ownerName || r.phone)
+        imp.value.rows = [...existing, ...rows]
+        ElMessage.success(`Excel 解析完成：成功 ${rows.length} 条${errs.length ? '，跳过 ' + errs.length + ' 条（见下方）' : ''}`)
+      }
+    } catch {
+      excelErrors.value = [{ row: 0, msg: 'Excel 文件解析失败，请检查格式（第一行为表头：户号/姓名/手机/房号/应收/欠费起/欠费止/身份证/地址）' }]
+    }
+  }
+  reader.readAsBinaryString(file)
+}
+
 async function openImport() {
   imp.value = { projectId: '', commInRate: 0.1, rows: [emptyRow()] }
   impResult.value = null; impStep.value = 0; impSaving.value = false
+  excelFile.value = null; excelErrors.value = []
   // 加载项目列表
   const { data } = await api.GET('/projects', { params: { query: { page: 1, size: 200 } } as any })
   importProjects.value = (data as any)?.items ?? []
@@ -259,7 +319,24 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
 
         <div class="alert info" style="margin-bottom:10px">
           必填：户号 / 业主姓名 / 手机 / 应收金额。选填：房号 / 欠费期间 / 身份证号 / 地址（诉讼要素可后补）。
-          欠费期间选起始和截止月份，自动计算欠费时长。
+          支持上传 Excel 批量导入（第一行为表头：户号 / 姓名 / 手机 / 房号 / 应收 / 欠费起 / 欠费止 / 身份证 / 地址）。
+        </div>
+
+        <!-- Excel 上传区 -->
+        <div style="margin-bottom:12px;display:flex;align-items:center;gap:12px">
+          <input type="file" accept=".xlsx,.xls" style="display:none" id="excelInput" @change="handleExcelUpload" />
+          <label for="excelInput" style="cursor:pointer;border:1px dashed var(--bd2);border-radius:6px;padding:8px 16px;font-size:13px;color:var(--primary);display:flex;align-items:center;gap:6px">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+            上传 Excel 批量导入
+          </label>
+          <span v-if="excelFile" style="font-size:12px;color:var(--sec)">{{ excelFile.name }}</span>
+        </div>
+
+        <!-- Excel 校验错误 -->
+        <div v-if="excelErrors.length" class="alert warn" style="margin-bottom:10px">
+          校验结果：跳过 {{ excelErrors.length }} 行（手机号/身份证/必填项校验未通过）
+          <div style="font-size:12px;margin-top:4px" v-for="e in excelErrors.slice(0, 5)" :key="e.row">第 {{ e.row }} 行：{{ e.msg }}</div>
+          <div v-if="excelErrors.length > 5" style="font-size:12px;color:var(--sec)">…还有 {{ excelErrors.length - 5 }} 条错误</div>
         </div>
 
         <el-table :data="imp.rows" border size="small">
