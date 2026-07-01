@@ -132,7 +132,7 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
       <div class="t"><span class="bar"></span>批次（催收单）</div>
       <div class="ops">
         <span class="note" style="margin:0">批次列表 · 共 {{ total }}</span>
-        <button v-if="auth.has('batch.import')" class="btn sm" @click="openImport">+ 导入批次</button>
+        <button v-if="auth.has('batch.import') || auth.has('proj.edit')" class="btn sm" @click="openImport">+ 导入批次</button>
       </div>
     </div>
 

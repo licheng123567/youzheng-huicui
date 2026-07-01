@@ -19,9 +19,11 @@ const b = ref<any>(null); const cases = ref<any[]>([]); const tiers = ref<any[]>
 const tiersSource = ref<string | null>(null) // INHERITED | CUSTOM | null(无权限)
 const tiersPermDenied = ref(false)
 const yuan = (c?: number | null) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
+const pct = (r?: number) => r != null ? (r * 100).toFixed(1) + '%' : '—'
 const STATUS_TAG: Record<string, string> = { SETTLED: 'suc', IN_PROGRESS: 'pri', PROMISED: 'war', PENDING_DISPATCH: 'inf', PROVIDER_SEA: 'inf', WITHDRAWN: 'inf', BAD_DEBT: 'dan', VOIDED: 'dan' }
 const statusTag = (s?: string) => STATUS_TAG[s ?? ''] ?? 'inf'
 const sourceLabel = (s: string | null) => s === 'CUSTOM' ? '批次自定义' : s === 'INHERITED' ? '继承项目默认' : ''
+const batchTab = ref<'cases' | 'props'>('cases')
 
 async function loadBatch() {
   const { data, error } = await api.GET('/batches/{id}', { params: { path: { id: bid } } })
@@ -137,86 +139,106 @@ onMounted(loadAll)
 
 <template>
   <div v-if="b" class="batch-detail">
-    <!-- 概览卡 -->
-    <div class="card">
+    <!-- 顶部标题 + 返回 -->
+    <div class="card" style="margin-bottom:12px">
       <div class="card-h">
-        <div class="t"><span class="bar"></span>批次详情：{{ b.code }}<span class="tag inf" style="font-weight:400">视角 {{ b.viewRole }}</span></div>
+        <div class="t"><span class="bar"></span>{{ b.code }} — 批次明细</div>
         <div class="ops">
-          <button class="btn df sm" @click="router.back()">← 返回批次</button>
+          <button class="btn df sm" @click="router.push('/cases')">← 返回案件管理</button>
         </div>
       </div>
-      <div class="desc">
-        <div class="r"><div class="k">状态</div><div class="v" :title="b.status">{{ caseStatusLabel(b.status) }}</div></div>
-        <!-- 资金双线：收佣/付佣各自整项渲染，视角无对应字段时整项不出(H-03) -->
-        <div v-if="showCommInRate" class="r"><div class="k">收佣比例</div><div class="v num">{{ ratePct(b.commInRate) }}</div></div>
-        <div v-if="showPayOutRate" class="r"><div class="k">付佣比例</div><div class="v num">{{ ratePct(b.payOutRate) }}</div></div>
+
+      <!-- KPI 卡片 -->
+      <div class="kpis" style="grid-template-columns:repeat(9,1fr);margin-bottom:0">
+        <div class="kpi"><div class="n">{{ b.totalCases ?? cases.length }}</div><div class="l">案件总数</div></div>
+        <div class="kpi"><div class="n">{{ cases.filter((c:any) => c.status === 'IN_PROGRESS').length }}</div><div class="l">在催</div></div>
+        <div class="kpi"><div class="n">{{ cases.filter((c:any) => c.status === 'SETTLED').length }}</div><div class="l">已结清</div></div>
+        <div class="kpi"><div class="n">{{ cases.filter((c:any) => c.status === 'WITHDRAWN' || c.status === 'BAD_DEBT' || c.status === 'VOIDED').length }}</div><div class="l">撤案/坏账</div></div>
+        <div class="kpi"><div class="n">{{ pct(b.repayRate) }}</div><div class="l">回款率</div></div>
+        <div class="kpi"><div class="n">{{ yuan(b.dueTotalCents) }}</div><div class="l">应收总额</div></div>
+        <div class="kpi"><div class="n">{{ yuan(b.repaidTotalCents) }}</div><div class="l">已收总额</div></div>
+        <div class="kpi"><div class="n">{{ b.legalCount ?? '—' }}</div><div class="l">法务数</div></div>
+        <div class="kpi"><div class="n">{{ b.progress ?? '—' }}</div><div class="l">催收进度</div></div>
+      </div>
+
+      <!-- 佣金比例标签 -->
+      <div style="margin:10px 0 4px">
+        <span v-if="showCommInRate" class="tag war" style="margin-right:8px">收佣比例 {{ ratePct(b.commInRate) }}</span>
+        <span v-if="showPayOutRate" class="tag suc">付佣比例 {{ ratePct(b.payOutRate) }}</span>
+      </div>
+
+      <!-- Tab 切换 -->
+      <div class="segctrl" style="margin-top:12px">
+        <span :class="{ on: batchTab === 'cases' }" @click="batchTab = 'cases'">案件明细</span>
+        <span :class="{ on: batchTab === 'props' }" @click="batchTab = 'props'">批次属性</span>
       </div>
     </div>
 
-    <!-- BC-01 批次协调员 -->
-    <div class="card">
-      <div class="sec-title" style="margin-top:0">
-        批次协调员（PC↔批次 多对多 BR-M2-13）
-        <button v-if="auth.has('batch.import')" class="btn txt" @click="openCoord">维护协调员</button>
-      </div>
-      <div v-if="b.coordinators && b.coordinators.length" class="coord-tags">
-        <span v-for="c in b.coordinators" :key="c.id" class="tag pri">{{ c.name || c.id }}</span>
-      </div>
-      <div v-else class="note">尚未关联协调员。</div>
-    </div>
-
-    <!-- BC-02 减免档位 + 覆盖编辑/恢复继承/同步 -->
-    <div class="card">
-      <div class="sec-title" style="margin-top:0">
-        减免档位（GET /batches/{id}/reduce-tiers）
-        <span v-if="tiersSource" class="tag inf" style="font-weight:400">{{ sourceLabel(tiersSource) }}</span>
-        <button v-if="!tiersPermDenied && auth.has('reduce.policy.edit')" class="btn txt" @click="openReduce">自定义覆盖</button>
-        <button v-if="!tiersPermDenied && auth.has('reduce.policy.edit') && tiersSource==='CUSTOM'" class="btn txt" @click="clearReduce">清除自定义·恢复继承</button>
-      </div>
-      <!-- BR-M2-18b 项目级减免已更新·该 CUSTOM 批次有差异 -->
-      <div v-if="b.reduceDrift" class="alert warn">
-        <span>项目级减免已更新·当前批次自定义有差异</span>
-        <button v-if="auth.has('reduce.policy.edit')" class="btn sm" style="margin-left:auto" @click="syncReduce">一键同步为项目最新</button>
-      </div>
-      <div v-if="tiersPermDenied" class="alert warn">无减免策略查看权限（需 reduce.policy.edit）</div>
-      <table v-else>
-        <thead><tr><th>折扣</th><th>封顶</th><th>决策</th><th>免违约金</th></tr></thead>
-        <tbody>
-          <tr v-for="(t,ti) in tiers" :key="ti">
-            <td>{{ t.discount }}</td>
-            <td class="num">{{ yuan(t.capCents) }}</td>
-            <td :title="t.decide">{{ reduceDecideLabel(t.decide) }}</td>
-            <td>{{ t.waivePenalty?'是':'否' }}</td>
-          </tr>
-          <tr v-if="!tiers.length"><td colspan="4" class="empty-cell">暂无减免档位</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- BC-03 批次作战手册 -->
-    <div class="card">
-      <div class="sec-title" style="margin-top:0">
-        批次作战手册（GET /batches/{id}/playbook · BR-M5-05a/b）
-        <span v-if="playbookSource" class="tag inf" style="font-weight:400">{{ sourceLabel(playbookSource) }}</span>
+    <!-- 批次属性 Tab -->
+    <template v-if="batchTab === 'props'">
+      <!-- 作战手册 -->
+      <div class="card">
+        <div class="sec-title">作战手册（批次级） <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">继承项目 或 自定义覆盖</span></div>
+        <span v-if="playbookSource" class="tag inf" style="font-weight:400;margin-right:8px">{{ sourceLabel(playbookSource) }}</span>
         <button v-if="auth.has('playbook.adopt')" class="btn txt" @click="openPlaybook">采纳/编辑</button>
-        <button v-if="auth.has('playbook.adopt') && playbookSource==='CUSTOM'" class="btn txt" @click="restorePlaybook">恢复继承项目</button>
+        <button v-if="auth.has('playbook.adopt') && playbookSource==='CUSTOM'" class="btn txt" @click="restorePlaybook">恢复继承</button>
+        <div v-if="b.playbookDrift" class="alert warn" style="margin-top:8px">
+          项目级作战手册已更新，当前批次自定义有差异
+          <button v-if="auth.has('playbook.adopt')" class="btn sm" style="margin-left:auto" @click="syncPlaybook">一键同步为项目最新</button>
+        </div>
+        <div v-if="playbook" class="desc" style="margin-top:8px">
+          <div class="r"><div class="k">版本</div><div class="v">{{ playbook.version ?? '—' }}</div></div>
+          <div class="r"><div class="k">内容</div><div class="v"><div class="pb-content">{{ playbook.content ?? '（尚无手册）' }}</div></div></div>
+        </div>
+        <div v-else class="note" style="margin-top:8px">尚无作战手册。</div>
       </div>
-      <!-- BR-M2-18b 项目级手册已更新·该 CUSTOM 批次有差异 -->
-      <div v-if="b.playbookDrift" class="alert warn">
-        <span>项目级作战手册已更新·当前批次自定义有差异</span>
-        <button v-if="auth.has('playbook.adopt')" class="btn sm" style="margin-left:auto" @click="syncPlaybook">一键同步为项目最新</button>
-      </div>
-      <div v-if="playbook" class="desc">
-        <div class="r"><div class="k">版本</div><div class="v">{{ playbook.version ?? '—' }}</div></div>
-        <div class="r"><div class="k">采纳模式</div><div class="v">{{ playbook.adoptMode ?? '—' }}</div></div>
-        <div class="r"><div class="k">内容</div><div class="v"><div class="pb-content">{{ playbook.content ?? '（尚无手册）' }}</div></div></div>
-      </div>
-      <div v-else class="note">尚无作战手册。</div>
-    </div>
 
-    <!-- 案件清单 -->
-    <div class="card">
-      <div class="sec-title" style="margin-top:0">案件清单（GET /cases?batchId · 共 {{ cases.length }}）</div>
+      <!-- 减免政策 -->
+      <div class="card">
+        <div class="sec-title">减免政策（批次级） <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">继承项目 或 自定义覆盖</span></div>
+        <span v-if="tiersSource" class="tag inf" style="font-weight:400;margin-right:8px">{{ sourceLabel(tiersSource) }}</span>
+        <button v-if="!tiersPermDenied && auth.has('reduce.policy.edit')" class="btn txt" @click="openReduce">自定义覆盖</button>
+        <button v-if="!tiersPermDenied && auth.has('reduce.policy.edit') && tiersSource==='CUSTOM'" class="btn txt" @click="clearReduce">恢复继承</button>
+        <div v-if="b.reduceDrift" class="alert warn" style="margin-top:8px">
+          项目级减免已更新，当前批次自定义有差异
+          <button v-if="auth.has('reduce.policy.edit')" class="btn sm" style="margin-left:auto" @click="syncReduce">一键同步为项目最新</button>
+        </div>
+        <div v-if="tiersPermDenied" class="alert warn" style="margin-top:8px">无减免策略查看权限</div>
+        <table v-else style="margin-top:8px">
+          <thead><tr><th>折扣</th><th>封顶</th><th>决定权</th><th style="text-align:center">免违约金</th></tr></thead>
+          <tbody>
+            <tr v-for="(t,ti) in tiers" :key="ti">
+              <td>{{ t.discount }}</td>
+              <td class="num">{{ yuan(t.capCents) }}</td>
+              <td :title="t.decide">{{ reduceDecideLabel(t.decide) }}</td>
+              <td style="text-align:center">{{ t.waivePenalty ? '✓' : '—' }}</td>
+            </tr>
+            <tr v-if="!tiers.length"><td colspan="4" class="empty-cell">暂无减免档位</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 协调员 -->
+      <div class="card">
+        <div class="sec-title">
+          协调员（本批次）
+          <button v-if="auth.has('batch.import') || auth.has('proj.edit')" class="btn sm" style="margin-left:auto" @click="openCoord">+ 维护协调员</button>
+        </div>
+        <div v-if="b.coordinators && b.coordinators.length" class="coord-tags">
+          <span v-for="c in b.coordinators" :key="c.id" class="tag pri" style="margin-right:6px;display:inline-flex;align-items:center;gap:4px">{{ c.name || c.id }}</span>
+        </div>
+        <div v-else class="note">暂未关联协调员</div>
+      </div>
+    </template>
+
+    <!-- 案件明细 Tab -->
+    <div v-if="batchTab === 'cases'" class="card">
+      <div class="card-h">
+        <div class="t"><span class="bar"></span>案件明细 — {{ b.code }}</div>
+        <div class="ops">
+          <span class="note" style="margin:0">{{ cases.length }} 条</span>
+        </div>
+      </div>
       <table>
         <thead><tr><th>业主</th><th>房号</th><th style="width:100px">应收</th><th>欠费周期</th><th>联系方式</th><th style="width:90px">状态</th><th style="width:80px">池</th></tr></thead>
         <tbody>
@@ -232,7 +254,6 @@ onMounted(loadAll)
           <tr v-if="!cases.length"><td colspan="7" class="empty-cell">暂无案件</td></tr>
         </tbody>
       </table>
-      <div class="alert info">点击案件行进作业台。资金双线：物业视角无付佣比例、服务商视角无收佣比例（整列不渲染）。</div>
     </div>
 
     <!-- BC-01 协调员维护对话框(复用 CoordinatorPicker) -->

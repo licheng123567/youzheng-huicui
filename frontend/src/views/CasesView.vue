@@ -65,7 +65,7 @@ onMounted(load)
       <div class="t"><span class="bar"></span>案件管理 — 选择批次查看案件明细</div>
       <div class="ops">
         <span class="note" style="margin:0">共 {{ total }} 个批次</span>
-        <button v-if="auth.has('batch.import')" class="btn sm" @click="openImport">+ 导入批次</button>
+        <button v-if="auth.has('batch.import') || auth.has('proj.edit')" class="btn sm" @click="openImport">+ 导入批次</button>
       </div>
     </div>
 
