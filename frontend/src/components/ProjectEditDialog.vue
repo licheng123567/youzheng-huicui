@@ -144,17 +144,18 @@ watch(() => props.modelValue, (open) => {
 
 function close() { emit('update:modelValue', false) }
 
-// ── 合同文件上传 ──
-function onContractUpload(resp: any, file: any) {
-  const url = resp?.url ?? resp?.fileUrl ?? resp?.data?.url ?? ''
-  if (url) {
-    form.value.contractFiles.push({ name: file?.name ?? url, url })
-    ElMessage.success('合同附件已上传')
-  } else {
-    form.value.contractFiles.push({ name: file?.name ?? '文件', url: '' })
+// ── 合同文件（纯前端选取，不上传；后端补齐文件服务后再恢复 el-upload）──
+const fileInput = ref<HTMLInputElement | null>(null)
+function onContractFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = input.files
+  if (!files) return
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i]
+    form.value.contractFiles.push({ name: f.name, url: '' })
   }
+  input.value = '' // 允许重复选同名文件
 }
-function onContractUploadError() { ElMessage.error('上传失败') }
 function removeContractFile(i: number) { form.value.contractFiles.splice(i, 1) }
 
 // ── 减免阶梯行 ──
@@ -350,13 +351,12 @@ async function syncPlaybook(projectId: string) {
           </el-select>
         </el-form-item>
         <el-form-item label="合同附件">
-          <el-upload action="/api/uploads" :show-file-list="false" :on-success="onContractUpload" :on-error="onContractUploadError">
-            <el-button size="small">+ 上传合同附件</el-button>
-          </el-upload>
+          <input ref="fileInput" type="file" multiple style="display:none" @change="onContractFileChange" />
+          <el-button size="small" @click="fileInput?.click()">+ 选取合同文件</el-button>
           <div v-if="form.contractFiles.length" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px">
             <el-tag v-for="(f, i) in form.contractFiles" :key="i" closable @close="removeContractFile(i)" type="info" size="small">{{ f.name }}</el-tag>
           </div>
-          <span v-else style="color:#909399;font-size:12px">未上传</span>
+          <span v-else style="color:#909399;font-size:12px">未选择</span>
         </el-form-item>
       </div>
 
