@@ -319,8 +319,8 @@ async function syncPlaybook(projectId: string) {
         <el-form-item label="违约金"><el-input v-model="form.penalty" placeholder="如：欠费按日 0.05%" /></el-form-item>
       </div>
 
-      <!-- 收佣比例（独立一行） -->
-      <el-divider content-position="left" style="margin-top:12px">平台佣金</el-divider>
+      <!-- 收佣比例（独立一行，编号承接③收费标准） -->
+      <el-divider content-position="left" style="margin-top:12px">③-2 平台佣金（收佣比例）</el-divider>
       <el-form-item label="收佣比例(%) *" prop="commInPct">
         <el-input-number v-model="form.commInPct" :min="0" :max="100" :step="1" :precision="2" style="width:200px" />
         <span style="margin-left:12px;color:#909399;font-size:13px">
