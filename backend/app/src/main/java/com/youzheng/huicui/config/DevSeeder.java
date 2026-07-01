@@ -1181,7 +1181,7 @@ public class DevSeeder implements CommandLineRunner {
     // ── 丰富演示数据（多批次/多案件/多状态，方便前端全流程测试）──
     private void seedRichDemoData(Long cuihuOrg, Long yangOrg, Long providerOrg, Long co1, Long co2, Long baseProj, String hash) {
         if (baseProj == null) return;
-        Integer rich = jdbc.queryForObject("SELECT count(*) FROM batch WHERE no = 'B-YG-2026-01'", Integer.class);
+        Integer rich = jdbc.queryForObject("SELECT count(*) FROM batch WHERE no = 'B-CH2-2026-02'", Integer.class);
         if (rich != null && rich > 0) return;
 
         Long ygProj = jdbc.query("SELECT id FROM project WHERE name = '阳光花园' AND org_id = ?",
@@ -1193,11 +1193,11 @@ public class DevSeeder implements CommandLineRunner {
             ensureFullCase(ygB1, ygProj, "阳光花园", "YG-003", "孙志强", "5-301", 1280000L, "PROMISED", "2023-03", "2025-06", "13900001003", "");
             ensureFullCase(ygB1, ygProj, "阳光花园", "YG-004", "李秀英", "3-205", 240000L, "SETTLED", "2024-11", "2025-03", "13900001004", "");
             ensureFullCase(ygB1, ygProj, "阳光花园", "YG-005", "周文博", "7-802", 780000L, "IN_PROGRESS", "2024-05", "2025-06", "13900001005", "1101**********0032");
-            Long ygB2 = ensureBatch(ygProj, "B-YG-2026-02", "0.3200", "0.2000", null, null, "PENDING_DISPATCH");
+            Long ygB2 = ensureBatch(ygProj, "B-YG-2026-02", "0.3200", "0.2000", null, null, "PENDING");
             ensureFullCase(ygB2, ygProj, "阳光花园", "YG-006", "吴桂香", "2-101", 360000L, "PENDING_DISPATCH", "2024-08", "2025-05", "13900001006", "");
             ensureFullCase(ygB2, ygProj, "阳光花园", "YG-007", "郑海龙", "9-501", 920000L, "PENDING_DISPATCH", "2023-09", "2025-06", "13900001007", "5101**********0056");
             ensureFullCase(ygB2, ygProj, "阳光花园", "YG-008", "冯丽华", "1-403", 180000L, "PENDING_DISPATCH", "2025-01", "2025-06", "13900001008", "");
-            Long ygB3 = ensureBatch(ygProj, "B-YG-2026-03", "0.3200", "0.2000", providerOrg, null, "SETTLED");
+            Long ygB3 = ensureBatch(ygProj, "B-YG-2026-03", "0.3200", "0.2000", providerOrg, null, "CLOSED");
             ensureFullCase(ygB3, ygProj, "阳光花园", "YG-009", "陈大伟", "4-602", 420000L, "SETTLED", "2024-04", "2024-12", "13900001009", "");
             ensureFullCase(ygB3, ygProj, "阳光花园", "YG-010", "褚晓芳", "6-303", 650000L, "SETTLED", "2024-02", "2025-01", "13900001010", "5101**********0078");
         }
@@ -1227,7 +1227,7 @@ public class DevSeeder implements CommandLineRunner {
             ensureFullCase(ch2B1, ch2Proj, "翠湖二期", "CH2-003", "许海峰", "15-501", 1050000L, "IN_PROGRESS", "2023-11", "2025-06", "13900003003", "1101**********0067");
             ensureFullCase(ch2B1, ch2Proj, "翠湖二期", "CH2-004", "林小燕", "7-202", 290000L, "SETTLED", "2024-09", "2025-02", "13900003004", "");
             ensureFullCase(ch2B1, ch2Proj, "翠湖二期", "CH2-005", "唐国强", "9-702", 630000L, "PROMISED", "2024-05", "2025-06", "13900003005", "");
-            Long ch2B2 = ensureBatch(ch2Proj, "B-CH2-2026-02", "0.2800", "0.1800", null, null, "PENDING_DISPATCH");
+            Long ch2B2 = ensureBatch(ch2Proj, "B-CH2-2026-02", "0.2800", "0.1800", null, null, "PENDING");
             ensureFullCase(ch2B2, ch2Proj, "翠湖二期", "CH2-006", "沈德明", "3-401", 510000L, "PENDING_DISPATCH", "2024-08", "2025-05", "13900003006", "5101**********0089");
             ensureFullCase(ch2B2, ch2Proj, "翠湖二期", "CH2-007", "曹秀兰", "11-102", 340000L, "PENDING_DISPATCH", "2025-01", "2025-06", "13900003007", "");
         }
