@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
@@ -24,6 +24,20 @@ const STATUS_TAG: Record<string, string> = { SETTLED: 'suc', IN_PROGRESS: 'pri',
 const statusTag = (s?: string) => STATUS_TAG[s ?? ''] ?? 'inf'
 const sourceLabel = (s: string | null) => s === 'CUSTOM' ? '批次自定义' : s === 'INHERITED' ? '继承项目默认' : ''
 const batchTab = ref<'cases' | 'props'>('cases')
+
+// 案件筛选（案件明细 tab）
+const caseFilter = ref({ q: '', status: '', amtMin: null as number | null, amtMax: null as number | null, owner: '' })
+function resetCaseFilter() { caseFilter.value = { q: '', status: '', amtMin: null, amtMax: null, owner: '' } }
+const filteredCases = computed(() => {
+  let list = cases.value
+  const f = caseFilter.value
+  if (f.q) { const q = f.q.toLowerCase(); list = list.filter((c: any) => (c.ownerName || '').includes(q) || (c.room || '').includes(q) || (c.phone || '').includes(q)) }
+  if (f.status) list = list.filter((c: any) => c.status === f.status)
+  if (f.amtMin != null) list = list.filter((c: any) => (c.dueCents || 0) >= f.amtMin! * 100)
+  if (f.amtMax != null) list = list.filter((c: any) => (c.dueCents || 0) <= f.amtMax! * 100)
+  if (f.owner) list = list.filter((c: any) => (c.collectorName || '').includes(f.owner))
+  return list
+})
 
 async function loadBatch() {
   const { data, error } = await api.GET('/batches/{id}', { params: { path: { id: bid } } })
@@ -178,51 +192,65 @@ onMounted(loadAll)
     <template v-if="batchTab === 'props'">
       <!-- 作战手册 -->
       <div class="card">
-        <div class="sec-title">作战手册（批次级） <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">继承项目 或 自定义覆盖</span></div>
-        <span v-if="playbookSource" class="tag inf" style="font-weight:400;margin-right:8px">{{ sourceLabel(playbookSource) }}</span>
-        <button v-if="auth.has('playbook.adopt')" class="btn txt" @click="openPlaybook">采纳/编辑</button>
-        <button v-if="auth.has('playbook.adopt') && playbookSource==='CUSTOM'" class="btn txt" @click="restorePlaybook">恢复继承</button>
-        <div v-if="b.playbookDrift" class="alert warn" style="margin-top:8px">
-          项目级作战手册已更新，当前批次自定义有差异
-          <button v-if="auth.has('playbook.adopt')" class="btn sm" style="margin-left:auto" @click="syncPlaybook">一键同步为项目最新</button>
-        </div>
-        <div v-if="playbook" class="desc" style="margin-top:8px">
-          <div class="r"><div class="k">版本</div><div class="v">{{ playbook.version ?? '—' }}</div></div>
-          <div class="r"><div class="k">内容</div><div class="v"><div class="pb-content">{{ playbook.content ?? '（尚无手册）' }}</div></div></div>
-        </div>
-        <div v-else class="note" style="margin-top:8px">尚无作战手册。</div>
+        <div class="sec-title">作战手册（批次级） <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">继承项目 或 自定义覆盖（手册随批次走）</span></div>
+        <template v-if="auth.has('playbook.adopt')">
+          <div style="display:flex;gap:16px;margin-bottom:8px;font-size:13px">
+            <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" value="inherit" :checked="playbookSource !== 'CUSTOM'" @change="playbookSource === 'CUSTOM' && restorePlaybook()"> 继承项目</label>
+            <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" value="custom" :checked="playbookSource === 'CUSTOM'" @change="playbookSource !== 'CUSTOM' && openPlaybook()"> 自定义覆盖</label>
+          </div>
+          <template v-if="playbookSource === 'CUSTOM' && playbook">
+            <div class="pb-content" style="margin-bottom:8px;white-space:pre-wrap;max-height:160px;overflow:auto;background:#f9fafb;border:1px solid var(--bd);padding:10px;border-radius:4px;font-size:13px">{{ playbook.content || '（尚无内容）' }}</div>
+            <button class="btn txt" @click="openPlaybook">编辑手册</button>
+            <div v-if="b.playbookDrift" class="alert warn" style="margin-top:8px">⚠ 项目级作战手册已更新，当前批次自定义有差异。<button class="btn sm" style="margin-left:8px" @click="syncPlaybook">同步为项目最新</button></div>
+          </template>
+          <div v-else class="note">继承项目级作战手册（项目修改后自动跟随）。</div>
+        </template>
+        <div v-else class="note">只读调阅。当前：{{ playbookSource === 'CUSTOM' ? '本批次自定义覆盖' : '继承项目级' }}</div>
       </div>
 
       <!-- 减免政策 -->
       <div class="card">
-        <div class="sec-title">减免政策（批次级） <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">继承项目 或 自定义覆盖</span></div>
-        <span v-if="tiersSource" class="tag inf" style="font-weight:400;margin-right:8px">{{ sourceLabel(tiersSource) }}</span>
-        <button v-if="!tiersPermDenied && auth.has('reduce.policy.edit')" class="btn txt" @click="openReduce">自定义覆盖</button>
-        <button v-if="!tiersPermDenied && auth.has('reduce.policy.edit') && tiersSource==='CUSTOM'" class="btn txt" @click="clearReduce">恢复继承</button>
-        <div v-if="b.reduceDrift" class="alert warn" style="margin-top:8px">
-          项目级减免已更新，当前批次自定义有差异
-          <button v-if="auth.has('reduce.policy.edit')" class="btn sm" style="margin-left:auto" @click="syncReduce">一键同步为项目最新</button>
+        <div class="sec-title">减免政策（批次级） <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">继承项目 或 自定义覆盖阶梯（批次级优先）</span></div>
+        <template v-if="!tiersPermDenied && auth.has('reduce.policy.edit')">
+          <div style="display:flex;gap:16px;margin-bottom:8px;font-size:13px">
+            <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" value="inherit" :checked="tiersSource !== 'CUSTOM'" @change="tiersSource === 'CUSTOM' && clearReduce()"> 继承项目</label>
+            <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" value="custom" :checked="tiersSource === 'CUSTOM'" @change="tiersSource !== 'CUSTOM' && openReduce()"> 自定义覆盖</label>
+          </div>
+          <table v-if="tiersSource === 'CUSTOM'">
+            <thead><tr><th>折扣</th><th>封顶</th><th style="text-align:center">免违约金</th><th>决定权</th></tr></thead>
+            <tbody>
+              <tr v-for="(t,ti) in tiers" :key="ti">
+                <td>{{ t.discount }}</td><td class="num">{{ yuan(t.capCents) }}</td>
+                <td style="text-align:center">{{ t.waivePenalty ? '✓' : '—' }}</td>
+                <td :title="t.decide">{{ reduceDecideLabel(t.decide) }}</td>
+              </tr>
+              <tr v-if="!tiers.length"><td colspan="4" class="empty-cell">暂无阶梯</td></tr>
+            </tbody>
+          </table>
+          <div v-else class="note">继承项目级减免政策（项目修改后自动跟随）。</div>
+          <div v-if="tiersSource==='CUSTOM'" style="margin-top:6px">
+            <button class="btn txt" @click="openReduce">编辑阶梯</button>
+            <button class="btn txt" @click="clearReduce">恢复继承</button>
+          </div>
+          <div v-if="b.reduceDrift" class="alert warn" style="margin-top:8px">⚠ 项目级减免已更新，当前批次自定义有差异。<button class="btn sm" style="margin-left:8px" @click="syncReduce">同步为项目最新</button></div>
+        </template>
+        <div v-else class="note">{{ tiersPermDenied ? '无减免策略查看权限' : (tiersSource === 'CUSTOM' ? '本批次自定义减免阶梯' : '继承项目级减免政策') }}</div>
+      </div>
+
+      <!-- 起诉要素字段集 -->
+      <div class="card">
+        <div class="sec-title">起诉要素字段集 <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">只读示意 · 随导入采集 · 为起诉状备数据</span></div>
+        <div class="alert info" style="margin-top:0;margin-bottom:10px">以下字段随案件导入时采集，供生成起诉状使用。当前仅作只读展示。</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          <span class="tag inf" style="font-size:11px">业主姓名</span><span class="tag inf" style="font-size:11px">房号</span><span class="tag inf" style="font-size:11px">欠费金额</span><span class="tag inf" style="font-size:11px">欠费周期</span><span class="tag inf" style="font-size:11px">身份证号</span><span class="tag inf" style="font-size:11px">通讯地址</span><span class="tag inf" style="font-size:11px">联系电话</span><span class="tag inf" style="font-size:11px">物业公司</span><span class="tag inf" style="font-size:11px">统一信用代码</span>
         </div>
-        <div v-if="tiersPermDenied" class="alert warn" style="margin-top:8px">无减免策略查看权限</div>
-        <table v-else style="margin-top:8px">
-          <thead><tr><th>折扣</th><th>封顶</th><th>决定权</th><th style="text-align:center">免违约金</th></tr></thead>
-          <tbody>
-            <tr v-for="(t,ti) in tiers" :key="ti">
-              <td>{{ t.discount }}</td>
-              <td class="num">{{ yuan(t.capCents) }}</td>
-              <td :title="t.decide">{{ reduceDecideLabel(t.decide) }}</td>
-              <td style="text-align:center">{{ t.waivePenalty ? '✓' : '—' }}</td>
-            </tr>
-            <tr v-if="!tiers.length"><td colspan="4" class="empty-cell">暂无减免档位</td></tr>
-          </tbody>
-        </table>
       </div>
 
       <!-- 协调员 -->
       <div class="card">
-        <div class="sec-title">
+        <div class="sec-title" style="display:flex;align-items:center">
           协调员（本批次）
-          <button v-if="auth.has('batch.import') || auth.has('proj.edit')" class="btn sm" style="margin-left:auto" @click="openCoord">+ 维护协调员</button>
+          <button v-if="auth.has('proj.edit')" class="btn sm" style="margin-left:auto" @click="openCoord">+ 添加协调员</button>
         </div>
         <div v-if="b.coordinators && b.coordinators.length" class="coord-tags">
           <span v-for="c in b.coordinators" :key="c.id" class="tag pri" style="margin-right:6px;display:inline-flex;align-items:center;gap:4px">{{ c.name || c.id }}</span>
@@ -236,22 +264,38 @@ onMounted(loadAll)
       <div class="card-h">
         <div class="t"><span class="bar"></span>案件明细 — {{ b.code }}</div>
         <div class="ops">
-          <span class="note" style="margin:0">{{ cases.length }} 条</span>
+          <span class="note" style="margin:0">{{ filteredCases.length }}/{{ cases.length }} 条</span>
+          <button v-if="auth.has('batch.import') || auth.has('proj.edit')" class="btn sm" style="margin-left:8px" @click="router.push(`/batches?openImport=1`)">+ 导入批次</button>
         </div>
       </div>
+      <!-- 筛选栏 -->
+      <div class="search" style="margin-bottom:10px">
+        <div class="fi"><span>搜索</span><input class="inp" v-model="caseFilter.q" placeholder="业主 / 房号 / 电话" style="min-width:140px" @keyup.enter="()=>{}" /></div>
+        <div class="fi"><span>状态</span>
+          <select class="inp" v-model="caseFilter.status">
+            <option value="">全部状态</option>
+            <option value="PENDING_DISPATCH">待派单</option><option value="IN_PROGRESS">催收中</option>
+            <option value="SETTLED">已结清</option><option value="WITHDRAWN">已撤回</option><option value="BAD_DEBT">坏账</option>
+          </select>
+        </div>
+        <div class="fi"><span>金额≥</span><input class="inp" type="number" v-model.number="caseFilter.amtMin" style="min-width:80px" placeholder="0" /></div>
+        <div class="fi"><span>金额≤</span><input class="inp" type="number" v-model.number="caseFilter.amtMax" style="min-width:80px" placeholder="∞" /></div>
+        <div class="fi"><span>催收员</span><input class="inp" v-model="caseFilter.owner" placeholder="归属催收员" style="min-width:100px" /></div>
+        <div class="fi"><button class="btn sm" @click="resetCaseFilter">重置</button></div>
+      </div>
       <table>
-        <thead><tr><th>业主</th><th>房号</th><th style="width:100px">应收</th><th>欠费周期</th><th>联系方式</th><th style="width:90px">状态</th><th style="width:80px">池</th></tr></thead>
+        <thead><tr><th>业主</th><th>房号</th><th style="width:100px">应收</th><th style="width:90px">状态</th><th>归属催收员</th><th>联系方式</th><th>操作</th></tr></thead>
         <tbody>
-          <tr v-for="c in cases" :key="c.id" class="row-click" @click="openCase(c)">
+          <tr v-for="c in filteredCases" :key="c.id" class="row-click" @click="openCase(c)">
             <td>{{ c.ownerName || '—' }}</td>
             <td>{{ c.room || '—' }}</td>
             <td class="num">{{ yuan(c.dueCents) }}</td>
-            <td>{{ c.arrearPeriod || '—' }}</td>
-            <td>{{ c.phone || '—' }}</td>
             <td><span class="tag" :class="statusTag(c.status)">{{ caseStatusLabel(c.status) }}</span></td>
-            <td :title="c.pool">{{ poolLabel(c.pool) }}</td>
+            <td>{{ c.collectorName || '—' }}</td>
+            <td>{{ c.phone || '—' }}</td>
+            <td @click.stop><a class="btn txt" @click="openCase(c)">查看详情 ›</a></td>
           </tr>
-          <tr v-if="!cases.length"><td colspan="7" class="empty-cell">暂无案件</td></tr>
+          <tr v-if="!filteredCases.length"><td colspan="7" class="empty-cell">{{ cases.length ? '无匹配案件' : '暂无案件' }}</td></tr>
         </tbody>
       </table>
     </div>
