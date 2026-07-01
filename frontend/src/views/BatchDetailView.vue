@@ -19,6 +19,8 @@ const b = ref<any>(null); const cases = ref<any[]>([]); const tiers = ref<any[]>
 const tiersSource = ref<string | null>(null) // INHERITED | CUSTOM | null(无权限)
 const tiersPermDenied = ref(false)
 const yuan = (c?: number | null) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
+const STATUS_TAG: Record<string, string> = { SETTLED: 'suc', IN_PROGRESS: 'pri', PROMISED: 'war', PENDING_DISPATCH: 'inf', PROVIDER_SEA: 'inf', WITHDRAWN: 'inf', BAD_DEBT: 'dan', VOIDED: 'dan' }
+const statusTag = (s?: string) => STATUS_TAG[s ?? ''] ?? 'inf'
 const sourceLabel = (s: string | null) => s === 'CUSTOM' ? '批次自定义' : s === 'INHERITED' ? '继承项目默认' : ''
 
 async function loadBatch() {
@@ -216,20 +218,21 @@ onMounted(loadAll)
     <div class="card">
       <div class="sec-title" style="margin-top:0">案件清单（GET /cases?batchId · 共 {{ cases.length }}）</div>
       <table>
-        <thead><tr><th>户号</th><th>业主</th><th>房号</th><th>应收</th><th>状态</th><th>池</th></tr></thead>
+        <thead><tr><th>业主</th><th>房号</th><th style="width:100px">应收</th><th>欠费周期</th><th>联系方式</th><th style="width:90px">状态</th><th style="width:80px">池</th></tr></thead>
         <tbody>
           <tr v-for="c in cases" :key="c.id" class="row-click" @click="openCase(c)">
-            <td>{{ c.acctNo }}</td>
-            <td>{{ c.ownerName }}</td>
-            <td>{{ c.room }}</td>
+            <td>{{ c.ownerName || '—' }}</td>
+            <td>{{ c.room || '—' }}</td>
             <td class="num">{{ yuan(c.dueCents) }}</td>
-            <td :title="c.status">{{ caseStatusLabel(c.status) }}</td>
+            <td>{{ c.arrearPeriod || '—' }}</td>
+            <td>{{ c.phone || '—' }}</td>
+            <td><span class="tag" :class="statusTag(c.status)">{{ caseStatusLabel(c.status) }}</span></td>
             <td :title="c.pool">{{ poolLabel(c.pool) }}</td>
           </tr>
-          <tr v-if="!cases.length"><td colspan="6" class="empty-cell">暂无案件</td></tr>
+          <tr v-if="!cases.length"><td colspan="7" class="empty-cell">暂无案件</td></tr>
         </tbody>
       </table>
-      <div class="alert info">点案件行进作业台。资金双线：物业视角无付佣比例、服务商视角无收佣比例（整列不渲染）。</div>
+      <div class="alert info">点击案件行进作业台。资金双线：物业视角无付佣比例、服务商视角无收佣比例（整列不渲染）。</div>
     </div>
 
     <!-- BC-01 协调员维护对话框(复用 CoordinatorPicker) -->

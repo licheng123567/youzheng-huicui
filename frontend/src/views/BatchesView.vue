@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
@@ -121,7 +122,8 @@ const STATUS_TAG: Record<string, string> = {
 }
 const statusTag = (s?: string) => STATUS_TAG[s ?? ''] ?? 'inf'
 
-onMounted(load)
+const route = useRoute()
+onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
 </script>
 
 <template>
