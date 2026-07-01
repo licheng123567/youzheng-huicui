@@ -126,6 +126,9 @@ public class DevSeeder implements CommandLineRunner {
             seedBatchPlaybookDrift(proj);
         }
 
+        // ── 丰富演示数据（多批次/多案件/多状态，方便前端全流程测试）──
+        seedRichDemoData(cuihu, yang, provider, co1, co2, proj, hash);
+
         // 案件级 provider_id 回填（V913）：DevSeeder 经 SQL 直插案件、绕过 dispatch/accept 控制器，
         // 故 case.provider_id 留空；而 V913 回填在 Flyway 期(种子前)执行、看不到这些行。
         // 可见性 scope 已改为直接 c.provider_id 权威，须在此按池语义补齐，否则服务商/催收员看不到本商案件。
@@ -1173,5 +1176,103 @@ public class DevSeeder implements CommandLineRunner {
                 "INSERT INTO settings(domain, version, rotation, updated_by) "
                         + "VALUES ('ROTATION', 1, ?::jsonb, ?)",
                 "{\"holdCap\":" + holdCap + "}", sa);
+    }
+
+    // ── 丰富演示数据（多批次/多案件/多状态，方便前端全流程测试）──
+    private void seedRichDemoData(Long cuihuOrg, Long yangOrg, Long providerOrg, Long co1, Long co2, Long baseProj, String hash) {
+        if (baseProj == null) return;
+        Integer rich = jdbc.queryForObject("SELECT count(*) FROM batch WHERE no = 'B-CH2-2026-02'", Integer.class);
+        if (rich != null && rich > 0) return;
+
+        Long ygProj = jdbc.query("SELECT id FROM project WHERE name = '阳光花园' AND org_id = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, yangOrg);
+        if (ygProj != null) {
+            Long ygB1 = ensureBatch(ygProj, "B-YG-2026-01", "0.3200", "0.2000", providerOrg, null, "IN_PROGRESS");
+            ensureFullCase(ygB1, ygProj, "阳光花园", "YG-001", "赵建国", "8-1101", 560000L, "IN_PROGRESS", "2024-07", "2025-06", "13900001001", "5101**********001X");
+            ensureFullCase(ygB1, ygProj, "阳光花园", "YG-002", "钱美玲", "8-1102", 480000L, "IN_PROGRESS", "2024-09", "2025-06", "13900001002", "");
+            ensureFullCase(ygB1, ygProj, "阳光花园", "YG-003", "孙志强", "5-301", 1280000L, "PROMISED", "2023-03", "2025-06", "13900001003", "");
+            ensureFullCase(ygB1, ygProj, "阳光花园", "YG-004", "李秀英", "3-205", 240000L, "SETTLED", "2024-11", "2025-03", "13900001004", "");
+            ensureFullCase(ygB1, ygProj, "阳光花园", "YG-005", "周文博", "7-802", 780000L, "IN_PROGRESS", "2024-05", "2025-06", "13900001005", "1101**********0032");
+            Long ygB2 = ensureBatch(ygProj, "B-YG-2026-02", "0.3200", "0.2000", null, null, "PENDING");
+            ensureFullCase(ygB2, ygProj, "阳光花园", "YG-006", "吴桂香", "2-101", 360000L, "PENDING_DISPATCH", "2024-08", "2025-05", "13900001006", "");
+            ensureFullCase(ygB2, ygProj, "阳光花园", "YG-007", "郑海龙", "9-501", 920000L, "PENDING_DISPATCH", "2023-09", "2025-06", "13900001007", "5101**********0056");
+            ensureFullCase(ygB2, ygProj, "阳光花园", "YG-008", "冯丽华", "1-403", 180000L, "PENDING_DISPATCH", "2025-01", "2025-06", "13900001008", "");
+            Long ygB3 = ensureBatch(ygProj, "B-YG-2026-03", "0.3200", "0.2000", providerOrg, null, "CLOSED");
+            ensureFullCase(ygB3, ygProj, "阳光花园", "YG-009", "陈大伟", "4-602", 420000L, "SETTLED", "2024-04", "2024-12", "13900001009", "");
+            ensureFullCase(ygB3, ygProj, "阳光花园", "YG-010", "褚晓芳", "6-303", 650000L, "SETTLED", "2024-02", "2025-01", "13900001010", "5101**********0078");
+        }
+
+        Long ch1Proj = jdbc.query("SELECT id FROM project WHERE name = '翠湖一期' AND org_id = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, cuihuOrg);
+        if (ch1Proj != null) {
+            Long ch1B1 = jdbc.query("SELECT id FROM batch WHERE no = 'B-CH-2026-01' AND project_id = ?",
+                    rs -> rs.next() ? rs.getLong(1) : null, ch1Proj);
+            if (ch1B1 != null) {
+                ensureFullCase(ch1B1, ch1Proj, "翠湖一期", "CH-004", "黄志明", "1-101", 320000L, "VOIDED", "2023-06", "2024-06", "13900002001", "");
+                ensureFullCase(ch1B1, ch1Proj, "翠湖一期", "CH-005", "刘淑珍", "2-305", 540000L, "WITHDRAWN", "2024-01", "2025-03", "13900002002", "5101**********0091");
+                ensureFullCase(ch1B1, ch1Proj, "翠湖一期", "CH-006", "何伟强", "4-701", 890000L, "BAD_DEBT", "2022-09", "2025-06", "13900002003", "");
+            }
+            Long ch1B2 = ensureBatch(ch1Proj, "B-CH-2026-02", "0.3000", "0.2000", providerOrg, null, "IN_PROGRESS");
+            ensureFullCase(ch1B2, ch1Proj, "翠湖一期", "CH-007", "罗玉兰", "3-102", 410000L, "IN_PROGRESS", "2024-06", "2025-06", "13900002004", "");
+            ensureFullCase(ch1B2, ch1Proj, "翠湖一期", "CH-008", "谢建华", "5-804", 270000L, "IN_PROGRESS", "2024-10", "2025-06", "13900002005", "1101**********0023");
+            ensureFullCase(ch1B2, ch1Proj, "翠湖一期", "CH-009", "韩丽丽", "8-201", 960000L, "PROMISED", "2024-03", "2025-06", "13900002006", "");
+        }
+
+        Long ch2Proj = jdbc.query("SELECT id FROM project WHERE name = '翠湖二期' AND org_id = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, cuihuOrg);
+        if (ch2Proj != null) {
+            Long ch2B1 = ensureBatch(ch2Proj, "B-CH2-2026-01", "0.2800", "0.1800", providerOrg, null, "IN_PROGRESS");
+            ensureFullCase(ch2B1, ch2Proj, "翠湖二期", "CH2-001", "马云飞", "10-101", 720000L, "IN_PROGRESS", "2024-02", "2025-06", "13900003001", "5101**********0045");
+            ensureFullCase(ch2B1, ch2Proj, "翠湖二期", "CH2-002", "朱雪梅", "12-303", 380000L, "IN_PROGRESS", "2024-07", "2025-06", "13900003002", "");
+            ensureFullCase(ch2B1, ch2Proj, "翠湖二期", "CH2-003", "许海峰", "15-501", 1050000L, "IN_PROGRESS", "2023-11", "2025-06", "13900003003", "1101**********0067");
+            ensureFullCase(ch2B1, ch2Proj, "翠湖二期", "CH2-004", "林小燕", "7-202", 290000L, "SETTLED", "2024-09", "2025-02", "13900003004", "");
+            ensureFullCase(ch2B1, ch2Proj, "翠湖二期", "CH2-005", "唐国强", "9-702", 630000L, "PROMISED", "2024-05", "2025-06", "13900003005", "");
+            Long ch2B2 = ensureBatch(ch2Proj, "B-CH2-2026-02", "0.2800", "0.1800", null, null, "PENDING");
+            ensureFullCase(ch2B2, ch2Proj, "翠湖二期", "CH2-006", "沈德明", "3-401", 510000L, "PENDING_DISPATCH", "2024-08", "2025-05", "13900003006", "5101**********0089");
+            ensureFullCase(ch2B2, ch2Proj, "翠湖二期", "CH2-007", "曹秀兰", "11-102", 340000L, "PENDING_DISPATCH", "2025-01", "2025-06", "13900003007", "");
+        }
+
+        // 给部分案件挂联系人
+        Long yg001 = jdbc.query("SELECT id FROM \"case\" WHERE acct_no = 'YG-001'", rs -> rs.next() ? rs.getLong(1) : null);
+        if (yg001 != null) {
+            jdbc.update("INSERT INTO contact(case_id, phone, label, is_primary, invalid) VALUES (?, '13900001001', '本人', TRUE, FALSE) ON CONFLICT DO NOTHING", yg001);
+            jdbc.update("INSERT INTO contact(case_id, phone, label, is_primary, invalid) VALUES (?, '13800001001', '配偶', FALSE, FALSE) ON CONFLICT DO NOTHING", yg001);
+        }
+    }
+
+    private void ensureFullCase(Long batchId, Long projectId, String projectName, String acctNo, String owner,
+                                String room, long dueCents, String status, String arrearFrom, String arrearTo,
+                                String phone, String idCard) {
+        Integer exists = jdbc.queryForObject("SELECT count(*) FROM \"case\" WHERE batch_id = ? AND acct_no = ?",
+                Integer.class, batchId, acctNo);
+        if (exists != null && exists > 0) return;
+        // arrearags_periods: 生成起止月份数组 ["2024-07",...,"2025-06"]
+        String periods = "[]";
+        try {
+            java.time.YearMonth from = java.time.YearMonth.parse(arrearFrom);
+            java.time.YearMonth to = java.time.YearMonth.parse(arrearTo);
+            StringBuilder sb = new StringBuilder("[");
+            java.time.YearMonth m = from;
+            while (!m.isAfter(to)) {
+                if (sb.length() > 1) sb.append(",");
+                sb.append("\"").append(m.toString()).append("\"");
+                m = m.plusMonths(1);
+            }
+            sb.append("]");
+            periods = sb.toString();
+        } catch (Exception ignored) {}
+        // litigation_fields: {"idCard":"..."}
+        String lit = idCard.isEmpty() ? null : "{\"idCard\":\"" + idCard + "\"}";
+        Long caseId = jdbc.queryForObject(
+                "INSERT INTO \"case\"(batch_id, project_id, project_name, acct_no, owner_name, room, due_cents, " +
+                        "status, arrearags_periods, litigation_fields) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb) RETURNING id",
+                Long.class, batchId, projectId, projectName, acctNo, owner, room, dueCents,
+                status, periods, lit);
+        // 号码存联系人
+        if (caseId != null && phone != null && !phone.isEmpty()) {
+            jdbc.update("INSERT INTO contact(case_id, phone, label, is_primary, invalid) " +
+                    "VALUES (?, ?, '本人', TRUE, FALSE) ON CONFLICT DO NOTHING", caseId, phone);
+        }
     }
 }

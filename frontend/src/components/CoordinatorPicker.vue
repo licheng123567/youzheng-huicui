@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
+import DsDrawer from './DsDrawer.vue'
 
 /**
  * 协调员多选器(US-M2-02/BR-M2-13)：候选源 GET /members?role=PC(本组织 PC)，
@@ -52,7 +53,7 @@ function submit() {
 </script>
 
 <template>
-  <el-dialog :model-value="modelValue" :title="title || '维护协调员（PC 多对多·全量覆盖）'" width="560px"
+  <DsDrawer :model-value="modelValue" :title="title || '维护协调员'" :width="560"
     @update:model-value="(v:boolean)=>emit('update:modelValue', v)">
     <div v-loading="loading">
       <el-transfer v-model="checked" :data="candidates" :titles="['可选 PC', '已关联']" filterable />
@@ -62,5 +63,5 @@ function submit() {
       <el-button @click="close">取消</el-button>
       <el-button type="primary" :loading="saving" @click="submit">保存协调员</el-button>
     </template>
-  </el-dialog>
+  </DsDrawer>
 </template>

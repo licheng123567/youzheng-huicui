@@ -7,6 +7,8 @@ import { useAuth } from '../stores/auth'
 import { useRoleFields } from '../composables/useRoleFields'
 import ProjectEditDialog from '../components/ProjectEditDialog.vue'
 import CoordinatorPicker from '../components/CoordinatorPicker.vue'
+import DsDrawer from '../components/DsDrawer.vue'
+import { statusLabel, reduceDecideLabel } from '../constants/enums'
 
 // GET /projects/{id} → oneOf(Project|ProjectForProvider)；viewRole 判别。
 // + 档案编辑(H-07/US-M2-01) + 协调员维护(US-M2-02) + 减免阶梯(BR-M2-18a) + 作战手册采纳(US-M5-07)。
@@ -18,7 +20,11 @@ const pid = String(route.params.id)
 const p = ref<any>(null)
 const playbook = ref<any>(null)
 const yuan = (c?: number | null) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
-const decideLabel = (d?: string) => d === 'COLLECTOR_SELF' ? '催收员自决' : d === 'OFFLINE_INTERNAL' ? '线下内部流程' : d === 'PL_APPROVE' ? '物业负责人审批' : (d ?? '—')
+
+// ===== 纯展示辅助（仅 UI 表现层，不参与数据流）=====
+// 决定权 → ds-admin .tag 配色
+const DECIDE_TAG: Record<string, string> = { COLLECTOR_SELF: 'suc', OFFLINE_INTERNAL: 'war', PL_APPROVE: 'pri' }
+const decideTag = (d?: string) => DECIDE_TAG[d ?? ''] ?? 'inf'
 
 async function load() {
   const { data, error } = await api.GET('/projects/{id}', { params: { path: { id: pid } } })
@@ -91,56 +97,79 @@ onMounted(load)
 </script>
 
 <template>
-  <el-card v-if="p">
-    <template #header>
-      <el-button link @click="router.back()">← 返回</el-button>
-      <span style="margin-left:8px">项目详情：{{ p.name }}（视角 {{ p.viewRole }}）</span>
-      <el-button v-if="auth.has('proj.edit')" size="small" type="primary" style="margin-left:12px" @click="openEdit">编辑档案</el-button>
-    </template>
-    <el-descriptions :column="2" border>
-      <el-descriptions-item label="ID">{{ p.id }}</el-descriptions-item>
-      <el-descriptions-item label="区域">{{ p.area }}</el-descriptions-item>
-      <el-descriptions-item label="物业公司">{{ p.propCompany ?? '—' }}</el-descriptions-item>
-      <el-descriptions-item label="合同类型">{{ p.contractType ?? '—' }}</el-descriptions-item>
+  <div v-if="p" class="card">
+    <div class="card-h">
+      <div class="t">
+        <span class="bar"></span>
+        <a class="btn txt" @click="router.back()">← 返回</a>
+        项目详情：{{ p.name }}
+        <span class="tag inf" style="font-weight:400">视角 {{ p.viewRole }}</span>
+      </div>
+      <div class="ops">
+        <button v-if="auth.has('proj.edit')" class="btn sm" @click="openEdit">编辑档案</button>
+      </div>
+    </div>
+
+    <!-- 项目概览 -->
+    <div class="sec-title" style="margin-top:0">项目信息</div>
+    <div class="desc">
+      <div class="r"><div class="k">ID</div><div class="v">{{ p.id }}</div></div>
+      <div class="r"><div class="k">区域</div><div class="v">{{ p.area }}</div></div>
+      <div class="r"><div class="k">物业公司</div><div class="v">{{ p.propCompany ?? '—' }}</div></div>
+      <div class="r"><div class="k">合同类型</div><div class="v">{{ p.contractType ?? '—' }}</div></div>
       <!-- 资金双线：收佣比例整项仅平台/物业渲染，服务商视角字段级无→整项不出(H-03) -->
-      <el-descriptions-item v-if="showCommInRate" label="收佣比例">{{ ratePct(p.commInRate) }}</el-descriptions-item>
-      <el-descriptions-item label="状态">{{ p.status }}</el-descriptions-item>
-    </el-descriptions>
+      <div v-if="showCommInRate" class="r"><div class="k">收佣比例</div><div class="v num">{{ ratePct(p.commInRate) }}</div></div>
+      <div class="r"><div class="k">状态</div><div class="v" :title="p.status">{{ statusLabel(p.status) }}</div></div>
+    </div>
 
     <!-- US-M2-02 关联协调员 -->
-    <el-divider content-position="left">
-      关联协调员（PC↔项目 多对多 BR-M2-13）
-      <el-button v-if="auth.has('proj.edit')" size="small" text type="primary" @click="openCoord">维护协调员</el-button>
-    </el-divider>
-    <div v-if="p.coordinators && p.coordinators.length">
-      <el-tag v-for="c in p.coordinators" :key="c.id" style="margin-right:6px">{{ c.name || c.id }}</el-tag>
+    <div class="sec-title">
+      关联协调员
+      <span class="note" style="margin:0 0 0 4px;font-weight:400">PC↔项目 多对多 BR-M2-13</span>
+      <button v-if="auth.has('proj.edit')" class="btn txt" style="margin-left:auto" @click="openCoord">维护协调员</button>
     </div>
-    <el-empty v-else description="尚未关联协调员" :image-size="40" />
+    <div v-if="p.coordinators && p.coordinators.length">
+      <span v-for="c in p.coordinators" :key="c.id" class="tag pri" style="margin-right:6px">{{ c.name || c.id }}</span>
+    </div>
+    <div v-else class="note">尚未关联协调员。</div>
 
     <!-- BR-M2-18a 减免阶梯 -->
-    <el-divider content-position="left">
-      减免阶梯（BR-M2-18a 阶梯+决定权）
-      <el-button v-if="auth.has('reduce.policy.edit')" size="small" text type="primary" @click="openReduce">维护减免规则</el-button>
-      <el-button v-if="auth.has('reduce.policy.edit') && p.reduceTiers && p.reduceTiers.length" size="small" text @click="clearReduce">清空</el-button>
-    </el-divider>
-    <el-table v-if="p.reduceTiers && p.reduceTiers.length" :data="p.reduceTiers" border size="small">
-      <el-table-column prop="discount" label="折扣" />
-      <el-table-column label="封顶"><template #default="{row}">{{ yuan(row.capCents) }}</template></el-table-column>
-      <el-table-column label="决定权"><template #default="{row}">{{ decideLabel(row.decide) }}</template></el-table-column>
-      <el-table-column label="免违约金"><template #default="{row}">{{ row.waivePenalty?'是':'否' }}</template></el-table-column>
-    </el-table>
-    <el-empty v-else description="尚无减免阶梯" :image-size="40" />
+    <div class="sec-title">
+      减免阶梯
+      <span class="note" style="margin:0 0 0 4px;font-weight:400">BR-M2-18a 阶梯+决定权</span>
+      <span style="margin-left:auto">
+        <button v-if="auth.has('reduce.policy.edit')" class="btn txt" @click="openReduce">维护减免规则</button>
+        <button v-if="auth.has('reduce.policy.edit') && p.reduceTiers && p.reduceTiers.length" class="btn txt dgc" @click="clearReduce">清空</button>
+      </span>
+    </div>
+    <table>
+      <thead><tr><th>折扣</th><th>封顶</th><th>决定权</th><th>免违约金</th></tr></thead>
+      <tbody>
+        <tr v-for="(t,i) in (p.reduceTiers ?? [])" :key="i">
+          <td>{{ t.discount }}</td>
+          <td class="num">{{ yuan(t.capCents) }}</td>
+          <td><span class="tag" :class="decideTag(t.decide)" :title="t.decide">{{ reduceDecideLabel(t.decide) }}</span></td>
+          <td>{{ t.waivePenalty ? '是' : '否' }}</td>
+        </tr>
+        <tr v-if="!(p.reduceTiers && p.reduceTiers.length)"><td colspan="4" class="note" style="text-align:center">尚无减免阶梯。</td></tr>
+      </tbody>
+    </table>
 
     <!-- US-M5-07 作战手册 -->
-    <el-divider content-position="left">作战手册（GET /projects/{id}/playbook · AI 产草稿→物业采纳才发布 US-M5-07）
-      <el-button v-if="auth.has('playbook.adopt')" size="small" text type="primary" @click="openAdopt">采纳/编辑</el-button>
-    </el-divider>
-    <el-descriptions v-if="playbook" :column="2" border size="small">
-      <el-descriptions-item label="版本">{{ playbook.version ?? '—' }}</el-descriptions-item>
-      <el-descriptions-item label="采纳模式">{{ playbook.adoptMode ?? '—' }}</el-descriptions-item>
-      <el-descriptions-item label="内容" :span="2"><div style="white-space:pre-wrap;max-height:160px;overflow:auto">{{ playbook.content ?? '（尚无手册，点采纳发布）' }}</div></el-descriptions-item>
-    </el-descriptions>
-    <el-empty v-else description="尚无作战手册" :image-size="50" />
+    <div class="sec-title">
+      作战手册
+      <span class="note" style="margin:0 0 0 4px;font-weight:400">AI 产草稿→物业采纳才发布 US-M5-07</span>
+      <button v-if="auth.has('playbook.adopt')" class="btn txt" style="margin-left:auto" @click="openAdopt">采纳/编辑</button>
+    </div>
+    <template v-if="playbook">
+      <div class="desc">
+        <div class="r"><div class="k">版本</div><div class="v">{{ playbook.version ?? '—' }}</div></div>
+        <div class="r"><div class="k">采纳模式</div><div class="v">{{ playbook.adoptMode ?? '—' }}</div></div>
+      </div>
+      <div class="lbl" style="margin-top:10px">内容</div>
+      <div class="note" style="white-space:pre-wrap;max-height:160px;overflow:auto;margin-top:0;border:1px solid var(--bd);border-radius:4px;padding:10px 12px;color:var(--txt)">{{ playbook.content ?? '（尚无手册，点采纳发布）' }}</div>
+    </template>
+    <div v-else class="note">尚无作战手册。</div>
 
     <!-- 档案编辑(共用对话框) -->
     <ProjectEditDialog v-model="editDlg" :project="p" @saved="onSaved" />
@@ -169,12 +198,12 @@ onMounted(load)
     </el-dialog>
 
     <!-- 作战手册采纳 -->
-    <el-dialog v-model="dlg" title="采纳作战手册（POST /projects/{id}/playbook · playbook.adopt）" width="560px">
+    <DsDrawer v-model="dlg" title="采纳作战手册" :width="560">
       <el-form label-width="70px">
         <el-form-item label="版本"><el-input v-model="form.version" placeholder="如 v1.1" /></el-form-item>
         <el-form-item label="内容"><el-input v-model="form.content" type="textarea" :rows="8" placeholder="作战手册正文（通话前策略/话术指引）" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="dlg=false">取消</el-button><el-button type="primary" @click="adopt">采纳发布</el-button></template>
-    </el-dialog>
-  </el-card>
+    </DsDrawer>
+  </div>
 </template>

@@ -3,6 +3,8 @@ import { onMounted, ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
+import { payReqStatusLabel, channelLabel } from '../constants/enums'
+import DsDrawer from '../components/DsDrawer.vue'
 
 // M9 结算·资金双线：side=IN(收佣 平台↔物业)/OUT(付佣 平台↔服务商)。
 // 生成链：勾选未结回款明细→生成支付申请单→发送→详情→完成(凭证)/撤销。内催佣金链独立面板。
@@ -70,16 +72,32 @@ async function openDetail(row: any) {
   if (error) { ElMessage.error('详情加载失败'); return }
   detail.value = data; ddlg.value = true
 }
-// 完成（必带凭证）
-const cdlg = ref(false); const cform = ref<any>({})
-function openComplete(row: any) { cform.value = { id: row.id, version: row.version, type: side.value === 'IN' ? 'RECEIPT' : 'PAYMENT', fileUrl: 'https://example.com/voucher.pdf' }; cdlg.value = true }
+// 完成（必带凭证）。fileUrl 应为上传所得地址：el-upload 选文件后置 fileUrl；无真实上传后端时保留可手填 URL，默认空且必填校验(BR-M9-12d)。
+const cdlg = ref(false); const cform = ref<any>({ fileUrl: '' })
+function openComplete(row: any) { cform.value = { id: row.id, version: row.version, type: side.value === 'IN' ? 'RECEIPT' : 'PAYMENT', fileUrl: '' }; cdlg.value = true }
+// el-upload 占位：选择文件后取上传所得地址(response.url/fileUrl)回填；后端未接真实上传时退化为文件名占位，仍可手填覆盖。
+function onVoucherUpload(resp: any, file: any) {
+  const url = resp?.url ?? resp?.fileUrl ?? resp?.data?.url
+  cform.value.fileUrl = url ?? file?.name ?? ''
+  if (url) ElMessage.success('凭证已上传')
+}
+function onVoucherUploadError() { ElMessage.error('上传失败，可手填凭证 URL') }
 async function submitComplete() {
+  if (!cform.value.fileUrl) { ElMessage.warning('请上传凭证或填写凭证文件 URL（必填）'); return }
   const { error } = await api.POST('/payment-requests/{id}/complete', { params: { path: { id: cform.value.id } }, body: { voucher: { type: cform.value.type, fileUrl: cform.value.fileUrl }, version: cform.value.version } as any })
   if (error) { ElMessage.error('完成失败：' + ((error as any)?.message ?? '')); return }
   ElMessage.success('已完成（凭证已留存）'); cdlg.value = false; load()
 }
 async function revoke(row: any) {
-  const { error } = await api.POST('/payment-requests/{id}/revoke', { params: { path: { id: row.id } }, body: { version: row.version, reason: '前端撤销' } as any })
+  let reason = ''
+  try {
+    const { value } = await ElMessageBox.prompt(`请填写${side.value === 'IN' ? '撤销' : '撤回'}原因`, side.value === 'IN' ? '撤销支付申请单' : '撤回支付申请单', {
+      inputPlaceholder: '撤销原因（必填）',
+      inputValidator: (v: string) => (!!v && v.trim().length > 0) || '撤销原因不能为空',
+    })
+    reason = String(value).trim()
+  } catch { return /* 取消 */ }
+  const { error } = await api.POST('/payment-requests/{id}/revoke', { params: { path: { id: row.id } }, body: { version: row.version, reason } as any })
   if (error) { ElMessage.error('撤销失败：' + ((error as any)?.message ?? '已PAID不可撤')); return }
   ElMessage.success('已撤销，明细释放'); load()
 }
@@ -158,81 +176,131 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
 </script>
 
 <template>
-  <el-card header="结算 · 资金双线（IN 收佣 平台↔物业 / OUT 付佣 平台↔服务商）">
+  <div class="card">
+    <div class="card-h">
+      <div class="t"><span class="bar"></span>结算 · 资金双线</div>
+      <div class="ops"><span class="note" style="margin:0">IN 收佣 平台↔物业 / OUT 付佣 平台↔服务商</span></div>
+    </div>
+
    <template v-if="canViewPayReq">
-    <el-alert v-if="isReadonlyProperty" type="info" :closable="false" show-icon style="margin-bottom:12px"
-      title="只读视图" description="物业仅可查看本物业收佣线(IN)对账与支付申请单，不可生成/确认/撤销。" />
-    <el-radio-group v-model="side" style="margin-bottom:12px" @change="load">
-      <el-radio-button v-for="s in sides" :key="s" :label="s">{{ s==='IN'?'收佣线(IN)':'付佣线(OUT)' }}</el-radio-button>
-    </el-radio-group>
-    <el-button v-if="canGenerate" type="primary" size="small" style="margin-left:12px" @click="openGenerate">勾选明细生成支付申请单</el-button>
+    <div v-if="isReadonlyProperty" class="alert info" style="margin-top:0;margin-bottom:14px">
+      <b>只读视图：</b>物业仅可查看本物业收佣线(IN)对账与支付申请单，不可生成/确认/撤销。
+    </div>
 
-    <el-divider content-position="left">对账汇总（GET /recon/rollup）</el-divider>
+    <div class="toolbar">
+      <span class="segctrl">
+        <span v-for="s in sides" :key="s" :class="{ on: side === s }" @click="side = s; load()">{{ s==='IN'?'收佣线(IN)':'付佣线(OUT)' }}</span>
+      </span>
+      <button v-if="canGenerate" class="btn sm" @click="openGenerate">勾选明细生成支付申请单</button>
+    </div>
+
+    <div class="sec-title">对账汇总（GET /recon/rollup）</div>
     <!-- M-10：契约 ReconRollup 字段 batch/proj/baseCents/repayRate/commRate/dueCents/settledCents/unsettledCents -->
-    <el-table :data="rollup" border size="small">
-      <el-table-column prop="batch" label="批次" /><el-table-column prop="proj" label="项目" />
-      <el-table-column label="回款基数"><template #default="{row}">{{ yuan(row.baseCents) }}</template></el-table-column>
-      <el-table-column label="回款率"><template #default="{row}">{{ pct(row.repayRate) }}</template></el-table-column>
-      <el-table-column label="比例"><template #default="{row}">{{ pct(row.commRate) }}</template></el-table-column>
-      <el-table-column label="应结"><template #default="{row}">{{ yuan(row.dueCents) }}</template></el-table-column>
-      <el-table-column label="已结"><template #default="{row}">{{ yuan(row.settledCents) }}</template></el-table-column>
-      <el-table-column label="未结"><template #default="{row}">{{ yuan(row.unsettledCents) }}</template></el-table-column>
-    </el-table>
+    <table>
+      <thead>
+        <tr>
+          <th>批次</th><th>项目</th><th>回款基数</th><th>回款率</th><th>比例</th><th>应结</th><th>已结</th><th>未结</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="row in rollup" :key="row.batch">
+          <td><b>{{ row.batch }}</b></td>
+          <td>{{ row.proj }}</td>
+          <td class="num">{{ yuan(row.baseCents) }}</td>
+          <td class="num">{{ pct(row.repayRate) }}</td>
+          <td class="num">{{ pct(row.commRate) }}</td>
+          <td class="num">{{ yuan(row.dueCents) }}</td>
+          <td class="num"><span class="tag suc">{{ yuan(row.settledCents) }}</span></td>
+          <td class="num"><span class="tag" :class="row.unsettledCents ? 'war' : 'inf'">{{ yuan(row.unsettledCents) }}</span></td>
+        </tr>
+        <tr v-if="!rollup.length"><td colspan="8" class="note" style="text-align:center">暂无对账数据</td></tr>
+      </tbody>
+    </table>
 
-    <el-divider content-position="left">支付申请单（GET /payment-requests?side={{side}}）</el-divider>
-    <el-table v-loading="loading" :data="prs" border size="small">
-      <el-table-column prop="code" label="单号" />
-      <el-table-column prop="status" label="状态" width="90"><template #default="{row}"><el-tag size="small" :type="row.status==='PAID'?'success':row.status==='VOIDED'?'info':'warning'">{{ row.status }}</el-tag></template></el-table-column>
-      <el-table-column label="基数"><template #default="{row}">{{ yuan(row.baseCents) }}</template></el-table-column>
-      <el-table-column label="比例"><template #default="{row}">{{ pct(row.commRate) }}</template></el-table-column>
-      <el-table-column label="应结佣金"><template #default="{row}">{{ yuan(row.commCents) }}</template></el-table-column>
-      <el-table-column label="操作" width="280">
-        <template #default="{ row }">
-          <el-button size="small" text @click="openDetail(row)">详情</el-button>
-          <!-- N-01：单据下载入口(documentUrl 空则禁用·占位) -->
-          <el-link v-if="row.documentUrl" type="primary" :href="row.documentUrl" target="_blank" style="margin:0 8px;font-size:13px">下载</el-link>
-          <el-button v-else size="small" text disabled>下载</el-button>
-          <template v-if="row.status==='PENDING'">
-            <el-button v-if="canGenerate" size="small" @click="send(row)">发送</el-button>
-            <el-button v-if="canComplete" size="small" type="primary" @click="openComplete(row)">{{ side==='IN'?'确认收款':'支付完成' }}</el-button>
-            <el-button v-if="canRevoke" size="small" @click="revoke(row)">{{ side==='IN'?'撤销':'撤回' }}</el-button>
-          </template>
-        </template>
-      </el-table-column>
-    </el-table>
+    <div class="sec-title">支付申请单（GET /payment-requests?side={{side}}）</div>
+    <table v-loading="loading">
+      <thead>
+        <tr>
+          <th>单号</th><th style="width:90px">状态</th><th>基数</th><th>比例</th><th>应结佣金</th><th style="width:300px">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="row in prs" :key="row.id">
+          <td>{{ row.code }}</td>
+          <td><span class="tag" :class="row.status==='PAID'?'suc':row.status==='VOIDED'?'inf':'war'" :title="row.status">{{ payReqStatusLabel(row.status) }}</span></td>
+          <td class="num">{{ yuan(row.baseCents) }}</td>
+          <td class="num">{{ pct(row.commRate) }}</td>
+          <td class="num">{{ yuan(row.commCents) }}</td>
+          <td>
+            <button class="btn txt" @click="openDetail(row)">详情</button>
+            <!-- N-01：单据下载入口(documentUrl 空则禁用·占位) -->
+            <a v-if="row.documentUrl" class="link" :href="row.documentUrl" target="_blank" style="margin:0 8px;font-size:13px">下载</a>
+            <button v-else class="btn txt" disabled>下载</button>
+            <template v-if="row.status==='PENDING'">
+              <button v-if="canGenerate" class="btn txt" @click="send(row)">发送</button>
+              <button v-if="canComplete" class="btn txt" @click="openComplete(row)">{{ side==='IN'?'确认收款':'支付完成' }}</button>
+              <button v-if="canRevoke" class="btn txt" @click="revoke(row)">{{ side==='IN'?'撤销':'撤回' }}</button>
+            </template>
+          </td>
+        </tr>
+        <tr v-if="!loading && !prs.length"><td colspan="6" class="note" style="text-align:center">暂无支付申请单</td></tr>
+      </tbody>
+    </table>
    </template>
 
     <!-- 内催佣金链 -->
     <template v-if="showCoComm">
-      <el-divider content-position="left">内催佣金（GET /co-commissions · 服务商内部催收员佣金）</el-divider>
-      <el-table :data="coco" border size="small">
-        <el-table-column prop="name" label="催收员" /><el-table-column prop="batchCount" label="批次数" width="80" />
-        <el-table-column label="应结"><template #default="{row}">{{ yuan(row.dueCents) }}</template></el-table-column>
-        <el-table-column label="已结"><template #default="{row}">{{ yuan(row.settledCents) }}</template></el-table-column>
-        <el-table-column label="未结"><template #default="{row}">{{ yuan(row.unsettledCents) }}</template></el-table-column>
-        <el-table-column label="操作" width="170"><template #default="{row}">
-          <el-button size="small" @click="setRate(row)">设比例</el-button>
-          <el-button size="small" type="primary" @click="openGenCoPayDoc(row)">生成佣金单</el-button>
-        </template></el-table-column>
-      </el-table>
-      <div style="margin:8px 0;color:#909399;font-size:13px">佣金支付单（GET /co-pay-docs · PENDING_PAY → 确认支付 → SETTLED）</div>
-      <el-table :data="coDocs" border size="small">
-        <el-table-column prop="collectorName" label="催收员" /><el-table-column prop="count" label="笔数" width="70" />
-        <el-table-column label="金额"><template #default="{row}">{{ yuan(row.amountCents) }}</template></el-table-column>
-        <el-table-column label="状态" width="120"><template #default="{row}"><el-tag size="small" :type="row.status==='SETTLED'?'success':'warning'">{{ row.status==='SETTLED'?'已结':'待支付' }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="180"><template #default="{row}">
-          <el-button size="small" text @click="openCoDocDetail(row)">详情</el-button>
-          <el-button v-if="row.status==='PENDING_PAY'" size="small" type="primary" @click="confirmPay(row)">确认支付</el-button>
-        </template></el-table-column>
-      </el-table>
+      <div class="sec-title">内催佣金（GET /co-commissions · 服务商内部催收员佣金）</div>
+      <table>
+        <thead>
+          <tr>
+            <th>催收员</th><th style="width:80px">批次数</th><th>应结</th><th>已结</th><th>未结</th><th style="width:180px">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in coco" :key="row.collectorId">
+            <td>{{ row.name }}</td>
+            <td class="num">{{ row.batchCount }}</td>
+            <td class="num">{{ yuan(row.dueCents) }}</td>
+            <td class="num"><span class="tag suc">{{ yuan(row.settledCents) }}</span></td>
+            <td class="num"><span class="tag" :class="row.unsettledCents ? 'war' : 'inf'">{{ yuan(row.unsettledCents) }}</span></td>
+            <td>
+              <button class="btn txt" @click="setRate(row)">设比例</button>
+              <button class="btn txt" @click="openGenCoPayDoc(row)">生成佣金单</button>
+            </td>
+          </tr>
+          <tr v-if="!coco.length"><td colspan="6" class="note" style="text-align:center">暂无催收员佣金</td></tr>
+        </tbody>
+      </table>
+      <div class="note">佣金支付单（GET /co-pay-docs · PENDING_PAY → 确认支付 → SETTLED）</div>
+      <table>
+        <thead>
+          <tr>
+            <th>催收员</th><th style="width:70px">笔数</th><th>金额</th><th style="width:120px">状态</th><th style="width:180px">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in coDocs" :key="row.id">
+            <td>{{ row.collectorName }}</td>
+            <td class="num">{{ row.count }}</td>
+            <td class="num">{{ yuan(row.amountCents) }}</td>
+            <td><span class="tag" :class="row.status==='SETTLED'?'suc':'war'">{{ row.status==='SETTLED'?'已结':'待支付' }}</span></td>
+            <td>
+              <button class="btn txt" @click="openCoDocDetail(row)">详情</button>
+              <button v-if="row.status==='PENDING_PAY'" class="btn txt" @click="confirmPay(row)">确认支付</button>
+            </td>
+          </tr>
+          <tr v-if="!coDocs.length"><td colspan="5" class="note" style="text-align:center">暂无佣金支付单</td></tr>
+        </tbody>
+      </table>
     </template>
     <template v-if="mySettle">
-      <el-divider content-position="left">我的佣金（GET /me/settlement · 催收员自查）</el-divider>
-      <el-descriptions :column="3" border size="small">
-        <el-descriptions-item label="应结">{{ yuan(mySettle.totalCents ?? mySettle.dueCents) }}</el-descriptions-item>
-        <el-descriptions-item label="已结">{{ yuan(mySettle.settledCents) }}</el-descriptions-item>
-        <el-descriptions-item label="未结">{{ yuan(mySettle.unsettledCents) }}</el-descriptions-item>
-      </el-descriptions>
+      <div class="sec-title">我的佣金（GET /me/settlement · 催收员自查）</div>
+      <div class="kpis" style="grid-template-columns:repeat(3,1fr)">
+        <div class="kpi"><div class="n">{{ yuan(mySettle.totalCents ?? mySettle.dueCents) }}</div><div class="l">应结</div></div>
+        <div class="kpi"><div class="n" style="color:var(--success)">{{ yuan(mySettle.settledCents) }}</div><div class="l">已结</div></div>
+        <div class="kpi"><div class="n" style="color:var(--warning)">{{ yuan(mySettle.unsettledCents) }}</div><div class="l">未结</div></div>
+      </div>
     </template>
 
     <!-- 生成支付申请单 -->
@@ -242,7 +310,7 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
         <el-table-column type="selection" width="40" />
         <el-table-column prop="ownerName" label="业主" /><el-table-column prop="room" label="房号" />
         <el-table-column label="回款"><template #default="{row}">{{ yuan(row.amountCents) }}</template></el-table-column>
-        <el-table-column prop="channel" label="渠道" /><el-table-column prop="paidAt" label="日期" />
+        <el-table-column label="渠道"><template #default="{row}"><span :title="row.channel">{{ channelLabel(row.channel) }}</span></template></el-table-column><el-table-column prop="paidAt" label="日期" />
       </el-table>
       <div style="margin-top:6px;color:#606266">已选 {{ gSel.length }} 笔，合计 {{ yuan(gSel.reduce((s,l)=>s+(l.amountCents||0),0)) }}</div>
       <template #footer><el-button @click="gdlg=false">取消</el-button><el-button type="primary" :disabled="!gSel.length" @click="submitGenerate">生成</el-button></template>
@@ -253,7 +321,7 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
       <template v-if="detail">
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="单号">{{ detail.code }}</el-descriptions-item>
-          <el-descriptions-item label="状态">{{ detail.status }}</el-descriptions-item>
+          <el-descriptions-item label="状态"><span :title="detail.status">{{ payReqStatusLabel(detail.status) }}</span></el-descriptions-item>
           <el-descriptions-item label="基数">{{ yuan(detail.baseCents) }}</el-descriptions-item>
           <el-descriptions-item label="比例">{{ pct(detail.commRate) }}</el-descriptions-item>
           <el-descriptions-item label="应结佣金">{{ yuan(detail.commCents) }}</el-descriptions-item>
@@ -277,14 +345,22 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
     </el-dialog>
 
     <!-- 完成 -->
-    <el-dialog v-model="cdlg" :title="(side==='IN'?'确认收款':'支付完成')+'（必带凭证 BR-M9-12d）'" width="440px">
+    <DsDrawer v-model="cdlg" :title="(side==='IN'?'确认收款':'支付完成')" :width="440">
       <el-form label-width="100px">
         <el-form-item label="凭证类型"><el-tag>{{ cform.type==='RECEIPT'?'收款凭证':'支付凭证' }}</el-tag></el-form-item>
-        <el-form-item label="凭证文件 URL"><el-input v-model="cform.fileUrl" /></el-form-item>
+        <el-form-item label="上传凭证" required>
+          <el-upload action="/api/uploads" :show-file-list="false" :on-success="onVoucherUpload"
+            :on-error="onVoucherUploadError">
+            <el-button size="small">选择文件上传</el-button>
+          </el-upload>
+        </el-form-item>
+        <el-form-item label="凭证文件 URL" required>
+          <el-input v-model="cform.fileUrl" placeholder="上传后自动回填，或手填可访问地址（必填）" />
+        </el-form-item>
         <el-form-item label="版本(乐观锁)"><el-input-number v-model="cform.version" :min="1" disabled /></el-form-item>
       </el-form>
       <template #footer><el-button @click="cdlg=false">取消</el-button><el-button type="primary" @click="submitComplete">完成</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
     <!-- M-05 内催佣金穿透组单：催收员 → 批次(比例) → 未结明细勾选 → POST /co-pay-docs -->
     <el-dialog v-model="cdlg2" :title="`生成佣金单 · ${cCollector?.name ?? ''}（人→批次→明细勾选 POST /co-pay-docs）`" width="760px">
@@ -300,7 +376,7 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
         <el-table-column type="selection" width="40" />
         <el-table-column prop="ownerName" label="业主" /><el-table-column prop="room" label="房号" />
         <el-table-column label="回款"><template #default="{row}">{{ yuan(row.amountCents) }}</template></el-table-column>
-        <el-table-column prop="channel" label="渠道" /><el-table-column prop="paidAt" label="日期" />
+        <el-table-column label="渠道"><template #default="{row}"><span :title="row.channel">{{ channelLabel(row.channel) }}</span></template></el-table-column><el-table-column prop="paidAt" label="日期" />
       </el-table>
       <div style="margin-top:6px;color:#606266">已选 {{ cSel.length }} 笔，合计回款 {{ yuan(cSel.reduce((s,l)=>s+(l.amountCents||0),0)) }}</div>
       <template #footer><el-button @click="cdlg2=false">取消</el-button><el-button type="primary" :disabled="!cSel.length" @click="submitGenCoPayDoc">生成佣金单</el-button></template>
@@ -331,5 +407,5 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
         </el-table>
       </template>
     </el-dialog>
-  </el-card>
+  </div>
 </template>

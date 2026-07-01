@@ -1,0 +1,89 @@
+/* 有证慧催 · 移动作业端样式（源自 docs/ui/高保真/app.html，全部命名空间化到 .m-app，
+   复用 ds-admin :root tokens；结构类用 m- 前缀避开与 ds-admin 的 .body/.tl/.badge 冲突）。 */
+
+/* 根容器：桌面下居中成手机宽，移动端铺满 */
+.m-app {
+  position: fixed; inset: 0; margin: 0 auto; max-width: 480px;
+  background: #f5f7fa; display: flex; flex-direction: column;
+  box-shadow: 0 0 40px rgba(0, 0, 0, .08); overflow: hidden;
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; color: var(--txt);
+}
+/* 顶栏 */
+.m-ab { height: 50px; flex: none; background: linear-gradient(90deg, #13245b, #2563EB); color: #fff; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; font-weight: 600; font-size: 16px; }
+.m-ab .m-back { cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.m-ab .m-rp { font-size: 11px; background: rgba(255, 255, 255, .16); border: 1px dashed rgba(255, 255, 255, .6); border-radius: 10px; padding: 3px 8px; color: #fff; }
+.m-ab select.m-rp { outline: none; }
+/* 内容区 */
+.m-body { flex: 1; overflow: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
+/* 底部 Tab */
+.m-tabbar { height: 56px; flex: none; background: #fff; border-top: 1px solid #e5e7eb; display: flex; }
+.m-tabbar .m-t { flex: 1; text-align: center; font-size: 11px; color: #9aa3af; padding-top: 8px; cursor: pointer; }
+.m-tabbar .m-t.on { color: var(--primary); }
+.m-tabbar .m-t .i { font-size: 18px; display: block; line-height: 1.1; margin-bottom: 2px; }
+
+/* 卡片 / 文本 */
+.m-app .mc { background: #fff; border-radius: 12px; padding: 13px; margin-bottom: 10px; box-shadow: 0 1px 4px rgba(0, 0, 0, .05); }
+.m-app .due { color: var(--danger); font-weight: 700; }
+.m-app .sec { font-size: 13px; font-weight: 600; color: #374151; margin: 14px 2px 8px; }
+.m-app .row { display: flex; justify-content: space-between; align-items: center; }
+.m-app .mini { font-size: 12px; color: #9aa3af; }
+.m-app b { font-weight: 600; }
+
+/* 概览/待办横滑卡 */
+.m-app .todoh { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 10px; padding-bottom: 2px; }
+.m-app .todoh .c { min-width: 92px; background: #fff; border-radius: 10px; padding: 10px; text-align: center; box-shadow: 0 1px 3px rgba(0, 0, 0, .05); flex: none; }
+.m-app .todoh .n { font-size: 21px; font-weight: 700; } .m-app .todoh .l { font-size: 11px; color: #9aa3af; margin-top: 2px; }
+
+/* 徽标 */
+.m-app .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; display: inline-block; }
+.m-app .b-or { background: #fff7ed; color: #c2620a; }
+.m-app .b-gr { background: #f0fdf4; color: #15803d; }
+.m-app .b-bl { background: #eff6ff; color: #2563eb; }
+.m-app .b-gy { background: #f3f4f6; color: #6b7280; }
+.m-app .b-rd { background: #fef2f2; color: #dc2626; }
+
+/* 按钮 */
+.m-app .mbtn { display: block; width: 100%; border: none; border-radius: 10px; padding: 13px; font-size: 15px; font-weight: 600; cursor: pointer; }
+.m-app .mbtn.pri { background: var(--primary); color: #fff; }
+.m-app .mbtn.gho { background: #fff; color: var(--primary); border: 1px solid var(--primary); }
+.m-app .mbtn.suc { background: #15803d; color: #fff; }
+.m-app .mbtn:disabled { opacity: .55; cursor: not-allowed; }
+
+/* 三宫格统计 */
+.m-app .info3 { display: flex; background: #f8fafc; border: 1px solid #eef1f5; border-radius: 10px; }
+.m-app .info3 > div { flex: 1; text-align: center; padding: 10px 4px; border-right: 1px solid #eef1f5; } .m-app .info3 > div:last-child { border: none; }
+.m-app .info3 .v { font-size: 16px; font-weight: 700; } .m-app .info3 .k { font-size: 11px; color: #9aa3af; margin-top: 2px; }
+
+/* 时间线 */
+.m-app .tl { padding-left: 16px; } .m-app .tl .e { position: relative; margin-bottom: 14px; font-size: 13px; }
+.m-app .tl .e::before { content: ""; position: absolute; left: -16px; top: 4px; width: 9px; height: 9px; border-radius: 50%; background: var(--primary); }
+.m-app .tl .e .tm { font-size: 11px; color: #9aa3af; }
+
+/* 标签选择 / 输入 */
+.m-app .tagpick { display: flex; flex-wrap: wrap; gap: 8px; }
+.m-app .tagpick .p { border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer; background: #fff; }
+.m-app .tagpick .p.on { background: var(--primary); color: #fff; border-color: var(--primary); }
+.m-app .tagpick .p.dg.on { background: var(--danger); border-color: var(--danger); }
+.m-app textarea.ta2 { width: 100%; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; font-size: 13px; min-height: 64px; font-family: inherit; box-sizing: border-box; }
+.m-app input.inp { box-sizing: border-box; }
+
+/* 全屏覆盖（动作面板） */
+.m-ov { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: #f5f7fa; }
+.m-ov .m-body { top: 0; }
+.m-ov.dial { background: linear-gradient(160deg, #13245b, #1d4ed8); color: #fff; align-items: center; justify-content: center; text-align: center; padding: 24px; }
+.m-app .av-lg { width: 84px; height: 84px; border-radius: 50%; background: rgba(255, 255, 255, .16); display: flex; align-items: center; justify-content: center; font-size: 30px; margin-bottom: 14px; }
+.m-app .nm-lg { font-size: 22px; font-weight: 700; } .m-app .glass { background: rgba(255, 255, 255, .12); border-radius: 12px; padding: 12px 18px; margin-top: 14px; }
+.m-app .ring { width: 64px; height: 64px; border-radius: 50%; border: 3px solid #dbe3ee; border-top-color: var(--primary); display: flex; align-items: center; justify-content: center; font-size: 18px; margin: 22px auto; animation: m-spin 1s linear infinite; }
+@keyframes m-spin { to { transform: rotate(360deg); } }
+
+/* AI 复盘对话气泡 */
+.m-app .tr-prev .b { border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; }
+.m-app .tr-prev .b .who { font-size: 10px; margin-bottom: 2px; }
+
+/* Toast */
+.m-toast { position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%); background: rgba(17, 24, 39, .92); color: #fff; font-size: 13px; padding: 9px 16px; border-radius: 20px; z-index: 50; max-width: 86%; text-align: center; }
+
+/* 拍照（法务送达） */
+.m-app .sign-cam { flex: 1; background: #1a1a2e; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: #fff; font-size: 14px; }
+.m-app .sign-cam .lens { width: 120px; height: 120px; border-radius: 12px; border: 2px dashed rgba(255, 255, 255, .5); display: flex; align-items: center; justify-content: center; font-size: 40px; }
+.m-app .sign-ph { width: 100%; height: 200px; border-radius: 10px; background: linear-gradient(135deg, #c7d2fe, #a5f3fc); display: flex; align-items: center; justify-content: center; font-size: 13px; color: #374151; }
