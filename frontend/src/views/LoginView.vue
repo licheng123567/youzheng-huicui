@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuth } from '../stores/auth'
@@ -12,8 +12,11 @@ const username = ref('admin'); const password = ref('Admin@123')
 const phone = ref('13900009000'); const code = ref('')
 const loading = ref(false); const smsSent = ref(false)
 const showPwd = ref(false)   // 密码明文切换（展示用）
+const countdown = ref(0); let timer: ReturnType<typeof setInterval> | null = null
 // 多账号选择态
 const accounts = ref<any[]>([]); const loginTicket = ref('')
+
+onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
 function done() { router.push((route.query.redirect as string) || '/') }
 
@@ -28,7 +31,15 @@ async function submit() {
   } catch (e) { ElMessage.error((e as Error).message) } finally { loading.value = false }
 }
 async function sendCode() {
-  try { await auth.requestSmsCode(phone.value); smsSent.value = true; ElMessage.success('验证码已发送') }
+  try {
+    await auth.requestSmsCode(phone.value)
+    smsSent.value = true; countdown.value = 60
+    ElMessage.success('验证码已发送')
+    timer = setInterval(() => {
+      countdown.value--
+      if (countdown.value <= 0) { if (timer) clearInterval(timer); timer = null }
+    }, 1000)
+  }
   catch (e) { ElMessage.error((e as Error).message) }
 }
 async function pick(a: any) {
@@ -105,7 +116,7 @@ async function pick(a: any) {
                 <label class="l">验证码</label>
                 <div class="code-row">
                   <input v-model="code" inputmode="numeric" maxlength="6" placeholder="6 位验证码" @keyup.enter="submit" />
-                  <button class="btn df getcode" type="button" @click="sendCode">{{ smsSent ? '重新获取' : '获取验证码' }}</button>
+                  <button class="btn df getcode" type="button" :disabled="countdown > 0" @click="sendCode">{{ countdown > 0 ? countdown + 's 后重试' : smsSent ? '重新获取' : '获取验证码' }}</button>
                 </div>
               </div>
             </template>
@@ -113,7 +124,7 @@ async function pick(a: any) {
           </form>
 
           <div class="tip">
-            dev：admin（平台SA）/ cuihu_pl（物业PL）单账号直登；<b>duo_pc 或手机 13900009000</b> 演示一号多账号选择。
+            支持<b>账号密码</b>和<b>手机验证码</b>两种登录方式。同一手机号关联多个账号时，系统将引导您选择登录身份。
           </div>
         </template>
       </div>
