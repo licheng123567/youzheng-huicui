@@ -666,22 +666,26 @@ onMounted(function () { loadAll(); loadCloseReasons() })
     <!-- ============ 右栏：操作区 ============ -->
     <div class="col right">
       <div class="opzone">
-        <!-- 录音解析（复用现有 latest/review 逻辑） -->
-        <div v-if="auth.has('case.call')" class="op-rec">
-          <div class="op-rec-h">本次通话回填</div>
+        <!-- 操作区（对标原型：OPS 按权限过滤 + 分组渲染） -->
+        <div style="font-size:13px;font-weight:600;color:var(--txt);margin-bottom:10px;display:flex;align-items:center;gap:6px">
+          <span class="bar" style="width:3px;height:13px;background:var(--primary);border-radius:2px;display:inline-block"></span>操作区 · {{ role || '—' }}
+        </div>
+
+        <!-- 录音区（全角色可见：获取最新录音+AI复盘+手动上传救济） -->
+        <div class="op-rec" style="margin-bottom:12px">
+          <div class="op-rec-h" style="font-weight:600;font-size:13px;margin-bottom:6px">本次通话回填</div>
           <div class="note" style="font-size:11px;margin:0 0 8px;line-height:1.6">ⓘ 平台不感知拨打时机；按作战手册通话后，点下方拉取本机最新录音（App 自动上传解析）。</div>
-          <button class="btn sm" style="width:100%" @click="getLatest">🔄 获取最新通话录音</button>
-          <div v-if="recReady" class="rec-ready">
+          <button v-if="!recObj" class="btn sm" style="width:100%" @click="getLatest">🔄 获取最新通话录音</button>
+          <div v-if="recReady" class="rec-ready" style="margin-top:8px">
             <div class="rr-meta">
               <span class="tag" :class="recStatusTag(recObj.status)" :title="recObj.status">{{ callRecStatusLabel(recObj.status) }}</span>
-              最新通话 · {{ recObj.durationSec }}s
+              最新通话 · {{ recObj.durationSec || '—' }}s
             </div>
             <button v-if="recObj.status === 'READY'" class="btn sm" style="width:100%;margin-top:7px" @click="loadReview(recObj.id)">查看并标注（AI 复盘）→</button>
             <div class="toolbar" style="margin-top:7px;gap:6px;flex-wrap:wrap">
               <el-button size="small" @click="router.push(`/cases/${id}/call/${recObj.id}`)">通话详情</el-button>
               <el-button v-if="recObj.status === 'FAILED'" size="small" @click="reprocessRec(recObj.id)">重新处理</el-button>
               <el-button v-if="recObj.status === 'QUOTA_BLOCKED'" size="small" type="warning" @click="parseRec(recObj.id)">补解析</el-button>
-              <el-button v-if="recObj.status === 'QUOTA_BLOCKED'" size="small" @click="batchParseRec">批量补解析</el-button>
               <el-button v-if="auth.has('case.follow')" size="small" @click="openMark(recObj.id)">标记结果</el-button>
             </div>
             <div v-if="recObj.status === 'QUOTA_BLOCKED'" class="alert warn" style="font-size:11px;margin-top:6px">解析余额不足已暂停（BR-M5-02）：充值后点「补解析」续解析。</div>
@@ -692,27 +696,6 @@ onMounted(function () { loadAll(); loadCloseReasons() })
           </div>
           <div style="border-bottom:1px solid var(--bd);margin:12px 0"></div>
         </div>
-
-        <!-- 操作区（对标原型：OPS 按权限过滤 + 分组渲染） -->
-        <div style="font-size:13px;font-weight:600;color:var(--txt);margin-bottom:10px;display:flex;align-items:center;gap:6px">
-          <span class="bar" style="width:3px;height:13px;background:var(--primary);border-radius:2px;display:inline-block"></span>操作区 · {{ role || '—' }}
-        </div>
-
-        <!-- 录音区（有通话权限的角色可见） -->
-        <template v-if="auth.has('case.call')">
-          <div class="op-rec" style="margin-bottom:12px">
-            <div class="op-rec-h" style="font-weight:600;font-size:13px;margin-bottom:6px">本次通话回填</div>
-            <div class="note" style="font-size:11px;margin:0 0 8px;line-height:1.6">平台不感知拨打时机；按作战手册通话后，点下方拉取本机最新录音。</div>
-            <button v-if="!recObj" class="btn sm" style="width:100%" @click="loadAll">获取最新通话录音</button>
-            <div v-else-if="recObj.status === 'READY'" class="rec-ready">
-              <span class="tag suc">已就绪</span> {{ recObj.recordedAt || recObj.createdAt }}
-              <button class="btn sm" style="width:100%;margin-top:7px" @click="loadReview(recObj.id)">查看并标注（AI 复盘）</button>
-            </div>
-            <div v-else class="note" style="font-size:11px">状态：{{ recObj.status || '—' }}</div>
-            <div class="note" style="font-size:11px;margin-top:6px">未发现新录音？ <label class="btn txt" style="padding:0 2px;cursor:pointer">手动上传<input type="file" hidden accept="audio/*" @change="uploadRecording" /></label></div>
-            <div style="border-bottom:1px solid var(--bd);margin:12px 0"></div>
-          </div>
-        </template>
 
         <!-- 操作按钮（按 OPS 分组，仅显示有权限的） -->
         <template v-if="caseOps.length">
