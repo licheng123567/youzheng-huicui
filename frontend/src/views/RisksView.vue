@@ -62,32 +62,45 @@ onMounted(load)
     <table v-loading="loading">
       <thead>
         <tr>
-          <th style="width:80px">级别</th>
+          <th>业主</th>
+          <th>房号</th>
+          <th>项目</th>
+          <th>批次</th>
+          <th>电话</th>
+          <th>催收员</th>
           <th>风险类型</th>
-          <th style="width:100px">催收员</th>
-          <th style="width:90px">片段</th>
-          <th style="width:120px">复核</th>
-          <th style="width:220px">操作</th>
+          <th style="width:70px">级别</th>
+          <th style="width:160px">片段（点击定位播放）</th>
+          <th style="width:200px">操作</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="row in risks" :key="row.id">
+          <td>{{ row.ownerName || row.caseName || '—' }}</td>
+          <td>{{ row.room || '—' }}</td>
+          <td>{{ row.projectName || '—' }}</td>
+          <td>{{ row.batchCode || '—' }}</td>
+          <td>{{ row.phone || '—' }}</td>
+          <td>{{ row.collectorName || row.collector || '—' }}</td>
+          <td>{{ row.type || row.riskType || '—' }}</td>
           <td><span class="tag" :class="levelTag(row.level)" :title="row.level">{{ riskLevelLabel(row.level) }}</span></td>
-          <td>{{ row.type || '—' }}</td>
-          <td>{{ row.collector || '—' }}</td>
-          <td>{{ row.segmentTs || '—' }}</td>
           <td>
-            <span v-if="row.reviewed" class="tag suc" :title="row.reviewed">{{ riskVerdictLabel(row.reviewed) }}</span>
-            <span v-else style="color:var(--sec)">待复核</span>
+            <template v-if="row.recordingUrl">
+              <audio :src="row.recordingUrl" controls style="width:140px;height:24px" :title="'片段 ' + (row.segmentTs || '')" preload="metadata"></audio>
+            </template>
+            <template v-else>
+              <span style="color:var(--sec);font-size:12px">{{ row.segmentTs || row.snippet || '无录音片段' }}</span>
+            </template>
           </td>
           <td>
             <button v-if="auth.has('qc.dispose')" class="btn txt" @click="openDispose(row)">处置</button>
             <button v-if="auth.has('qc.escalate')" class="btn txt" @click="escalate(row)">上报</button>
             <button v-if="auth.has('qc.review')" class="btn txt" @click="openReview(row)">复核</button>
+            <span v-if="row.reviewed" class="tag suc" style="margin-left:4px;font-size:11px" :title="row.reviewed">{{ riskVerdictLabel(row.reviewed) }}</span>
           </td>
         </tr>
         <tr v-if="!loading && !risks.length">
-          <td colspan="6" style="text-align:center;color:var(--sec);padding:32px 0">暂无数据</td>
+          <td colspan="10" style="text-align:center;color:var(--sec);padding:32px 0">暂无数据</td>
         </tr>
       </tbody>
     </table>
