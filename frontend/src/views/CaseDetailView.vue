@@ -451,6 +451,11 @@ function onOp(o: typeof OPS[number]) {
   else if (act === 'close') openAct('close', '结案')
 }
 
+// ── 送达存证（PL/PC 专属功能，对标原型 §送达存证）──
+function printCollection() { ElMessage.success('已生成催收单并调起打印（演示）') }
+function openSuitPreview() { ElMessage.info('生成诉讼文件（要素预览·功能占位，对接诉状生成后端后补）') }
+function openEvidencePack() { ElMessage.info('证据下载（整案打包·功能占位，对接存证打包端点后补）') }
+
 // AI 采纳联动（校验动作权限）
 const ADOPT: any = { PROMISE: ['promise', '登记承诺', 'case.promise'], TICKET: ['ticket', '转工单', 'case.ticket'], PAYLINK: ['paylink', '发缴费链接', 'case.paylink'], FOLLOWUP: ['follow', '写跟进', 'case.follow'] }
 function adopt(card: any) {
@@ -715,6 +720,16 @@ onMounted(function () { loadAll(); loadCloseReasons() })
           <template v-if="isCollector && d.case?.legalStage && d.case.legalStage !== 'NONE'">
             <div class="sec-title" style="margin-top:14px">法务进度</div>
             <div class="alert info" style="margin-top:0;font-size:12px">本案已进入法务流程 · 「{{ legalStageLabel(d.case.legalStage) }}」（只读，由协调员主导）。</div>
+          </template>
+
+          <!-- 送达存证（PL/PC 专属：申请律师函/催收单/诉讼文件/证据打包/存证清单） -->
+          <template v-if="isPropertyRole">
+            <div class="sec-title" style="margin-top:14px">送达存证</div>
+            <button class="btn df sm" style="width:100%;margin-bottom:6px" @click="router.push('/legal')">⚖ 申请律师函</button>
+            <button class="btn df sm" style="width:100%;margin-bottom:6px" @click="printCollection">🖨 催收单打印</button>
+            <button class="btn df sm" style="width:100%;margin-bottom:6px" @click="openSuitPreview">📄 生成诉讼文件</button>
+            <button class="btn df sm" style="width:100%;margin-bottom:8px" @click="openEvidencePack">⬇ 证据下载（整案打包）</button>
+            <button class="btn pl sm" style="width:100%;margin-bottom:6px" @click="router.push('/evidence')">🔒 查看存证清单</button>
           </template>
 
           <!-- 危险操作（终态操作·不可撤销） -->
