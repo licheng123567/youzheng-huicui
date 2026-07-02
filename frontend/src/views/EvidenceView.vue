@@ -53,27 +53,43 @@ onMounted(load)
     <table v-loading="loading">
       <thead>
         <tr>
-          <th>存证号</th>
-          <th style="width:120px">场景</th>
-          <th style="width:100px">状态</th>
-          <th style="width:180px">出证时间</th>
-          <th style="width:200px">操作</th>
+          <th>案件</th>
+          <th>房号</th>
+          <th>项目</th>
+          <th>批次</th>
+          <th>联系电话</th>
+          <th style="width:90px">场景</th>
+          <th>对象</th>
+          <th style="width:100px">时间</th>
+          <th style="width:180px">上链哈希</th>
+          <th style="width:80px">状态</th>
+          <th style="width:150px">操作</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="row in items" :key="row.id">
-          <td>{{ row.certNo || '—' }}</td>
+          <td>{{ row.caseName || row.ownerName || '—' }}</td>
+          <td>{{ row.room || '—' }}</td>
+          <td>{{ row.projectName || '—' }}</td>
+          <td>{{ row.batchCode || '—' }}</td>
+          <td>{{ row.phone || '—' }}</td>
           <td :title="row.scene">{{ evidenceSceneLabel(row.scene) }}</td>
+          <td>{{ row.object || row.certNo || '—' }}</td>
+          <td>{{ row.issuedAt || row.createdAt || '—' }}</td>
+          <td>
+            <code v-if="row.hash" style="font-size:11px;word-break:break-all" :title="row.hash">{{ row.hash.slice(0, 16) }}…</code>
+            <span v-else style="color:var(--sec);font-size:11px">—</span>
+          </td>
           <td><span class="tag" :class="statusTag(row.status)" :title="row.status">{{ evidenceStatusLabel(row.status) }}</span></td>
-          <td>{{ row.issuedAt || '—' }}</td>
           <td>
             <a class="btn txt" @click="doVerify(row)">验真</a>
-            <a v-if="row.certUrl" class="btn txt" :href="row.certUrl" target="_blank">证书</a>
+            <a v-if="row.certUrl" class="btn txt" :href="row.certUrl" target="_blank" download>下载证书</a>
+            <a v-if="!row.certUrl" class="btn txt" style="color:var(--sec);cursor:default">—</a>
             <a v-if="row.status==='FAILED' && canCreate" class="btn txt wn" @click="doRetry(row)">重试</a>
           </td>
         </tr>
         <tr v-if="!loading && !items.length">
-          <td colspan="5" style="text-align:center;color:var(--sec);padding:32px 0">暂无数据</td>
+          <td colspan="11" style="text-align:center;color:var(--sec);padding:32px 0">暂无数据</td>
         </tr>
       </tbody>
     </table>
