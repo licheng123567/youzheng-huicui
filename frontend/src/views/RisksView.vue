@@ -89,7 +89,10 @@ onMounted(load)
           <td>
             <template v-if="row.recordingId">
               <a class="btn txt" @click="router.push('/cases/' + (row.caseId || '') + '/call/' + row.recordingId)" :title="row.segmentTs || ''">
-                🎧 {{ row.segmentTs || '播放录音' }}
+                🎧 {{ row.segmentTs || '播放' }}
+              </a>
+              <a class="btn txt" :href="row.recordingUrl || '/v1/recordings/' + row.recordingId" target="_blank" download :title="'下载录音 ' + (row.segmentTs || '')">
+                ⬇ 下载
               </a>
             </template>
             <template v-else>
