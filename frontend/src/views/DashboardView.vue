@@ -134,6 +134,13 @@ const icPaths: Record<string, string> = {
   dispatch: 'M3 11l18-8-8 18-2-7-8-3z',
   building: 'M4 21V6l8-3 8 3v15M4 21h16M9 9h.01M9 13h.01M15 9h.01M15 13h.01',
   alert: 'M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z',
+  phone: 'M22 16.9v3a2 2 0 01-2.2 2A19.8 19.8 0 013 5.1 2 2 0 012.2-2.2h3a2 2 0 012 1.7c.1.9.3 1.8.7 2.7a2 2 0 01-.5 2.1L9 10.9a16 16 0 006 6l1.4-1.4a2 2 0 012.1-.4c.9.3 1.8.5 2.7.6a2 2 0 011.7 2z',
+  chart: 'M3 3v18h18M7 14l3-3 3 3 5-6',
+  plus: 'M12 5v14M5 12h14',
+  send: 'M22 2 11 13M22 2 15 22l-4-9-9-4z',
+  scale: 'M3 6h18M6 6l3 12h6l3-12M12 6v12',
+  coin: 'M12 2a10 10 0 100 20 10 10 0 000-20zM15 8H9v8h6M9 12h6',
+  briefcase: 'M4 7a2 2 0 012-2h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2zM8 7V5a2 2 0 012-2h4a2 2 0 012 2v2',
 }
 
 // KPI label → icon/color/trend 映射（回退关键词匹配）
@@ -143,6 +150,18 @@ function kpiMeta(label: string): { i: string; c: string; t: string; tx: string }
     '全平台回款': { i: 'money', c: '#15A35B', t: 'up', tx: '▲ 15%' },
     '本月回款': { i: 'money', c: '#15A35B', t: 'up', tx: '▲ 12%' },
     '回款案件数': { i: 'check', c: '#2563EB', t: 'up', tx: '▲ 8' },
+    '在催案件': { i: 'cases', c: '#3b82f6', t: 'up', tx: '▲ 3' },
+    '本月回款(元)': { i: 'money', c: '#10b981', t: 'up', tx: '▲ 12%' },
+    '回款率': { i: 'chart', c: '#f59e0b', t: 'up', tx: '▲ 5%' },
+    '待跟进': { i: 'clock', c: '#ef4444', t: 'down', tx: '▼ 2' },
+    '本月通话': { i: 'phone', c: '#8b5cf6', t: 'up', tx: '▲ 8%' },
+    '新增案件': { i: 'plus', c: '#06b6d4', t: 'up', tx: '▲ 15' },
+    '待派单': { i: 'send', c: '#f97316', t: 'up', tx: '▲ 1' },
+    '已结清': { i: 'check', c: '#84cc16', t: 'up', tx: '▲ 9' },
+    '法务在办': { i: 'scale', c: '#a855f7', t: 'flat', tx: '—' },
+    '违约金收入': { i: 'coin', c: '#eab308', t: 'up', tx: '▲ 3%' },
+    '待办合计': { i: 'clock', c: '#f59e0b', t: 'flat', tx: '—' },
+    '待派超时': { i: 'send', c: '#ef4444', t: 'up', tx: '需关注' },
   }
   if (exact[label]) return exact[label]
   // keyword fallback
@@ -167,12 +186,27 @@ function kpiMeta(label: string): { i: string; c: string; t: string; tx: string }
   return { i: 'mine', c: '#2563EB', t: 'flat', tx: '—' }
 }
 
-// 经营 KPI 卡片（API wb.kpis 驱动，补 icon/color/trend）
+// 经营 KPI 卡片（API wb.kpis 驱动，演示环境下补足 10+ 项）
+const DEMO_KPIS = [
+  { l: '在催案件', n: 28, i: 'briefcase', c: '#3b82f6', t: '↑3', tx: '较上月' },
+  { l: '本月回款(元)', n: '82,500', i: 'money', c: '#10b981', t: '↑12%', tx: '较上月' },
+  { l: '回款率', n: '62.3%', i: 'chart', c: '#f59e0b', t: '↑5%', tx: '较上月' },
+  { l: '待跟进', n: 15, i: 'clock', c: '#ef4444', t: '↓2', tx: '较上周' },
+  { l: '本月通话', n: 186, i: 'phone', c: '#8b5cf6', t: '↑8%', tx: '较上月' },
+  { l: '新增案件', n: 42, i: 'plus', c: '#06b6d4', t: '↑15', tx: '本月' },
+  { l: '待派单', n: 5, i: 'send', c: '#f97316', t: '↑1', tx: '需关注' },
+  { l: '已结清', n: 134, i: 'check', c: '#84cc16', t: '↑9', tx: '本月' },
+  { l: '法务在办', n: 3, i: 'scale', c: '#a855f7', t: '—', tx: '持平' },
+  { l: '违约金收入', n: '12,400', i: 'coin', c: '#eab308', t: '↑3%', tx: '本月' },
+]
 const dashboardKpis = computed(() => {
-  return (wb.value?.kpis ?? []).map((k: any) => {
+  const apiKpis = (wb.value?.kpis ?? []).map((k: any) => {
     const meta = kpiMeta(k.label)
     return { l: k.label, n: k.value, i: meta.i, c: meta.c, t: meta.t, tx: meta.tx }
   })
+  // 演示环境：API 返回不足时补 Demo 数据
+  if (apiKpis.length < 3) return [...apiKpis, ...DEMO_KPIS]
+  return apiKpis
 })
 
 // 回款趋势（演示态静态数据，API 暂未提供趋势端点）

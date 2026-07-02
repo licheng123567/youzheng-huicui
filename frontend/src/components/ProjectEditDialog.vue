@@ -364,12 +364,12 @@ async function syncPlaybook(projectId: string) {
       <el-checkbox v-model="form.reduceEnabled" style="margin-bottom:8px">创建时设置减免政策</el-checkbox>
       <template v-if="form.reduceEnabled">
         <div style="color:#909399;font-size:12px;margin-bottom:8px">
-          阶梯折扣 + 是否减免违约金 + 决定权：<b>催收员自决</b>档系统直接生效；<b>线下内部流程</b>档系统仅提示并留痕。
+          折扣指<b>物业费本金</b>的减免比例（%）；违约金减免为独立开关，与物业费折扣分开计算。决定权：<b>催收员自决</b>档系统直接生效；<b>线下内部流程</b>档系统仅提示并留痕。
         </div>
         <el-table :data="form.reduceTiers" border size="small">
           <el-table-column label="减免 %" width="130"><template #default="{row}"><el-input-number v-model="row.discountPct" size="small" :min="1" :max="99" :step="1" style="width:100%" /> <span style="font-size:12px;color:var(--sec)">%（{{ (100 - row.discountPct) % 10 === 0 ? (100 - row.discountPct) / 10 : (100 - row.discountPct) }}折）</span></template></el-table-column>
           <el-table-column label="减免上限(元)"><template #default="{row}"><el-input-number v-model="row.capYuan" size="small" :min="0" :controls="false" placeholder="不限" style="width:100%" /></template></el-table-column>
-          <el-table-column label="含违约金减免" width="110"><template #default="{row}"><el-switch v-model="row.waivePenalty" size="small" /></template></el-table-column>
+          <el-table-column label="同时减免违约金" width="130"><template #default="{row}"><el-switch v-model="row.waivePenalty" size="small" /></template></el-table-column>
           <el-table-column label="决定权" width="150"><template #default="{row}">
             <el-select v-model="row.decide" size="small" style="width:100%">
               <el-option v-for="d in DECIDE_OPTS" :key="d" :label="reduceDecideLabel(d)" :value="d" />

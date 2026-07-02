@@ -152,19 +152,33 @@ onMounted(load)
       <thead>
         <tr>
           <th>项目名称</th>
-          <th>物业</th>
+          <th>物业公司</th>
           <th>区域</th>
+          <th style="width:70px">批次数</th>
+          <th style="width:60px">在催</th>
+          <th style="width:90px">应收总额</th>
+          <th style="width:90px">已收总额</th>
+          <th style="width:70px">回款率</th>
+          <th style="width:70px">法务</th>
+          <th style="width:60px">已结清</th>
           <!-- 资金双线：收佣比例整列仅平台/物业视角渲染(H-03) -->
-          <th v-if="showCommInRate">收佣比例</th>
-          <th>状态</th>
+          <th v-if="showCommInRate" style="width:80px">收佣比例</th>
+          <th style="width:70px">状态</th>
           <th style="width:210px">操作</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="row in items" :key="row.id">
           <td>{{ row.name || '—' }}</td>
-          <td>{{ row.org || '—' }}</td>
+          <td>{{ row.propCompany || row.org || '—' }}</td>
           <td>{{ row.area || '—' }}</td>
+          <td class="num">{{ row.batchCount ?? '—' }}</td>
+          <td class="num">{{ row.activeCases ?? '—' }}</td>
+          <td class="num">{{ yuan(row.dueTotalCents) }}</td>
+          <td class="num">{{ yuan(row.repayTotalCents) }}</td>
+          <td class="num">{{ row.repayRate != null ? (row.repayRate * 100).toFixed(1) + '%' : '—' }}</td>
+          <td class="num">{{ row.legalCount ?? '—' }}</td>
+          <td class="num">{{ row.settledCount ?? '—' }}</td>
           <td v-if="showCommInRate" class="num">{{ ratePct(row.commInRate) }}</td>
           <td><span class="tag" :class="statusTag(row.status)" :title="row.status">{{ statusLabel(row.status) }}</span></td>
           <td>
@@ -174,7 +188,7 @@ onMounted(load)
           </td>
         </tr>
         <tr v-if="!loading && !items.length">
-          <td :colspan="showCommInRate ? 6 : 5" style="text-align:center;color:var(--sec);padding:32px 0">暂无项目</td>
+          <td :colspan="showCommInRate ? 13 : 12" style="text-align:center;color:var(--sec);padding:32px 0">暂无项目</td>
         </tr>
       </tbody>
     </table>
