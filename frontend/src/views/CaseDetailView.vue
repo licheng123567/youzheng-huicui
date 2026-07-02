@@ -698,8 +698,8 @@ onMounted(function () { loadAll(); loadCloseReasons() })
           <span class="bar" style="width:3px;height:13px;background:var(--primary);border-radius:2px;display:inline-block"></span>操作区 · {{ role || '—' }}
         </div>
 
-        <!-- 录音区（仅 CO/VL） -->
-        <template v-if="isCollector || isProviderRole">
+        <!-- 录音区（有通话权限的角色可见） -->
+        <template v-if="auth.has('case.call')">
           <div class="op-rec" style="margin-bottom:12px">
             <div class="op-rec-h" style="font-weight:600;font-size:13px;margin-bottom:6px">本次通话回填</div>
             <div class="note" style="font-size:11px;margin:0 0 8px;line-height:1.6">平台不感知拨打时机；按作战手册通话后，点下方拉取本机最新录音。</div>
