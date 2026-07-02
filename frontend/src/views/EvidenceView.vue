@@ -58,12 +58,12 @@ onMounted(load)
           <th>项目</th>
           <th>批次</th>
           <th>联系电话</th>
-          <th style="width:90px">场景</th>
-          <th>对象</th>
+          <th style="width:80px">场景</th>
+          <th>存证对象</th>
           <th style="width:100px">时间</th>
-          <th style="width:180px">上链哈希</th>
-          <th style="width:80px">状态</th>
-          <th style="width:150px">操作</th>
+          <th style="width:140px">上链哈希</th>
+          <th style="width:70px">状态</th>
+          <th style="width:190px">操作</th>
         </tr>
       </thead>
       <tbody>
@@ -74,18 +74,19 @@ onMounted(load)
           <td>{{ row.batchCode || '—' }}</td>
           <td>{{ row.phone || '—' }}</td>
           <td :title="row.scene">{{ evidenceSceneLabel(row.scene) }}</td>
-          <td>{{ row.object || row.certNo || '—' }}</td>
+          <td>{{ row.object || row.fileName || row.certNo || '—' }}</td>
           <td>{{ row.issuedAt || row.createdAt || '—' }}</td>
           <td>
-            <code v-if="row.hash" style="font-size:11px;word-break:break-all" :title="row.hash">{{ row.hash.slice(0, 16) }}…</code>
+            <code v-if="row.hash" style="font-size:11px;word-break:break-all" :title="row.hash">{{ row.hash.slice(0, 14) }}…</code>
             <span v-else style="color:var(--sec);font-size:11px">—</span>
           </td>
           <td><span class="tag" :class="statusTag(row.status)" :title="row.status">{{ evidenceStatusLabel(row.status) }}</span></td>
           <td>
-            <a class="btn txt" @click="doVerify(row)">验真</a>
-            <a v-if="row.certUrl" class="btn txt" :href="row.certUrl" target="_blank" download>下载证书</a>
-            <a v-if="!row.certUrl" class="btn txt" style="color:var(--sec);cursor:default">—</a>
+            <a v-if="row.objectUrl || row.fileUrl" class="btn txt" :href="row.objectUrl || row.fileUrl" target="_blank" download title="下载存证原始文件">原始文件</a>
+            <a v-if="row.certUrl" class="btn txt" :href="row.certUrl" target="_blank" download title="下载存证证书 PDF">证书</a>
+            <a class="btn txt" @click="doVerify(row)" title="核验存证真伪">验真</a>
             <a v-if="row.status==='FAILED' && canCreate" class="btn txt wn" @click="doRetry(row)">重试</a>
+            <span v-if="!row.objectUrl && !row.fileUrl && !row.certUrl && row.status!=='FAILED'" style="color:var(--sec);font-size:12px">—</span>
           </td>
         </tr>
         <tr v-if="!loading && !items.length">
