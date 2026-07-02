@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
@@ -8,6 +9,7 @@ import DsDrawer from '../components/DsDrawer.vue'
 
 // M5 质检：风险看板(GET /risks·全量检测) + 处置归属(VL/PL 处置自己员工风险) + 平台复核 + 处置跟踪(仅平台)。
 const auth = useAuth()
+const router = useRouter()
 const isPlatform = computed(() => ['SA', 'SE'].includes(auth.me?.role ?? ''))
 const risks = ref<any[]>([])
 const tasks = ref<any[]>([])
@@ -85,11 +87,13 @@ onMounted(load)
           <td>{{ row.type || row.riskType || '—' }}</td>
           <td><span class="tag" :class="levelTag(row.level)" :title="row.level">{{ riskLevelLabel(row.level) }}</span></td>
           <td>
-            <template v-if="row.recordingUrl">
-              <audio :src="row.recordingUrl" controls style="width:140px;height:24px" :title="'片段 ' + (row.segmentTs || '')" preload="metadata"></audio>
+            <template v-if="row.recordingId">
+              <a class="btn txt" @click="router.push('/cases/' + (row.caseId || '') + '/call/' + row.recordingId)" :title="row.segmentTs || ''">
+                🎧 {{ row.segmentTs || '播放录音' }}
+              </a>
             </template>
             <template v-else>
-              <span style="color:var(--sec);font-size:12px">{{ row.segmentTs || row.snippet || '无录音片段' }}</span>
+              <span style="color:var(--sec);font-size:12px">{{ row.segmentTs || row.snippet || '—' }}</span>
             </template>
           </td>
           <td>

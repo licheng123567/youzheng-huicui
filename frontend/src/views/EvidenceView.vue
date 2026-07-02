@@ -82,8 +82,7 @@ onMounted(load)
           </td>
           <td><span class="tag" :class="statusTag(row.status)" :title="row.status">{{ evidenceStatusLabel(row.status) }}</span></td>
           <td>
-            <a v-if="row.objectUrl || row.fileUrl" class="btn txt" :href="row.objectUrl || row.fileUrl" target="_blank" download title="下载存证原始文件">原始文件</a>
-            <a v-if="row.certUrl" class="btn txt" :href="row.certUrl" target="_blank" download title="下载存证证书 PDF">证书</a>
+            <a v-if="row.objectUrl || row.fileUrl || row.certUrl" class="btn txt" :href="row.objectUrl || row.fileUrl || row.certUrl" target="_blank" download title="下载存证文件/证书">下载文件</a>
             <a class="btn txt" @click="doVerify(row)" title="核验存证真伪">验真</a>
             <a v-if="row.status==='FAILED' && canCreate" class="btn txt wn" @click="doRetry(row)">重试</a>
             <span v-if="!row.objectUrl && !row.fileUrl && !row.certUrl && row.status!=='FAILED'" style="color:var(--sec);font-size:12px">—</span>
