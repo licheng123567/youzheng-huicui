@@ -410,6 +410,47 @@ async function lifecycle(verb: string, path: any) {
     ElMessage.success(`已${verb}`); loadAll()
   } catch { /* 取消 */ }
 }
+// ── 操作区（对标原型 OPS + groupedCaseOps + dangerOps）──
+const OPS = [
+  { p: 'case.follow', label: '写跟进记录', act: 'follow', cls: '', group: 'follow' },
+  { p: 'case.promise', label: '登记承诺', act: 'promise', cls: 'df', group: 'follow' },
+  { p: 'case.ticket', label: '转工单', act: 'ticket', cls: 'df', group: 'follow' },
+  { p: 'case.paylink', label: '发催费单', act: 'paylink', cls: 'df', group: 'follow' },
+  { p: 'case.repay.mark', label: '标线下回款', act: 'repay', cls: 'df', group: 'follow' },
+  { p: 'legal.create', label: '建议法务', act: 'suggestLegal', cls: 'df', group: 'legal' },
+  { p: 'legal.create', label: '申请律师函', act: 'legal', cls: 'df', group: 'legal' },
+  { p: 'evidence.create', label: '发起存证', act: 'evidence', cls: 'df', group: 'legal' },
+  { p: 'case.reduce', label: '减免审批', act: 'reduce', cls: 'df', group: 'manage' },
+  { p: 'case.release', label: '释放', act: 'release', cls: 'df', group: 'manage' },
+  { p: 'case.return', label: '退回', act: 'return', cls: 'df', group: 'manage' },
+  { p: 'case.close', label: '撤案/坏账', act: 'close', cls: 'dg', group: 'danger' },
+]
+const OPGROUPS: [string, string][] = [['follow', '跟进动作'], ['legal', '法务/存证'], ['manage', '管理']]
+
+// 根据权限过滤可见操作
+const caseOps = computed(() => OPS.filter(o => auth.has(o.p)))
+const groupedCaseOps = computed(() =>
+  OPGROUPS.map(([k, label]) => ({ key: k, label, items: caseOps.value.filter(o => o.group === k) })).filter(g => g.items.length)
+)
+const dangerOps = computed(() => caseOps.value.filter(o => o.group === 'danger'))
+
+// 操作分发
+function onOp(o: typeof OPS[number]) {
+  const act = o.act
+  if (act === 'follow') openAct('follow', '写跟进记录')
+  else if (act === 'promise') openAct('promise', '登记承诺')
+  else if (act === 'ticket') openAct('ticket', '转工单')
+  else if (act === 'paylink') openAct('paylink', '发催费单')
+  else if (act === 'repay') openAct('repay', '标线下回款')
+  else if (act === 'suggestLegal') suggestLegal()
+  else if (act === 'legal') openAct('legal', '申请律师函')
+  else if (act === 'evidence') openAct('evidence', '发起存证')
+  else if (act === 'reduce') openAct('reduce', '减免审批')
+  else if (act === 'release') lifecycle('释放', '/cases/{id}/release')
+  else if (act === 'return') lifecycle('退回', '/cases/{id}/return')
+  else if (act === 'close') openAct('close', '结案')
+}
+
 // AI 采纳联动（校验动作权限）
 const ADOPT: any = { PROMISE: ['promise', '登记承诺', 'case.promise'], TICKET: ['ticket', '转工单', 'case.ticket'], PAYLINK: ['paylink', '发缴费链接', 'case.paylink'], FOLLOWUP: ['follow', '写跟进', 'case.follow'] }
 function adopt(card: any) {
@@ -656,68 +697,55 @@ onMounted(function () { loadAll(); loadCloseReasons() })
           <div style="border-bottom:1px solid var(--bd);margin:12px 0"></div>
         </div>
 
-        <!-- 操作区按钮（按角色+权限分组：跟进/法务/管理/危险） -->
-        <!-- 跟进动作（全角色可见，具体按钮按角色裁剪） -->
-        <div v-if="canAct('follow','case.follow')||canAct('promise','case.promise')||(isProviderRole&&canAct('ticket','case.ticket'))||(isProviderRole&&canAct('paylink','case.paylink'))||(isProviderRole&&canAct('repay','case.repay.mark'))" style="margin-bottom:10px">
-          <div class="sec-title" style="margin:6px 0 6px">跟进动作</div>
-          <button v-if="canAct('follow','case.follow')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('follow','写跟进记录')">写跟进记录</button>
-          <button v-if="canAct('promise','case.promise')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('promise','登记承诺')">登记承诺</button>
-          <!-- 以下仅服务商角色(CO/VL)可见 -->
-          <button v-if="isProviderRole&&canAct('ticket','case.ticket')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('ticket','转工单')">转工单</button>
-          <button v-if="isProviderRole&&canAct('paylink','case.paylink')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('paylink','发催费单')">发催费单</button>
-          <button v-if="isProviderRole&&canAct('repay','case.repay.mark')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('repay','标线下回款')">标线下回款</button>
+        <!-- 操作区（对标原型：OPS 按权限过滤 + 分组渲染） -->
+        <div style="font-size:13px;font-weight:600;color:var(--txt);margin-bottom:10px;display:flex;align-items:center;gap:6px">
+          <span class="bar" style="width:3px;height:13px;background:var(--primary);border-radius:2px;display:inline-block"></span>操作区 · {{ role || '—' }}
         </div>
 
-        <!-- 缴费链接（本会话创建·重发/作废 BR-M4-14） -->
-        <template v-if="payLinks.length">
-          <div class="sec-title" style="margin:10px 0 6px">缴费链接（本会话）</div>
-          <div v-for="l in payLinks" :key="l.id" class="note" style="font-size:12px;border:1px solid var(--bd);border-radius:6px;padding:7px 9px;margin-bottom:6px">
-            <div>{{ l.token }} · {{ yuan(l.amountCents) }} <span class="tag" :class="l.status === 'ACTIVE' ? 'suc' : 'inf'">{{ l.status === 'ACTIVE' ? '有效' : '已失效' }}</span></div>
-            <div v-if="l.status === 'ACTIVE' && auth.has('case.paylink')" class="toolbar" style="margin-top:5px;gap:6px">
-              <el-button size="small" @click="resendLink(l)">重发</el-button>
-              <el-button size="small" text type="danger" @click="voidLink(l)">作废</el-button>
+        <!-- 录音区（仅 CO/VL） -->
+        <template v-if="isCollector || isProviderRole">
+          <div class="op-rec" style="margin-bottom:12px">
+            <div class="op-rec-h" style="font-weight:600;font-size:13px;margin-bottom:6px">本次通话回填</div>
+            <div class="note" style="font-size:11px;margin:0 0 8px;line-height:1.6">平台不感知拨打时机；按作战手册通话后，点下方拉取本机最新录音。</div>
+            <button v-if="!recObj" class="btn sm" style="width:100%" @click="loadAll">获取最新通话录音</button>
+            <div v-else-if="recObj.status === 'READY'" class="rec-ready">
+              <span class="tag suc">已就绪</span> {{ recObj.recordedAt || recObj.createdAt }}
+              <button class="btn sm" style="width:100%;margin-top:7px" @click="loadReview(recObj.id)">查看并标注（AI 复盘）</button>
             </div>
+            <div v-else class="note" style="font-size:11px">状态：{{ recObj.status || '—' }}</div>
+            <div class="note" style="font-size:11px;margin-top:6px">未发现新录音？ <label class="btn txt" style="padding:0 2px;cursor:pointer">手动上传<input type="file" hidden accept="audio/*" @change="uploadRecording" /></label></div>
+            <div style="border-bottom:1px solid var(--bd);margin:12px 0"></div>
           </div>
         </template>
 
-        <!-- 法务/存证（按角色裁剪：CO建议法务, PL/PC申请律师函+存证） -->
-        <div v-if="(isCollector&&canAct('legal','legal.create'))||(isPropertyRole&&canAct('legal','legal.create'))||(isPropertyRole&&canAct('evidence','evidence.create'))" style="margin-bottom:10px">
-          <div class="sec-title" style="margin:6px 0 6px">法务/存证</div>
-          <button v-if="isCollector&&canAct('legal','legal.create')" class="btn sm" style="width:100%;margin-bottom:6px" @click="suggestLegal">建议法务</button>
-          <button v-if="isPropertyRole&&canAct('legal','legal.create')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('legal','申请律师函')">申请律师函</button>
-          <button v-if="isPropertyRole&&canAct('evidence','evidence.create')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('evidence','发起存证')">发起存证</button>
-          <!-- 法务文书列表：登记送达入口 -->
-          <template v-if="legalDocs.length">
-            <div v-for="doc in legalDocs" :key="doc.id" class="note" style="font-size:12px;border:1px solid var(--bd);border-radius:6px;padding:7px 9px;margin-bottom:6px">
-              <div><span :title="doc.type">{{ legalDocTypeLabel(doc.type) }}</span> <span class="tag inf" :title="doc.status">{{ legalDocStatusLabel(doc.status) }}</span></div>
-              <div v-if="doc.status !== 'DELIVERED' && auth.has('legal.create')" class="toolbar" style="margin-top:5px">
-                <el-button size="small" @click="deliverLegal(doc)">登记送达</el-button>
-              </div>
+        <!-- 操作按钮（按 OPS 分组，仅显示有权限的） -->
+        <template v-if="caseOps.length">
+          <div v-for="g in groupedCaseOps" :key="g.key" style="margin-bottom:10px">
+            <div class="sec-title" style="margin:6px 0 6px">{{ g.label }}</div>
+            <button class="btn sm" :class="o.cls" style="width:100%;margin-bottom:6px" v-for="o in g.items" :key="o.p + o.act" @click="onOp(o)">{{ o.label }}</button>
+          </div>
+
+          <template v-if="payLinks.length">
+            <div class="sec-title" style="margin:10px 0 6px">缴费链接（本会话）</div>
+            <div v-for="l in payLinks" :key="l.id" class="note" style="font-size:12px;border:1px solid var(--bd);border-radius:6px;padding:7px 9px;margin-bottom:6px">
+              {{ l.token }} · {{ yuan(l.amountCents) }} <span class="tag" :class="l.status === 'ACTIVE' ? 'suc' : 'inf'">{{ l.status === 'ACTIVE' ? '有效' : '已失效' }}</span>
             </div>
           </template>
-        </div>
 
-        <!-- CO 法务进度只读（case.legalStage） -->
-        <template v-if="d.case?.legalStage">
-          <div class="sec-title" style="margin-top:14px">法务进度</div>
-          <div class="alert info" style="margin-top:0;font-size:12px">当前法务阶段：<b :title="d.case.legalStage">{{ legalStageLabel(d.case.legalStage) }}</b>（只读，由协调员主导）。</div>
+          <!-- CO 法务只读 -->
+          <template v-if="isCollector && d.case?.legalStage && d.case.legalStage !== 'NONE'">
+            <div class="sec-title" style="margin-top:14px">法务进度</div>
+            <div class="alert info" style="margin-top:0;font-size:12px">本案已进入法务流程 · 「{{ legalStageLabel(d.case.legalStage) }}」（只读，由协调员主导）。</div>
+          </template>
+
+          <!-- 危险操作（终态操作·不可撤销） -->
+          <div v-if="dangerOps.length" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--bd)">
+            <div class="sec-title" style="color:var(--dg,#F56C6C);margin:0 0 6px">终态操作（不可撤销）</div>
+            <button class="btn sm dg" style="width:100%" v-for="o in dangerOps" :key="o.p + o.act" @click="onOp(o)">{{ o.label }}</button>
+          </div>
         </template>
 
-        <!-- 管理（按角色裁剪） -->
-        <div v-if="(isPropertyRole&&canAct('follow','case.reduce'))||canAct('release','case.release')||canAct('return','case.return')" style="margin-bottom:10px">
-          <div class="sec-title" style="margin:6px 0 6px">管理</div>
-          <button v-if="isPropertyRole&&canAct('follow','case.reduce')" class="btn sm" style="width:100%;margin-bottom:6px" @click="openAct('follow','减免审批')">减免审批</button>
-          <button v-if="canAct('release','case.release')" class="btn sm" style="width:100%;margin-bottom:6px" @click="lifecycle('释放','/cases/{id}/release')">释放</button>
-          <button v-if="canAct('return','case.return')" class="btn sm" style="width:100%;margin-bottom:6px" @click="lifecycle('退回','/cases/{id}/return')">退回</button>
-        </div>
-
-        <!-- 危险操作（不可撤销）—— 平台SA/SE + 物业PL/PC -->
-        <div v-if="(isPlatformRole||isPropertyRole)&&canAct('close','case.close')" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--bd)">
-          <div class="sec-title" style="color:var(--dg,#F56C6C);margin:0 0 6px">危险操作（不可撤销）</div>
-          <button class="btn sm dg" style="width:100%" @click="openAct('close','结案')">撤案/坏账</button>
-        </div>
-
-        <div v-if="!canAct('follow','case.follow')&&!canAct('promise','case.promise')" class="note" style="margin:8px 0 0">当前角色暂无可操作权限。</div>
+        <div v-else class="note" style="margin:8px 0 0">当前角色暂无可操作权限。</div>
       </div>
     </div>
 
