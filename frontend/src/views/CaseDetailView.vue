@@ -666,10 +666,6 @@ onMounted(function () { loadAll(); loadCloseReasons() })
     <!-- ============ 右栏：操作区 ============ -->
     <div class="col right">
       <div class="opzone">
-        <div style="font-size:13px;font-weight:600;color:var(--txt);margin-bottom:10px;display:flex;align-items:center;gap:6px">
-          <span style="width:3px;height:13px;background:var(--primary);border-radius:2px;display:inline-block"></span>操作区
-        </div>
-
         <!-- 录音解析（复用现有 latest/review 逻辑） -->
         <div v-if="auth.has('case.call')" class="op-rec">
           <div class="op-rec-h">本次通话回填</div>
