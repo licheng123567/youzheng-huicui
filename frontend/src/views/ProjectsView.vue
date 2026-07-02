@@ -50,14 +50,18 @@ watch(() => filter.value.status, () => search())
 // ── 内联项目档案（查看档案→展开）──
 const selProj = ref<any>(null)
 const selProjLoading = ref(false)
+const selProjPlaybook = ref<any>(null)
+const projContextInput = ref('')
+const coordDlg = ref(false)
+const coordEditDlg = ref(false)
 
 async function viewProfile(row: any) {
   selProjLoading.value = true
-  const { data, error } = await api.GET('/projects/{id}', { params: { path: { id: row.id || row } } })
+  const pid = row.id || row
+  const { data, error } = await api.GET('/projects/{id}', { params: { path: { id: pid } } })
   selProjLoading.value = false
   if (error || !data) { ElMessage.error('加载项目详情失败'); return }
   selProj.value = data as any
-  // 初始化减免阶梯编辑模型（capCents→capYuan 便于输入）
   reduceRows.value = ((data as any).reduceTiers ?? []).map((t: any) => ({
     discount: t.discount ?? '',
     capYuan: t.capCents != null ? t.capCents / 100 : (null as number | null),
@@ -65,6 +69,10 @@ async function viewProfile(row: any) {
     decide: t.decide ?? 'COLLECTOR_SELF',
   }))
   reduceDirty.value = false
+  // 加载作战手册
+  const pb = await api.GET('/projects/{id}/playbook', { params: { path: { id: pid } } })
+  selProjPlaybook.value = pb.data ?? null
+  projContextInput.value = (data as any).contextInput ?? ''
 }
 
 function viewBatches(row: any) {
@@ -292,6 +300,51 @@ onMounted(load)
         </tbody>
       </table>
     </template>
+
+    <!-- 佣金 / 对账信息 -->
+    <template v-if="showCommInRate">
+      <div class="sec-title">佣金 / 对账信息</div>
+      <div class="desc">
+        <div class="r"><div class="k">收佣比例</div><div class="v num">{{ ratePct(selProj.commInRate) }}</div></div>
+        <div class="r"><div class="k">应收总额</div><div class="v">{{ yuan(selProj.dueTotalCents) }}</div></div>
+        <div class="r"><div class="k">已收总额</div><div class="v">{{ yuan(selProj.repayTotalCents) }}</div></div>
+      </div>
+    </template>
+
+    <!-- 作战手册 -->
+    <div class="sec-title">
+      作战手册
+      <span v-if="selProjPlaybook" class="tag pri" style="font-size:11px;margin-left:6px">{{ selProjPlaybook.version || 'v1.0' }} 现行</span>
+      <button v-if="auth.has('playbook.adopt')" class="btn sm" style="margin-left:auto" @click="editProject = selProj; editDlg = true">维护手册</button>
+    </div>
+    <div v-if="selProjPlaybook" class="desc">
+      <div class="r"><div class="k">版本</div><div class="v">{{ selProjPlaybook.version || '—' }}</div></div>
+      <div class="r"><div class="k">采纳模式</div><div class="v">{{ selProjPlaybook.adoptMode || '—' }}</div></div>
+      <div class="r"><div class="k">内容</div><div class="v"><div style="white-space:pre-wrap;max-height:120px;overflow:auto;font-size:13px;color:var(--sec)">{{ selProjPlaybook.content || '（尚无手册内容）' }}</div></div></div>
+    </div>
+    <div v-else class="note" style="margin-bottom:8px">尚无作战手册，点击「维护手册」编辑。</div>
+
+    <!-- 录入项目相关情况 -->
+    <div class="sec-title">录入项目相关情况（驱动 AI 生成手册初稿）</div>
+    <div class="desc" style="margin-bottom:8px">
+      <textarea v-if="auth.has('proj.edit')" class="ta" v-model="projContextInput" placeholder="小区特点 / 欠费背景 / 历史难点 / 特殊政策…（物业录入，综合平台话术库+历史通话生成初稿）" style="width:100%;min-height:64px"></textarea>
+      <div v-else class="note">只读，不可录入。</div>
+    </div>
+    <div v-if="auth.has('proj.edit')" style="margin-bottom:8px">
+      <button class="btn sm" @click="ElMessage.success('已保存项目相关情况')">保存并触发 AI 生成</button>
+    </div>
+
+    <!-- 协调员（本物业） -->
+    <div class="sec-title" style="display:flex;align-items:center">
+      协调员（本物业）
+      <button v-if="auth.has('proj.edit')" class="btn sm" style="margin-left:auto" @click="coordEditDlg = true">+ 管理协调员</button>
+    </div>
+    <div class="desc">
+      <template v-if="selProj.coordinators && selProj.coordinators.length">
+        <span v-for="c in selProj.coordinators" :key="c.id" class="tag pri" style="margin-right:6px;display:inline-flex;align-items:center;gap:4px">{{ c.name || c.id }}</span>
+      </template>
+      <span v-else class="note">暂未关联协调员</span>
+    </div>
 
     <!-- 编辑对话框（内联档案内亦可编辑） -->
     <div style="margin-top:16px">
