@@ -88,6 +88,18 @@ const ownerInitial = computed<string>(function () {
   var n = d.value?.case?.ownerName
   return n ? String(n).charAt(0) : '案'
 })
+// 画像底色：按结案/坏账变灰，否则按风险色（演示用固定色）
+const avatarBg = computed<string>(function () {
+  var s = d.value?.case?.status
+  if (s === 'SETTLED' || s === 'WITHDRAWN' || s === 'BAD_DEBT' || s === 'VOIDED') return 'var(--sec)'
+  return 'var(--primary)'
+})
+// 风险标签（演示，后端有数据后改用 review.risks）
+const riskTags = computed<string[]>(function () {
+  var review = d.value?.aiReview || d.value?.review
+  if (!review?.risks?.length) return []
+  return review.risks.map(function (r: any) { return r.type || r.label || '' }).filter(Boolean)
+})
 // 时间线类型 → ds-admin .ty-xxx class（按 item.type 小写；缺省落 ty-note）
 const TL_TY: Record<string, string> = {
   CALL: 'ty-call', NOTE: 'ty-note', FOLLOWUP: 'ty-note', FOLLOW_UP: 'ty-note',
@@ -104,8 +116,9 @@ const TL_LABEL: Record<string, string> = {
 }
 const tlLabel = (t?: string) => TL_LABEL[String(t ?? '').toUpperCase()] ?? (t ?? '')
 
-// ===== 中栏三 Tab 切换（纯 UI）=====
-const midTab = ref<'timeline' | 'project' | 'playbook'>('timeline')
+// ===== 中栏三 Tab 切换（纯 UI）。非催收员默认作战手册，催收员默认沟通记录。=====
+const isCollector = computed<boolean>(function () { return auth.me?.role === 'CO' })
+const midTab = ref<'timeline' | 'project' | 'playbook'>(isCollector.value ? 'timeline' : 'playbook')
 // 时间线类型筛选（前端过滤，按 item.type 小写归类）
 const tlFilter = ref<'all' | 'call' | 'note' | 'ticket' | 'promise' | 'legal' | 'sms' | 'status'>('all')
 const TL_GROUP: Record<string, string> = {
@@ -405,20 +418,21 @@ onMounted(function () { loadAll(); loadCloseReasons() })
     <!-- ============ 左栏：业主画像 ============ -->
     <div class="col left">
       <div class="portrait-top">
-        <div class="portrait-av" style="background:var(--primary)">{{ ownerInitial }}</div>
+        <div class="portrait-av" :style="{ background: avatarBg }">{{ ownerInitial }}</div>
         <div class="portrait-id">
           <div class="nm">{{ d.case?.ownerName || '—' }}</div>
-          <div class="sub">{{ d.case?.room || '—' }} · 户号 {{ d.case?.acctNo || '—' }}</div>
+          <div class="sub">{{ d.case?.room || '—' }} · {{ d.case?.phone || d.contacts?.[0]?.phone || '—' }}</div>
         </div>
         <div class="portrait-amt">
           <div class="a num">{{ yuan(d.case?.dueCents) }}</div>
-          <div class="s">应收欠费</div>
+          <div class="s">{{ d.case?.arrearagsPeriods?.length ? '欠 ' + d.case.arrearagsPeriods.length + ' 个月' : '应收欠费' }}</div>
         </div>
       </div>
-      <!-- 状态徽标（省略原型画像风险标签 ptags：后端无数据） -->
+      <!-- 状态徽标 + 风险标签 -->
       <div class="ptags" style="margin-top:12px">
         <span class="tag" :class="caseStatusTag(d.case?.status)" :title="d.case?.status">{{ caseStatusLabel(d.case?.status) }}</span>
         <span v-if="d.case?.pool" class="tag inf" :title="d.case.pool">{{ poolLabel(d.case.pool) }}</span>
+        <span v-for="t in riskTags" :key="t" class="tag war" style="margin-left:4px">{{ t }}</span>
         <span v-if="redacted" class="tag inf">已脱敏</span>
       </div>
       <div class="pstats" style="margin-top:12px">
@@ -483,9 +497,10 @@ onMounted(function () { loadAll(); loadCloseReasons() })
     <!-- ============ 中栏：三 Tab ============ -->
     <div class="col mid">
       <div class="dtabs" style="padding:14px 14px 0">
+        <div v-if="!isCollector" class="t" :class="{ on: midTab === 'playbook' }" @click="midTab = 'playbook'">作战手册</div>
         <div class="t" :class="{ on: midTab === 'timeline' }" @click="midTab = 'timeline'">沟通记录</div>
         <div class="t" :class="{ on: midTab === 'project' }" @click="midTab = 'project'">项目资料</div>
-        <div class="t" :class="{ on: midTab === 'playbook' }" @click="midTab = 'playbook'">作战手册</div>
+        <div v-if="isCollector" class="t" :class="{ on: midTab === 'playbook' }" @click="midTab = 'playbook'">作战手册</div>
       </div>
 
       <!-- Tab1：沟通记录（timeline） -->
