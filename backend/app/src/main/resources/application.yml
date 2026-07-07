@@ -22,6 +22,8 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: false
+    out-of-order: true
+    validate-on-migrate: false
     # locations 由 profile-specific yml（application-dev.yml/application-prod.yml）覆盖。
 
 logging:
@@ -33,3 +35,26 @@ huicui:
   jwt:
     secret: "${HUICUI_JWT_SECRET:}"    # 空默认；prod 必须通过环境变量注入，否则启动护栏抛 IllegalStateException
     ttl-seconds: 86400
+  # 第三方存证（易保全）——未配置时 enabled=false，发起存证退回占位、不阻断
+  ebaoquan:
+    enabled: ${HUICUI_EBQ_ENABLED:false}
+    base-url: ${HUICUI_EBQ_URL:https://bs.sandbox.ebaoquan.org}
+    app-key: ${HUICUI_EBQ_APPKEY:}
+    app-key-secret: ${HUICUI_EBQ_SECRET:}
+  # 存证备案回填轮询（易保全备案证书/链上信息约 10min 后就绪）
+  evidence:
+    poll:
+      fixed-delay-ms: ${HUICUI_EBQ_POLL_MS:60000}
+      initial-delay-ms: 20000
+  # 短信（智讯云/028lk）——未配置时 enabled=false，验证码退 dev 固定码、业务短信不触网关
+  sms:
+    enabled: ${HUICUI_SMS_ENABLED:false}
+    secret-name: ${HUICUI_SMS_SECRET_NAME:}
+    secret-key: ${HUICUI_SMS_SECRET_KEY:}
+    sms-base-url: ${HUICUI_SMS_BASE:}                       # 普通短信接口地址(向对接方索取)
+    video-base-url: ${HUICUI_SMS_VIDEO_BASE:http://api.028lk.com}
+    sign-name: ${HUICUI_SMS_SIGN:【有证慧催】}
+    public-base-url: ${HUICUI_PUBLIC_BASE:http://localhost:5173}   # 拼缴费链接 /pay/{token}
+    templates:
+      verify-code: ${HUICUI_SMS_TPL_VERIFY:}               # 验证码普通短信模板id(空=用明文Content)
+      pay-link: ${HUICUI_SMS_TPL_PAYLINK:}                 # 缴费链接模板id(空=用明文Content)

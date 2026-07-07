@@ -87,7 +87,9 @@ public class FollowUpM4Controller {
                                           @RequestBody(required = false) Map<String, Object> body) {
         CurrentSubject s = SubjectContext.get();
         long caseId = parseId(id);
-        requireCaseHolder(s, caseId);                         // 不存在→404 / 非本案 holder→403
+        // scope=case-actor：持有催收员 + 本物业 PL/PC 代登记（协调员上传文件/协调回款即记跟进）。
+        // 仅 holder 本人重置 T_collector（下方 isHolder 守卫）；PL/PC 代登记不重置（BR-M4-03/12）。
+        requireCaseActor(s, caseId);                          // 不存在→404 / 越范围(非 actor)→403
 
         String content = requireStr(body, "content");        // 缺→422
         String method = optMethod(body);                      // 非法枚举→422（null 放行）

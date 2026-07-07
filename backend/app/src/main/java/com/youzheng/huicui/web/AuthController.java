@@ -34,12 +34,14 @@ public class AuthController {
 
     private final JdbcTemplate jdbc;
     private final JwtService jwt;
+    private final com.youzheng.huicui.integration.SmsService sms;
     private final BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder();
     private final ObjectMapper om = new ObjectMapper();
 
-    public AuthController(JdbcTemplate jdbc, JwtService jwt) {
+    public AuthController(JdbcTemplate jdbc, JwtService jwt, com.youzheng.huicui.integration.SmsService sms) {
         this.jdbc = jdbc;
         this.jwt = jwt;
+        this.sms = sms;
     }
 
     /**
@@ -115,8 +117,9 @@ public class AuthController {
     @PostMapping("/sms-code")
     public Map<String, Object> smsCode(@RequestBody Map<String, Object> body) {
         String phone = req(body, "phone");
-        // dev 存固定码 + TTL（生产：随机码经短信通道下发 + 限流429）。绝不回显 code。
-        smsCodes.put(phone, new SmsCode(DEV_SMS_CODE, System.currentTimeMillis() + SMS_TTL_MS));
+        // enabled：随机码经智讯云普通短信下发（绝不回显 code）；未配：dev 固定码占位。
+        String code = sms.isEnabled() ? sms.sendVerificationCode(phone) : DEV_SMS_CODE;
+        smsCodes.put(phone, new SmsCode(code, System.currentTimeMillis() + SMS_TTL_MS));
         return Map.of("sent", true, "ttlSeconds", SMS_TTL_MS / 1000);
     }
 

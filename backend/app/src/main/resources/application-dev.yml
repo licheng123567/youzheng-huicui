@@ -12,3 +12,21 @@ huicui:
   dev-password: "Admin@123"    # DevSeeder（@Profile("dev")）给种子账号设此口令的 BCrypt 哈希
   auth:
     dev-sms-code: "000000"     # dev 固定短信验证码；prod 此键不存在，sms-code 端点拒绝服务
+  # 易保全 sandbox 联调：填入平台下发的测试 appKey/appKeySecret 并置 enabled=true 即可真调
+  # （也可用环境变量 HUICUI_EBQ_ENABLED/HUICUI_EBQ_APPKEY/HUICUI_EBQ_SECRET 注入，避免入库）
+  ebaoquan:
+    enabled: false
+    base-url: "https://bs.sandbox.ebaoquan.org"
+    app-key: ""
+    app-key-secret: ""
+  # 智讯云短信 联调：填 SecretName/SecretKey/普通短信接口地址/签名/模板id 并置 enabled=true
+  # （也可用环境变量 HUICUI_SMS_ENABLED/HUICUI_SMS_SECRET_NAME/HUICUI_SMS_SECRET_KEY/HUICUI_SMS_BASE 等注入）
+  sms:
+    enabled: false
+    secret-name: ""
+    secret-key: ""
+    sms-base-url: ""
+    sign-name: "【有证慧催】"
+    templates:
+      verify-code: ""
+      pay-link: ""
