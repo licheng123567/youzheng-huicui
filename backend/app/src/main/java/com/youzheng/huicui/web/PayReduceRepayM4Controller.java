@@ -1,10 +1,13 @@
 package com.youzheng.huicui.web;
 
+import com.youzheng.huicui.common.Page;
+import com.youzheng.huicui.common.Pageable;
 import com.youzheng.huicui.error.ApiException;
 import com.youzheng.huicui.error.BizError;
 import com.youzheng.huicui.security.CurrentSubject;
 import com.youzheng.huicui.security.RequirePermission;
 import com.youzheng.huicui.security.SubjectContext;
+import com.youzheng.huicui.web.dto.MyPayLinkItemDto;
 import com.youzheng.huicui.web.dto.PayLinkDto;
 import com.youzheng.huicui.web.dto.ReductionDto;
 import com.youzheng.huicui.web.dto.RepayLineDto;
@@ -12,9 +15,11 @@ import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -23,6 +28,8 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -34,6 +41,7 @@ import java.util.UUID;
  *   POST /cases/{id}/pay-links   createPayLink  | perm=case.paylink   | scope=case-actor | 幂等 | 201 PayLink / 409
  *   POST /pay-links/{id}/resend  resendPayLink  | perm=case.paylink   | scope=case-actor | 幂等 | 200 / 409
  *   POST /pay-links/{id}/void    voidPayLink    | perm=case.paylink   | scope=case-actor |      | 200（幂等）
+ *   GET  /me/pay-links           listMyPayLinks | perm=case.paylink   | scope=own-org    |      | 200 MyPayLinkPage（对标原型 §我的缴费链接）
  *   POST /cases/{id}/reductions  createReduction| perm=case.reduce    | scope=own-org    |      | 201 Reduction / 422
  *   POST /reductions/{id}/approve approveReduction| perm=reduce.approve| scope=own-org   |      | 200 / 403
  *   POST /cases/{id}/repay-lines createRepayLine | perm=case.repay.mark| scope=own-org   | 幂等 | 201 RepayLine / 422
@@ -53,10 +61,13 @@ public class PayReduceRepayM4Controller {
 
     private final JdbcTemplate jdbc;
     private final CaseScopeM4Service scope;
+    private final com.youzheng.huicui.integration.SmsService sms;
 
-    public PayReduceRepayM4Controller(JdbcTemplate jdbc, CaseScopeM4Service scope) {
+    public PayReduceRepayM4Controller(JdbcTemplate jdbc, CaseScopeM4Service scope,
+                                      com.youzheng.huicui.integration.SmsService sms) {
         this.jdbc = jdbc;
         this.scope = scope;
+        this.sms = sms;
     }
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ISO_INSTANT;
@@ -103,6 +114,11 @@ public class PayReduceRepayM4Controller {
         insertActivity(caseId, "SMS", actorId,
                 "发缴费链接(" + channel + ")", "pay_link", payLinkId, channel);
 
+        // SMS 渠道且已接入短信 → 即时发普通短信（best-effort：失败落 sms_record FAILED、不回滚链接）。
+        if ("SMS".equals(channel) && sms.isEnabled() && c.orgId() != null) {
+            sms.sendPayLinkSms(caseId, c.orgId(), c.projectId(), token);
+        }
+
         // suggestionId 仅留溯源（地基期不落 StrategyCard 关联表），避免未用告警显式忽略。
         if (suggestionId != null) { /* TODO(M5): 关联 StrategyCard 溯源 sourceSuggestionId */ }
 
@@ -111,22 +127,35 @@ public class PayReduceRepayM4Controller {
     }
 
     // ── [2] resendPayLink  POST /pay-links/{id}/resend ──────────────────────
-    // 有效链接优先重发（BR-M4-15）；SMS 受冷却→409。不存在→404。
+    // 有效链接优先重发（BR-M4-15）；可指定 channel 覆盖当前渠道(发催费单预览后再选发送方式，同一 token 不新建链接)；
+    // SMS 受冷却→409。不存在→404。
     @PostMapping("/pay-links/{id}/resend")
     @RequirePermission("case.paylink")
     @Transactional
-    public Map<String, Object> resendPayLink(@PathVariable("id") String id) {
+    public Map<String, Object> resendPayLink(@PathVariable("id") String id,
+                                             @RequestBody(required = false) Map<String, Object> body) {
         CurrentSubject s = SubjectContext.get();
         long payLinkId = parsePayLinkId(id);
         PayLinkRow pl = lockPayLink(payLinkId);                 // 不存在→404
-        scope.requireCaseActor(s, pl.caseId);                   // case 不可见→403
+        CaseScopeM4Service.CaseRow c = scope.requireCaseActor(s, pl.caseId);   // case 不可见→403
 
-        if ("SMS".equals(pl.channel)) {
+        String requested = parseOptionalChannel(body);          // 缺省沿用链接当前渠道；非法枚举→422
+        String effectiveChannel = requested != null ? requested : nz2(pl.lastChannel, pl.channel);
+
+        if ("SMS".equals(effectiveChannel)) {
             requireSmsCooldownPassed(pl.caseId);                // 冷却未到→409 BIZ_SMS_COOLDOWN
         }
+        jdbc.update("UPDATE pay_link SET last_channel = ?, last_sent_at = now(), updated_at = now() WHERE id = ?",
+                effectiveChannel, payLinkId);
         // 重发即再记一条渠道动作（不新建链接，沿用同 token；有效链接优先 BR-M4-15）。
         insertActivity(pl.caseId, "SMS", actorId(s),
-                "重发缴费链接(" + nz(pl.channel) + ")", "pay_link", payLinkId, pl.channel);
+                "重发缴费链接(" + nz(effectiveChannel) + ")", "pay_link", payLinkId, effectiveChannel);
+
+        // SMS 渠道且已接入短信 → 即时重发普通短信（best-effort）。
+        if ("SMS".equals(effectiveChannel) && sms.isEnabled() && c.orgId() != null) {
+            String token = jdbc.queryForObject("SELECT token FROM pay_link WHERE id = ?", String.class, payLinkId);
+            sms.sendPayLinkSms(pl.caseId, c.orgId(), c.projectId(), token);
+        }
         return ok();
     }
 
@@ -147,6 +176,80 @@ public class PayReduceRepayM4Controller {
                     "作废缴费链接", "pay_link", payLinkId, pl.channel);
         }
         return ok();                                            // 幂等：重复作废仍 200
+    }
+
+    // ── [3.5] listMyPayLinks  GET /me/pay-links ──────────────────────────────
+    // 我的已发缴费链接跟踪（对标原型 index.html §我的缴费链接 payLinks/payLinksView）：仅本人 created_by。
+    // 展示态 disp_status（区别于内部 pay_link.status ACTIVE/EXPIRED）：
+    //   PAID(该案在本链接创建之后有未冲正回款) > EXPIRED(status=EXPIRED 或已过期) > VIEWED_UNPAID(viewed_at 非空) > PENDING_VIEW。
+    @GetMapping("/me/pay-links")
+    @RequirePermission("case.paylink")
+    public Page<MyPayLinkItemDto> listMyPayLinks(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String project,
+            @RequestParam(required = false) String batch,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size) {
+        CurrentSubject s = SubjectContext.get();
+        Pageable pg = Pageable.of(page, size);
+        Long meBoxed = actorId(s);
+        long me = meBoxed == null ? -1 : meBoxed;
+
+        String derived =
+                "FROM (SELECT pl.id AS id, pl.case_id AS case_id, pl.token AS token, pl.created_at AS sent_at,"
+                        + " pl.amount_cents AS amount_cents, COALESCE(pl.last_channel, pl.channel) AS channel,"
+                        + " c.owner_name AS owner_name, c.room AS room, c.project_name AS project_name, b.no AS batch_no,"
+                        + " CASE"
+                        + "   WHEN EXISTS (SELECT 1 FROM repay_line rl WHERE rl.case_id = pl.case_id"
+                        + "                AND rl.reversed = false AND rl.paid_at >= pl.created_at::date) THEN 'PAID'"
+                        + "   WHEN pl.status = 'EXPIRED' OR pl.expires_at < now() THEN 'EXPIRED'"
+                        + "   WHEN pl.viewed_at IS NOT NULL THEN 'VIEWED_UNPAID'"
+                        + "   ELSE 'PENDING_VIEW'"
+                        + " END AS disp_status"
+                        + " FROM pay_link pl"
+                        + " JOIN \"case\" c ON c.id = pl.case_id"
+                        + " JOIN batch b ON b.id = c.batch_id"
+                        + " WHERE pl.created_by = ?) x";
+
+        StringBuilder where = new StringBuilder(" WHERE 1=1");
+        List<Object> args = new ArrayList<>();
+        args.add(me);
+        if (q != null && !q.isBlank()) {
+            where.append(" AND (x.owner_name ILIKE ? OR x.room ILIKE ?)");
+            String like = "%" + q.trim() + "%";
+            args.add(like); args.add(like);
+        }
+        if (project != null && !project.isBlank()) { where.append(" AND x.project_name = ?"); args.add(project.trim()); }
+        if (batch != null && !batch.isBlank()) { where.append(" AND x.batch_no = ?"); args.add(batch.trim()); }
+        if (status != null && !status.isBlank()) { where.append(" AND x.disp_status = ?"); args.add(status.trim()); }
+        if (from != null && !from.isBlank()) { where.append(" AND x.sent_at >= ?::date"); args.add(from.trim()); }
+        if (to != null && !to.isBlank()) { where.append(" AND x.sent_at < (?::date + interval '1 day')"); args.add(to.trim()); }
+
+        Long total = jdbc.queryForObject("SELECT count(*) " + derived + where, Long.class, args.toArray());
+
+        List<Object> pageArgs = new ArrayList<>(args);
+        pageArgs.add(pg.size);
+        pageArgs.add(pg.offset);
+        List<MyPayLinkItemDto> items = jdbc.query(
+                "SELECT x.* " + derived + where + " ORDER BY x.sent_at DESC LIMIT ? OFFSET ?",
+                (rs, i) -> new MyPayLinkItemDto(
+                        String.valueOf(rs.getLong("id")),
+                        String.valueOf(rs.getLong("case_id")),
+                        rs.getString("token"),
+                        ISO.format(rs.getTimestamp("sent_at").toInstant()),
+                        rs.getString("owner_name"),
+                        rs.getString("room"),
+                        rs.getString("project_name"),
+                        rs.getString("batch_no"),
+                        rs.getLong("amount_cents"),
+                        rs.getString("channel"),
+                        rs.getString("disp_status")),
+                pageArgs.toArray());
+
+        return Page.of(items, pg, total == null ? 0 : total);
     }
 
     // ── [4] createReduction  POST /cases/{id}/reductions ────────────────────
@@ -357,8 +460,11 @@ public class PayReduceRepayM4Controller {
 
     /** BR-M4-14a：同案最近一条 SMS 渠道 pay_link 创建时间在冷却窗口内 → 409 BIZ_SMS_COOLDOWN。 */
     private void requireSmsCooldownPassed(long caseId) {
+        // COALESCE(last_channel,channel)/COALESCE(last_sent_at,created_at)：既覆盖「指定渠道重发」的最新发送时刻，
+        // 也兼容还没被重发过的老行(last_channel/last_sent_at 为空时回落创建态)。
         Timestamp last = jdbc.query(
-                "SELECT max(created_at) AS t FROM pay_link WHERE case_id = ? AND channel = 'SMS'",
+                "SELECT max(COALESCE(last_sent_at, created_at)) AS t FROM pay_link"
+                        + " WHERE case_id = ? AND COALESCE(last_channel, channel) = 'SMS'",
                 rs -> rs.next() ? rs.getTimestamp("t") : null, caseId);
         if (last == null) return;
         long elapsed = Instant.now().getEpochSecond() - last.toInstant().getEpochSecond();
@@ -406,16 +512,16 @@ public class PayReduceRepayM4Controller {
 
     // ── 行锁加载（须在 @Transactional 内）────────────────────────────────────
 
-    private record PayLinkRow(long id, long caseId, String status, String channel) {}
+    private record PayLinkRow(long id, long caseId, String status, String channel, String lastChannel) {}
     private record ReductionRow(long id, long caseId, String state, long amountCents) {}
     private record RepayLineRow(long id, long caseId, Boolean reversed, Long paymentRequestId) {}
 
     private PayLinkRow lockPayLink(long id) {
         try {
             return jdbc.queryForObject(
-                    "SELECT id, case_id, status, channel FROM pay_link WHERE id = ? FOR UPDATE",
+                    "SELECT id, case_id, status, channel, last_channel FROM pay_link WHERE id = ? FOR UPDATE",
                     (rs, i) -> new PayLinkRow(rs.getLong("id"), rs.getLong("case_id"),
-                            rs.getString("status"), rs.getString("channel")),
+                            rs.getString("status"), rs.getString("channel"), rs.getString("last_channel")),
                     id);
         } catch (EmptyResultDataAccessException e) {
             throw new ApiException(BizError.NOT_FOUND_404, "缴费链接不存在");
@@ -485,6 +591,11 @@ public class PayReduceRepayM4Controller {
         return s == null ? "" : s;
     }
 
+    /** 取 a 非空则用 a，否则回落 b（COALESCE 语义）。 */
+    private static String nz2(String a, String b) {
+        return a != null ? a : b;
+    }
+
     private Long actorId(CurrentSubject s) {
         try {
             return s.accountId() == null ? null : Long.valueOf(s.accountId());
@@ -525,6 +636,18 @@ public class PayReduceRepayM4Controller {
         if (c == null || c.isBlank()) {
             throw new ApiException(BizError.VALIDATION_422, "缺少 channel");
         }
+        if (!"SMS".equals(c) && !"WECHAT_COPY".equals(c)) {
+            throw new ApiException(BizError.VALIDATION_422, "channel 非法（仅 SMS/WECHAT_COPY）");
+        }
+        return c;
+    }
+
+    /** resend 可选 channel（缺省沿用当前渠道，不强制必填）；给了就必须 ∈ {SMS, WECHAT_COPY}，否则 422。 */
+    private static String parseOptionalChannel(Map<String, Object> body) {
+        Object v = body == null ? null : body.get("channel");
+        if (v == null) return null;
+        String c = String.valueOf(v).trim();
+        if (c.isBlank()) return null;
         if (!"SMS".equals(c) && !"WECHAT_COPY".equals(c)) {
             throw new ApiException(BizError.VALIDATION_422, "channel 非法（仅 SMS/WECHAT_COPY）");
         }

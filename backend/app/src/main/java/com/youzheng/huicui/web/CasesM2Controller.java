@@ -33,6 +33,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 /**
@@ -175,16 +176,36 @@ public class CasesM2Controller {
                         ts(rs.getTimestamp("created_at"))),
                 caseId);
 
-        // projectRef：项目合同/收费/缴费信息 + 项目级减免阶梯（batch_id IS NULL）。
+        // projectRef：项目档案/收费标准/收款信息/减免规则 + 批次信息（高保真§项目资料 Tab）。
+        // JOIN batch 获取批次号与收佣比例。
         CaseProjectRefDto projectRef = jdbc.query(
-                "SELECT contract_type, fee_rows, pay_info FROM project WHERE id = ?",
+                "SELECT p.contract_type, p.contract_name, p.service_period,"
+                        + " p.fee_cycle, p.fee_rows, p.penalty,"
+                        + " p.corp_account, p.wx_qr_url, p.pay_info, p.reduce_policy,"
+                        + " b.no AS batch_no, b.comm_in_rate, b.pay_out_rate, b.comm_in_confirmed"
+                        + " FROM project p"
+                        + " JOIN batch b ON b.id = ?::bigint"
+                        + " WHERE p.id = ?",
                 rs -> {
-                    if (!rs.next()) return new CaseProjectRefDto(null, null, null, List.of());
-                    String contractType = rs.getString("contract_type");
-                    String feeStd = summarizeFeeRows(rs.getString("fee_rows"));
-                    String payInfo = rs.getString("pay_info");
-                    return new CaseProjectRefDto(contractType, feeStd, payInfo, List.of());
+                    if (!rs.next()) return new CaseProjectRefDto(null, null, null, null, null, null, null, null, null, null, List.of(), null, null, null, null);
+                    return new CaseProjectRefDto(
+                            rs.getString("contract_type"),
+                            rs.getString("contract_name"),
+                            rs.getString("service_period"),
+                            rs.getString("fee_cycle"),
+                            summarizeFeeRows(rs.getString("fee_rows")),
+                            rs.getString("penalty"),
+                            rs.getString("corp_account"),
+                            rs.getString("wx_qr_url"),
+                            rs.getString("pay_info"),
+                            rs.getString("reduce_policy"),
+                            List.of(),
+                            rs.getString("batch_no"),
+                            formatRate(rs.getBigDecimal("comm_in_rate")),
+                            formatRate(rs.getBigDecimal("pay_out_rate")),
+                            (Boolean) rs.getObject("comm_in_confirmed"));
                 },
+                Long.parseLong(caseDto.batchId()),
                 Long.parseLong(caseDto.projectId()));
 
         List<CaseReduceTierDto> tiers = jdbc.query(
@@ -196,12 +217,26 @@ public class CasesM2Controller {
                         rs.getBoolean("waive_penalty"),
                         rs.getString("decide")),
                 Long.parseLong(caseDto.projectId()));
+        // 资金双线隔离 BR-M9-11（字段级脱敏，非仅前端隐藏）：
+        //   收佣线(commInRate·物业↔平台) 不下发服务商(PROVIDER)；付佣线(payOutRate·平台↔服务商) 不下发物业(PROPERTY)。
+        //   平台(PLATFORM)双线全见。commInConfirmed 仅对能见收佣线的一侧有意义，物业侧一并下发（服务商侧连同 commInRate 省略）。
+        boolean isProvider = "PROVIDER".equals(s.orgType());
+        boolean isProperty = "PROPERTY".equals(s.orgType());
+        String commInRate = isProvider ? null : projectRef.commInRate();
+        String payOutRate = isProperty ? null : projectRef.payOutRate();
+        Boolean commInConfirmed = isProvider ? null : projectRef.commInConfirmed();
         projectRef = new CaseProjectRefDto(
-                projectRef.contractType(), projectRef.feeStd(), projectRef.payInfo(), tiers);
+                projectRef.contractType(), projectRef.contractName(), projectRef.servicePeriod(),
+                projectRef.feeCycle(), projectRef.feeStd(), projectRef.feeItems(),
+                projectRef.corpAccount(), projectRef.wxQrUrl(), projectRef.payInfo(),
+                projectRef.reducePolicy(), tiers,
+                projectRef.batchNo(), commInRate, payOutRate, commInConfirmed);
 
-        // playbook / preCallStrategy：M2 读阶段返回 null（M5 接入作战手册/AI）。TODO(M5)。
+        // playbook：M2 读阶段返回 null（案件页经 /projects/{id}/playbook 容错取底稿）。
         Object playbook = null;
-        Object preCallStrategy = null;
+        // preCallStrategy：通话前策略(BR-M5-04)——按本案真实事实(欠费/承诺履约/通话/工单/减免)
+        //   + 话术库效果排序(Wilson BR-M5-12a)组装；生成失败绝不拖垮详情读取(返 null)。
+        Object preCallStrategy = buildPreCallStrategy(caseId, caseDto);
 
         // availableActions：M2 先按 permissions × status 映射基础动作，驱动前端操作区显隐。
         // TODO：与状态机/case-holder 精细化对齐（写端点接入时收敛）。
@@ -323,6 +358,7 @@ public class CasesM2Controller {
                     ownerName,
                     rs.getString("room"),
                     longOrNull(rs, "due_cents"),
+                    longOrNull(rs, "penalty_cents"),
                     longOrNull(rs, "reduce_after_cents"),
                     parseStringArray(rs.getString("arrearags_periods")),
                     parseJsonObject(rs.getString("litigation_fields")),
@@ -387,6 +423,12 @@ public class CasesM2Controller {
         return rs.wasNull() ? null : v;
     }
 
+    /** NUMERIC(6,4) 分数(0.12) → 展示串 "12%"。null 安全。（此前漏 ×100 会显 "0.12%"，修正。） */
+    private static String formatRate(java.math.BigDecimal rate) {
+        if (rate == null) return null;
+        return rate.multiply(java.math.BigDecimal.valueOf(100)).stripTrailingZeros().toPlainString() + "%";
+    }
+
     private static String idOrNull(ResultSet rs, String col) throws SQLException {
         long v = rs.getLong(col);
         return rs.wasNull() ? null : String.valueOf(v);
@@ -410,6 +452,115 @@ public class CasesM2Controller {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * 通话前策略（契约 PreCallStrategy · BR-M5-04）：AI 动态「沟通策略与注意事项」。
+     * 全部字段取自真实数据组装——案件事实（欠费/承诺履约/历史通话/待处理工单/减免）+
+     * 话术库现行条目按效果排序推荐（Wilson 置信下界 BR-M5-12a），不编造事实。
+     * points[0] 固定为背景摘要（前端渲染为 bgbox），其余为警示/提示条（riskbar）；
+     * objections 为 StrategyCard[]（前端 aicard，可采纳联动动作 actionRef）。
+     * 已结案/异常一律返 null——策略生成失败绝不拖垮详情读取。
+     */
+    private Object buildPreCallStrategy(long caseId, CaseDto c) {
+        if (c.closedAt() != null) return null;   // 终态案件不再生成通话前策略
+        try {
+            long due = c.dueCents() == null ? 0L : c.dueCents();
+            int months = c.arrearagePeriods() == null ? 0 : c.arrearagePeriods().size();
+
+            Integer callCnt = jdbc.queryForObject(
+                    "SELECT count(*) FROM call_recording WHERE case_id = ?", Integer.class, caseId);
+            Timestamp lastCall = jdbc.query(
+                    "SELECT max(recorded_at) AS t FROM call_recording WHERE case_id = ?",
+                    rs -> rs.next() ? rs.getTimestamp("t") : null, caseId);
+            Integer brokenPromises = jdbc.queryForObject(
+                    "SELECT count(*) FROM promise WHERE case_id = ? AND state = 'BROKEN'", Integer.class, caseId);
+            // 最近一条待兑现承诺（date/amount），无则 null
+            Map<String, Object> pendingPromise = jdbc.query(
+                    "SELECT \"date\" AS pdate, amount_cents FROM promise WHERE case_id = ? AND state = 'PENDING'"
+                            + " ORDER BY created_at DESC, id DESC LIMIT 1",
+                    rs -> {
+                        if (!rs.next()) return null;
+                        Map<String, Object> m = new LinkedHashMap<>();
+                        m.put("date", String.valueOf(rs.getDate("pdate")));
+                        m.put("amountCents", rs.getLong("amount_cents"));
+                        return m;
+                    }, caseId);
+            Integer pendingTickets = jdbc.queryForObject(
+                    "SELECT count(*) FROM ticket WHERE case_id = ? AND status = 'PENDING'", Integer.class, caseId);
+
+            List<String> points = new ArrayList<>();
+            StringBuilder bg = new StringBuilder("背景摘要：欠费 " + yuanText(due) + "（" + months + " 个月）· 历史通话 "
+                    + (callCnt == null ? 0 : callCnt) + " 次");
+            if (lastCall != null) {
+                bg.append(" · 上次接触 ").append(new java.text.SimpleDateFormat("MM-dd").format(lastCall));
+            }
+            points.add(bg.toString());
+            if (brokenPromises != null && brokenPromises > 0) {
+                points.add("该户有 " + brokenPromises + " 次承诺爽约记录，先共情再谈缴费；本次需锁定书面承诺并当场发催费单");
+            }
+            if (pendingPromise != null) {
+                points.add("已有待兑现承诺：" + pendingPromise.get("date") + " "
+                        + yuanText((Long) pendingPromise.get("amountCents")) + "，本次通话优先确认兑现安排");
+            }
+            if (pendingTickets != null && pendingTickets > 0) {
+                points.add(pendingTickets + " 个工单待协调员处理，可先同步工单进展化解异议、再谈缴费");
+            }
+            if (c.reduceAfterCents() != null && c.reduceAfterCents() < due) {
+                points.add("减免后应收 " + yuanText(c.reduceAfterCents()) + "（已减 " + yuanText(due - c.reduceAfterCents())
+                        + "），可用减免额度引导一次性结清");
+            }
+
+            // 话术库推荐：现行/候选条目按 Wilson 置信下界降序取前 3（BR-M5-12a），映射为可采纳的 StrategyCard。
+            List<Object> cards = jdbc.query(
+                    "SELECT id, scene, intent, cohort, promise_rate, repay_rate, wilson, variant->>'text' AS vtext"
+                            + " FROM script_lib WHERE status IN ('EFFECTIVE','CANDIDATE')"
+                            + " ORDER BY wilson DESC NULLS LAST, uses DESC, id LIMIT 3",
+                    (rs, i) -> {
+                        Map<String, Object> card = new LinkedHashMap<>();
+                        card.put("id", "script-" + rs.getLong("id"));
+                        card.put("type", "SCRIPT");
+                        String scene = rs.getString("scene");
+                        String intent = rs.getString("intent");
+                        card.put("title", scene + (intent == null || intent.isBlank() ? "" : " · " + intent));
+                        String vtext = rs.getString("vtext");
+                        java.math.BigDecimal pr = rs.getBigDecimal("promise_rate");
+                        java.math.BigDecimal rr = rs.getBigDecimal("repay_rate");
+                        card.put("body", (vtext != null && !vtext.isBlank()) ? vtext
+                                : "适用「" + nzText(rs.getString("cohort")) + "」"
+                                        + (pr == null ? "" : " · 承诺率 " + pctText(pr))
+                                        + (rr == null ? "" : " · 回款率 " + pctText(rr))
+                                        + "（话术库按实际效果排序推荐）");
+                        java.math.BigDecimal w = rs.getBigDecimal("wilson");
+                        card.put("confidence", w == null ? null
+                                : w.doubleValue() >= 0.3 ? "HIGH" : w.doubleValue() >= 0.15 ? "MED" : "LOW");
+                        card.put("trigger", rs.getString("cohort"));
+                        String it = intent == null ? "" : intent;
+                        card.put("actionRef", it.contains("承诺") ? "PROMISE"
+                                : (it.contains("缴费") || it.contains("催费")) ? "PAYLINK"
+                                : (it.contains("联系") || it.contains("信任")) ? "FOLLOWUP" : "NONE");
+                        return (Object) card;
+                    });
+
+            Map<String, Object> strategy = new LinkedHashMap<>();
+            strategy.put("points", points);
+            strategy.put("objections", cards);
+            return strategy;
+        } catch (RuntimeException e) {
+            return null;   // 策略生成任何异常均降级为无策略，不影响详情主体
+        }
+    }
+
+    private static String yuanText(long cents) {
+        return "¥" + String.format("%,.0f", cents / 100.0);
+    }
+
+    private static String nzText(String s) {
+        return s == null || s.isBlank() ? "—" : s;
+    }
+
+    private static String pctText(java.math.BigDecimal frac) {
+        return String.format("%.0f%%", frac.doubleValue() * 100);
     }
 
     /** fee_rows jsonb [{biz,std}] → 展示串 "物业费:1.5元/㎡·月; 停车费:..."。契约 projectRef.feeStd 为 string。 */

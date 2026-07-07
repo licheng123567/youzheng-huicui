@@ -26,14 +26,16 @@ public final class Permissions {
             // 物业负责人/协调员（+处置/上报质检 BR-M5-07a；+撤案/坏账 BR-M8；+管本组织成员；+采纳作战手册 BR-M5）
             case "PL", "PC" -> Set.of("proj.edit", "reduce.policy.edit", "case.follow", "case.paylink",
                     "case.repay.mark", "case.reduce", "reduce.approve", "evidence.create", "legal.create",
-                    "qc.dispose", "qc.escalate", "case.close", "member.manage", "playbook.adopt", "ticket.handle");
+                    "qc.dispose", "qc.escalate", "case.close", "member.manage", "playbook.adopt", "ticket.handle",
+                    "case.call");
                     // 物业侧：处理 CO 转来的工单(ticket.handle) + 减免审批(reduce.approve，端点可达；线下留痕不建待办队列)
+                    // case.call：BR-M4-01a 物业(PL/PC)可获取/回填本物业案件通话录音并查看 AI 复盘（case-actor 行级裁剪仅本物业）
             // 服务商负责人：承接/拒接/分配/退案 + 处置/上报本商催收员风险 + 管本商成员
             case "VL" -> Set.of("case.accept", "case.assign", "case.return", "cocomm.manage", "payreq.create",
                     "qc.dispose", "qc.escalate", "member.manage");
-            // 催收员：抢单/释放/跟进/通话/承诺/开工单(case.ticket)/缴费链接/标回款。工单由物业处理(ticket.handle 归 PL/PC)
+            // 催收员：抢单/释放/跟进/通话/承诺/开工单(case.ticket)/缴费链接。回款登记/冲正属 PC/SA，CO 无权(矩阵:58-59)
             case "CO" -> Set.of("case.claim", "case.release", "case.follow", "case.call",
-                    "case.promise", "case.ticket", "case.paylink", "case.repay.mark", "cocomm.self.view");
+                    "case.promise", "case.ticket", "case.paylink", "cocomm.self.view");
             default -> Set.of();
         };
     }

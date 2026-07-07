@@ -43,49 +43,63 @@ onMounted(load)
 </script>
 
 <template>
-  <el-card :header="`操作日志（GET /audit-log · 只读 · range 范围裁剪 · 共 ${total}）`">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-      <el-date-picker
-        v-model="range"
-        type="datetimerange"
-        value-format="YYYY-MM-DDTHH:mm:ss"
-        start-placeholder="起始时间 from"
-        end-placeholder="结束时间 to"
-        unlink-panels
-      />
-      <el-button type="primary" size="small" @click="onSearch">查询</el-button>
-      <el-button size="small" @click="onReset">重置</el-button>
+  <div class="card">
+    <div class="card-h">
+      <div class="t"><span class="bar"></span>操作日志</div>
+      <div class="ops"><span class="note" style="margin:0">GET /audit-log · 只读 · range 范围裁剪 · 共 {{ total }}</span></div>
     </div>
 
+    <!-- 范围筛选：from/to（datetimerange 复杂交互保留 EL date-picker） -->
+    <div class="search" style="margin-bottom:14px">
+      <div class="fi">
+        <span>时间范围</span>
+        <el-date-picker
+          v-model="range"
+          type="datetimerange"
+          value-format="YYYY-MM-DDTHH:mm:ss"
+          start-placeholder="起始时间 from"
+          end-placeholder="结束时间 to"
+          unlink-panels
+        />
+      </div>
+      <div class="fi">
+        <button class="btn" @click="onSearch">查询</button>
+        <button class="btn df" @click="onReset">重置</button>
+      </div>
+    </div>
+
+    <!-- 带 type="expand" 快照展开的复杂表格：保留 el-table 原样，仅换标签/壳 -->
     <el-table :data="rows" v-loading="loading" border size="small">
       <el-table-column type="expand">
         <template #default="{ row }">
           <div style="padding:8px 16px">
-            <div v-if="!hasSnapshot(row)" style="color:#999;font-size:12px">无变更快照</div>
+            <div v-if="!hasSnapshot(row)" class="note" style="margin:0">无变更快照</div>
             <template v-else>
-              <div style="font-size:12px;color:#666;margin-bottom:4px">变更前 before</div>
-              <pre style="margin:0 0 10px;background:#f7f7f9;padding:8px;border-radius:4px;font-size:12px;overflow:auto">{{ snapshot(row.before) }}</pre>
-              <div style="font-size:12px;color:#666;margin-bottom:4px">变更后 after</div>
-              <pre style="margin:0;background:#f7f7f9;padding:8px;border-radius:4px;font-size:12px;overflow:auto">{{ snapshot(row.after) }}</pre>
+              <div class="lbl" style="margin-bottom:4px">变更前 before</div>
+              <pre class="snap">{{ snapshot(row.before) }}</pre>
+              <div class="lbl" style="margin-bottom:4px">变更后 after</div>
+              <pre class="snap" style="margin:0">{{ snapshot(row.after) }}</pre>
             </template>
           </div>
         </template>
       </el-table-column>
       <el-table-column prop="tm" label="时间" width="180" />
       <el-table-column prop="actor" label="操作人" width="140" />
-      <el-table-column prop="action" label="动作" width="160" />
+      <el-table-column label="动作" width="160">
+        <template #default="{ row }">
+          <span class="tag inf">{{ row.action || '—' }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="目标" min-width="180">
         <template #default="{ row }">
           <span>{{ row.target || '—' }}</span>
-          <span v-if="row.targetType" style="color:#999;font-size:12px">（{{ row.targetType }}<span v-if="row.targetId">#{{ row.targetId }}</span>）</span>
+          <span v-if="row.targetType" class="note" style="margin:0">（{{ row.targetType }}<span v-if="row.targetId">#{{ row.targetId }}</span>）</span>
         </template>
       </el-table-column>
-      <el-table-column label="范围" width="100">
+      <el-table-column label="范围" width="120">
         <template #default="{ row }">
           <span v-if="row.scope">{{ row.scope }}</span>
-          <span v-if="row.proxyFor">
-            <el-tag size="small" type="warning" style="margin-left:4px">代操作</el-tag>
-          </span>
+          <span v-if="row.proxyFor" class="tag war" style="margin-left:4px">代操作</span>
         </template>
       </el-table-column>
       <el-table-column prop="proxyFor" label="代操作对象" width="140">
@@ -102,14 +116,26 @@ onMounted(load)
       </el-table-column>
     </el-table>
 
-    <el-pagination
-      v-if="total > size"
-      style="margin-top:12px;justify-content:flex-end"
-      layout="total, prev, pager, next"
-      :total="total"
-      :page-size="size"
-      :current-page="page"
-      @current-change="onPage"
-    />
-  </el-card>
+    <div class="alert info">系统级操作日志按当前角色数据范围(range)裁剪；代操作全程留痕，被代方可见。</div>
+
+    <div class="page-bar" v-if="total > size">
+      <span style="margin-right:8px">共 {{ total }} 条</span>
+      <div class="pg" @click="onPage(page - 1)">‹</div>
+      <div class="pg on">{{ page }}</div>
+      <div class="pg" @click="onPage(page + 1)">›</div>
+    </div>
+  </div>
 </template>
+
+<style scoped>
+.snap {
+  margin: 0 0 10px;
+  background: #f7f7f9;
+  border: 1px solid var(--bd);
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow: auto;
+}
+</style>

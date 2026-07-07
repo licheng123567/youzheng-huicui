@@ -20,5 +20,10 @@ public record CallRecordingDto(
         String phone,
         String transcript,
         String failureCode,
-        String failureMessage) {
+        String failureMessage,
+        // 案件上下文（通话记录列表对齐高保真§通话记录表头：业主/房号/项目/批次）
+        String ownerName,
+        String room,
+        String projectName,
+        String batchCode) {
 }

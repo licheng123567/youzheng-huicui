@@ -7,6 +7,8 @@ const router = createRouter({
     { path: '/login', name: 'login', component: () => import('../views/LoginView.vue'), meta: { public: true } },
     // M7 业主自助 H5：公开页(免登录·不进 AppLayout)，业主扫码/短信链接进入
     { path: '/pay/:token', name: 'owner-bill', component: () => import('../views/OwnerBillView.vue'), meta: { public: true } },
+    // 扫码上传 H5：公开页(免登录)，手机扫桌面二维码进入，上传送达凭证/跟进附件
+    { path: '/u/:token', name: 'upload-h5', component: () => import('../views/UploadH5View.vue'), meta: { public: true } },
     {
       path: '/',
       component: () => import('../layouts/AppLayout.vue'),
@@ -22,6 +24,16 @@ const router = createRouter({
         { path: 'cases/:id/call/:callId', name: 'call-record', component: () => import('../views/CallRecordView.vue') },
         { path: 'batches/:id', name: 'batch-detail', component: () => import('../views/BatchDetailView.vue') },
         { path: 'settlement', name: 'settlement', component: () => import('../views/SettlementView.vue') },
+        { path: 'settlement-out', name: 'settlement-out', component: () => import('../views/SettlementOutView.vue') },
+        { path: 'co-commission', name: 'co-commission', component: () => import('../views/CoCommissionView.vue') },
+        { path: 'recharge', name: 'recharge', component: () => import('../views/RechargeView.vue') },
+        { path: 'sms', name: 'sms', component: () => import('../views/SmsView.vue') },
+        { path: 'script-lib', name: 'script-lib', component: () => import('../views/ScriptLibView.vue') },
+        { path: 'org-mgmt', name: 'org-mgmt', component: () => import('../views/OrgMgmtView.vue') },
+        { path: 'my-settle', redirect: '/my-stats' },   // 我的结算已并入「我的业绩·结算」(/my-stats)；保留重定向兼容老书签
+        { path: 'legal', name: 'legal', component: () => import('../views/LegalView.vue') },
+        { path: 'my-stats', name: 'my-stats', component: () => import('../views/MyStatsView.vue') },
+        { path: 'my-links', name: 'my-links', component: () => import('../views/MyLinksView.vue') },
         { path: 'risks', name: 'risks', component: () => import('../views/RisksView.vue') },
         { path: 'reports', name: 'reports', component: () => import('../views/ReportsView.vue') },
         { path: 'evidence', name: 'evidence', component: () => import('../views/EvidenceView.vue') },
@@ -33,6 +45,18 @@ const router = createRouter({
         { path: 'notifications', name: 'notifications', component: () => import('../views/NotificationsView.vue') },
         { path: 'profile', name: 'profile', component: () => import('../views/ProfileView.vue') },
         { path: 'search', name: 'search', component: () => import('../views/SearchView.vue') },
+      ],
+    },
+    // 移动作业端(催收员/协调员)：独立 MobileLayout(顶栏+底部 Tab)，受登录保护。
+    {
+      path: '/m',
+      component: () => import('../layouts/MobileLayout.vue'),
+      children: [
+        { path: '', name: 'm-home', component: () => import('../views/m/MHomeView.vue') },
+        { path: 'cases', name: 'm-cases', component: () => import('../views/m/MCasesView.vue') },
+        { path: 'cases/:id', name: 'm-case-detail', component: () => import('../views/m/MCaseDetailView.vue'), meta: { mtitle: '案件详情' } },
+        { path: 'calls', name: 'm-calls', component: () => import('../views/m/MCallsView.vue') },
+        { path: 'me', name: 'm-me', component: () => import('../views/m/MMeView.vue') },
       ],
     },
   ],

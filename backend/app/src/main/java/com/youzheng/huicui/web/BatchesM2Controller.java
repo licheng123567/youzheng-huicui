@@ -163,8 +163,9 @@ public class BatchesM2Controller {
      * reduceMode：reduce_tier 存在 batch_id=batchId 行 → CUSTOM，否则 INHERIT。
      * reduceDrift：CUSTOM 时比对——项目级当前 max(updated_at) > 该批次覆盖行记录的 baseline_project_updated_at
      *             （V912 基线列）→ 项目级已更新而本批次仍持旧自定义，提示“一键同步”。
-     * playbookMode/playbookDrift：DDL playbook 仅 project_id 无 batch_id（批次手册经 project 折叠，见 PlaybookController），
-     *             当前无批次级手册存储 → 恒 INHERIT / false（V912 已预留 playbook.baseline_* 待批次级手册落地启用）。
+     * playbookMode：playbook 存在 batch_id=batchId 现行(status<>'ARCHIVED')覆盖行 → CUSTOM，否则 INHERIT（V915）。
+     * playbookDrift：CUSTOM 时比对——项目级现行手册 updated_at > 覆盖行 baseline_project_updated_at（V912 列）
+     *             → 项目级手册已更新而本批次仍持旧自定义，提示“一键同步”。
      */
     private Override deriveOverride(long batchId, long projectId) {
         // 批次自定义减免阶梯行（带基线）：取一行即足以判定 CUSTOM 与 drift。
@@ -185,8 +186,27 @@ public class BatchesM2Controller {
             reduceDrift = projMax != null && (baseline == null || projMax.after(baseline));
         }
         String reduceMode = reduceCustom ? "CUSTOM" : "INHERIT";
-        // playbook：无批次级存储 → 恒继承。
-        return new Override(reduceMode, "INHERIT", reduceDrift, false);
+
+        // playbook（V915 批次级覆盖）：现行覆盖行带 baseline_project_updated_at → CUSTOM；比对项目级手册 updated_at 判 drift。
+        List<java.sql.Timestamp> pbBaselines = jdbc.query(
+                "SELECT baseline_project_updated_at FROM playbook"
+                        + " WHERE batch_id = ? AND status <> 'ARCHIVED' ORDER BY id DESC LIMIT 1",
+                (rs, i) -> rs.getTimestamp("baseline_project_updated_at"),
+                batchId);
+        boolean playbookCustom = !pbBaselines.isEmpty();
+        boolean playbookDrift = false;
+        if (playbookCustom) {
+            java.sql.Timestamp projPbTs = jdbc.query(
+                    "SELECT updated_at FROM playbook WHERE project_id = ? AND batch_id IS NULL"
+                            + " AND status <> 'ARCHIVED' ORDER BY id DESC LIMIT 1",
+                    rs -> rs.next() ? rs.getTimestamp("updated_at") : null,
+                    projectId);
+            java.sql.Timestamp pbBaseline = pbBaselines.get(0);
+            playbookDrift = projPbTs != null && (pbBaseline == null || projPbTs.after(pbBaseline));
+        }
+        String playbookMode = playbookCustom ? "CUSTOM" : "INHERIT";
+
+        return new Override(reduceMode, playbookMode, reduceDrift, playbookDrift);
     }
 
     /** 行映射：no→code，provider_id 可空。 */

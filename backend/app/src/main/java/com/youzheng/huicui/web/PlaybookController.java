@@ -92,20 +92,19 @@ public class PlaybookController {
     }
 
     // ── [3] GET /batches/{id}/playbook ───────────────────────────────────────
-    // x-data-scope=range。经 batch.project_id 折叠到 project；当前 source 恒 INHERITED。
+    // x-data-scope=range。批次有覆盖→source=CUSTOM 返批次级手册；否则 INHERITED 折叠到项目现行手册。
     @GetMapping("/batches/{id}/playbook")
     public BatchPlaybookDto getBatchPlaybook(@PathVariable("id") String id) {
         CurrentSubject s = SubjectContext.get();
         long batchId = parseId(id, "批次不存在: " + id);
         BatchRow b = loadBatch(batchId);                       // 不存在→404
         requireBatchVisible(s, b);                             // 越 range→403
-        PlaybookDto pb = buildProjectPlaybook(s, b.projectId());
-        // DDL 无批次级 playbook 存储 → source 恒 INHERITED（解析到 project 现行已发布手册）。
-        return new BatchPlaybookDto("INHERITED", pb);
+        return effectiveBatchPlaybook(s, b);
     }
 
-    // ── [4] POST /batches/{id}/playbook（批次采纳，等价项目级采纳） ──────────
-    // x-permission=playbook.adopt；x-data-scope=own-org。content=null=no-op 返回继承态。
+    // ── [4] POST /batches/{id}/playbook（批次级覆盖采纳 / 恢复继承） ──────────
+    // x-permission=playbook.adopt；x-data-scope=own-org。
+    //   content 非空 = 写批次级覆盖（source=CUSTOM）；content=null/键缺失 = 删批次级行恢复继承（source=INHERITED）。
     @PostMapping("/batches/{id}/playbook")
     @RequirePermission("playbook.adopt")
     @Transactional
@@ -116,23 +115,44 @@ public class PlaybookController {
         BatchRow b = loadBatch(batchId);                       // 不存在→404
         String proxyFor = requireOwnOrgProject(s, b.orgId());  // 越本组织→403；SA 代→proxyFor
 
-        // content=null（或键缺失）=清除批次自定义恢复继承（BR-M2-18b）。当前无批次级存储 → no-op 返回继承态。
-        if (!body.containsKey("content") || body.get("content") == null) {
-            PlaybookDto inherited = buildProjectPlaybook(s, b.projectId());
+        // content=null（或键缺失）=清除批次自定义恢复继承（BR-M2-18b）：删批次级行 → source 回 INHERITED。
+        if (body == null || !body.containsKey("content") || body.get("content") == null) {
+            jdbc.update("DELETE FROM playbook WHERE batch_id = ?", batchId);
+            BatchPlaybookDto inherited = effectiveBatchPlaybook(s, b);
             audit.write(s, "playbook.adopt.batch", "batch", String.valueOf(batchId),
-                    "own-org", proxyFor, "clear-custom-inherit", null, snapshot(inherited));
-            return new BatchPlaybookDto("INHERITED", inherited);
+                    "own-org", proxyFor, "clear-custom-inherit", null, snapshot(inherited.playbook()));
+            return inherited;
         }
 
-        // content 非空 = 批次采纳即对所属 project 执行一次项目级采纳（批次 playbook 经 project 解析）。
+        // content 非空 = 写批次级覆盖手册（source=CUSTOM），快照项目级现行手册作 baseline（drift 比对源）。
         String content = requireContent(body);
         String reqVersion = optStr(body, "version");
-        long newId = doAdopt(b.projectId(), reqVersion, content, s);
-        PlaybookDto after = buildProjectPlaybook(s, b.projectId());
+        doAdoptBatch(b.projectId(), batchId, reqVersion, content, s);
+        BatchPlaybookDto after = effectiveBatchPlaybook(s, b);
 
         audit.write(s, "playbook.adopt.batch", "batch", String.valueOf(batchId),
-                "own-org", proxyFor, null, null, snapshot(after));
-        return new BatchPlaybookDto("INHERITED", after);
+                "own-org", proxyFor, null, null, snapshot(after.playbook()));
+        return after;
+    }
+
+    /**
+     * 批次级有效手册（source 推导 BR-M2-18b）：
+     * 批次存在覆盖行（batch_id=batchId 且 status<>'ARCHIVED'）→ source=CUSTOM 返批次级手册；
+     * 否则 source=INHERITED 折叠到项目现行手册。
+     */
+    private BatchPlaybookDto effectiveBatchPlaybook(CurrentSubject s, BatchRow b) {
+        if (hasBatchOverride(b.id())) {
+            return new BatchPlaybookDto("CUSTOM", buildBatchPlaybook(s, b.id()));
+        }
+        return new BatchPlaybookDto("INHERITED", buildProjectPlaybook(s, b.projectId()));
+    }
+
+    /** 批次是否存在现行覆盖手册（status<>'ARCHIVED'）。 */
+    private boolean hasBatchOverride(long batchId) {
+        Long n = jdbc.queryForObject(
+                "SELECT count(*) FROM playbook WHERE batch_id = ? AND status <> 'ARCHIVED'",
+                Long.class, batchId);
+        return n != null && n > 0;
     }
 
     // ── 取数：构造项目现行手册 + 版本历史 ─────────────────────────────────────
@@ -145,14 +165,15 @@ public class PlaybookController {
     private PlaybookDto buildProjectPlaybook(CurrentSubject s, long projectId) {
         boolean privileged = isPrivileged(s);                  // 平台或物业 → 见草稿/历史全量
 
-        String currentSql = "SELECT * FROM playbook WHERE project_id = ?"
+        // batch_id IS NULL 限定项目级（V915 起批次级覆盖行 batch_id 非空，须排除，否则项目级混入批次手册）。
+        String currentSql = "SELECT * FROM playbook WHERE project_id = ? AND batch_id IS NULL"
                 + (privileged ? " AND status <> 'ARCHIVED'" : " AND status = 'PUBLISHED'")
                 + " ORDER BY id DESC LIMIT 1";
         List<PlaybookRow> cur = jdbc.query(currentSql, playbookRowMapper(), projectId);
 
         // 版本历史：特权主体见全部版本；非特权仅见已发布版（不暴露 DRAFT）。
         String histSql = "SELECT version, status, adopted_by, adopted_at, created_at FROM playbook"
-                + " WHERE project_id = ?"
+                + " WHERE project_id = ? AND batch_id IS NULL"
                 + (privileged ? "" : " AND status = 'PUBLISHED'")
                 + " ORDER BY id DESC";
         List<PlaybookVersionDto> versions = jdbc.query(histSql, versionRowMapper(), projectId);
@@ -172,6 +193,32 @@ public class PlaybookController {
                 versions);
     }
 
+    /**
+     * 批次级覆盖手册（source=CUSTOM 时返回）：取该批次现行覆盖版（batch_id=batchId 且 status<>'ARCHIVED'）。
+     * versions[] 仅列该批次自身的覆盖版本历史，避免与项目级混淆。
+     */
+    private PlaybookDto buildBatchPlaybook(CurrentSubject s, long batchId) {
+        List<PlaybookRow> cur = jdbc.query(
+                "SELECT * FROM playbook WHERE batch_id = ? AND status <> 'ARCHIVED' ORDER BY id DESC LIMIT 1",
+                playbookRowMapper(), batchId);
+        List<PlaybookVersionDto> versions = jdbc.query(
+                "SELECT version, status, adopted_by, adopted_at, created_at FROM playbook"
+                        + " WHERE batch_id = ? ORDER BY id DESC",
+                versionRowMapper(), batchId);
+        if (cur.isEmpty()) {
+            return new PlaybookDto(String.valueOf(batchId), null, null,
+                    DEFAULT_ADOPT_MODE, null, versions);
+        }
+        PlaybookRow r = cur.get(0);
+        return new PlaybookDto(
+                String.valueOf(batchId),
+                r.version(),
+                r.content(),
+                r.adoptMode(),
+                r.adoptedBy() == null ? null : String.valueOf(r.adoptedBy()),
+                versions);
+    }
+
     // ── 采纳事务：archive 现行已发布 → INSERT 新 PUBLISHED 版 ──────────────────
 
     /**
@@ -180,17 +227,17 @@ public class PlaybookController {
      * 返回新插入行 id。
      */
     private long doAdopt(long projectId, String reqVersion, String content, CurrentSubject s) {
-        // 取项目当前 adopt_mode（沿用现行版，无现行版则默认）。
+        // 取项目当前 adopt_mode（沿用现行版，无现行版则默认）。batch_id IS NULL 限定项目级。
         String adoptMode = jdbc.query(
-                "SELECT adopt_mode FROM playbook WHERE project_id = ? AND status <> 'ARCHIVED'"
+                "SELECT adopt_mode FROM playbook WHERE project_id = ? AND batch_id IS NULL AND status <> 'ARCHIVED'"
                         + " ORDER BY id DESC LIMIT 1",
                 rs -> rs.next() ? rs.getString("adopt_mode") : DEFAULT_ADOPT_MODE,
                 projectId);
         if (adoptMode == null || adoptMode.isBlank()) adoptMode = DEFAULT_ADOPT_MODE;
 
-        // archive 现行已发布版（同项目仅一现行 PUBLISHED）。
+        // archive 现行已发布版（同项目级仅一现行 PUBLISHED）。
         jdbc.update("UPDATE playbook SET status = 'ARCHIVED', updated_at = now()"
-                + " WHERE project_id = ? AND status = 'PUBLISHED'", projectId);
+                + " WHERE project_id = ? AND batch_id IS NULL AND status = 'PUBLISHED'", projectId);
 
         String version = (reqVersion == null || reqVersion.isBlank())
                 ? nextVersion(projectId) : reqVersion;
@@ -203,10 +250,48 @@ public class PlaybookController {
                 projectId, version, content, adoptMode, adopterId);
     }
 
+    /**
+     * 批次级覆盖采纳：archive 该批次现行覆盖版 → INSERT 新批次级 PUBLISHED 版。
+     * baseline_project_version / baseline_project_updated_at 快照项目级现行手册（drift 比对源，BR-M2-18b）：
+     *   覆盖写入后若项目级手册更新（updated_at 更晚或 version 不同）→ getBatch 判 playbookDrift=true。
+     * 项目级无现行手册时 baseline 留 NULL（无可比基线，按无 drift 处理）。
+     */
+    private void doAdoptBatch(long projectId, long batchId, String reqVersion, String content, CurrentSubject s) {
+        // 沿用项目级 adopt_mode（无则默认）。
+        String adoptMode = jdbc.query(
+                "SELECT adopt_mode FROM playbook WHERE project_id = ? AND batch_id IS NULL AND status <> 'ARCHIVED'"
+                        + " ORDER BY id DESC LIMIT 1",
+                rs -> rs.next() ? rs.getString("adopt_mode") : DEFAULT_ADOPT_MODE,
+                projectId);
+        if (adoptMode == null || adoptMode.isBlank()) adoptMode = DEFAULT_ADOPT_MODE;
+
+        // 项目级现行手册基线快照（version + updated_at）。
+        String[] baseVersion = {null};
+        java.sql.Timestamp[] baseTs = {null};
+        jdbc.query(
+                "SELECT version, updated_at FROM playbook WHERE project_id = ? AND batch_id IS NULL"
+                        + " AND status <> 'ARCHIVED' ORDER BY id DESC LIMIT 1",
+                rs -> { baseVersion[0] = rs.getString("version"); baseTs[0] = rs.getTimestamp("updated_at"); },
+                projectId);
+
+        // archive 该批次现行覆盖版（同批次仅一现行 PUBLISHED 覆盖）。
+        jdbc.update("UPDATE playbook SET status = 'ARCHIVED', updated_at = now()"
+                + " WHERE batch_id = ? AND status = 'PUBLISHED'", batchId);
+
+        String version = (reqVersion == null || reqVersion.isBlank()) ? "v1.0" : reqVersion;
+        Long adopterId = parseLongOrNull(s.accountId());
+
+        jdbc.update(
+                "INSERT INTO playbook(project_id, batch_id, version, content, status, adopt_mode, adopted_by, adopted_at,"
+                        + " baseline_project_version, baseline_project_updated_at)"
+                        + " VALUES (?, ?, ?, ?, 'PUBLISHED', ?, ?, now(), ?, ?)",
+                projectId, batchId, version, content, adoptMode, adopterId, baseVersion[0], baseTs[0]);
+    }
+
     /** 无显式版本号时按现有版本计数派生 v{n}。 */
     private String nextVersion(long projectId) {
         Long n = jdbc.queryForObject(
-                "SELECT count(*) FROM playbook WHERE project_id = ?", Long.class, projectId);
+                "SELECT count(*) FROM playbook WHERE project_id = ? AND batch_id IS NULL", Long.class, projectId);
         return "v" + ((n == null ? 0 : n) + 1);
     }
 

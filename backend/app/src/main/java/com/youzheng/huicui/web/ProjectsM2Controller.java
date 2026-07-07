@@ -150,7 +150,9 @@ public class ProjectsM2Controller {
             return new Project(
                     "PROPERTY_PLATFORM", base.id(), base.name(), base.area(), base.province(),
                     base.city(), base.district(), base.propCompany(), base.contractType(),
+                    base.contractName(), base.servicePeriod(),
                     base.feeRows(), base.feeCycle(), base.penalty(), base.payInfo(),
+                    base.corpAccount(), base.wxQrUrl(), base.reducePolicy(),
                     base.commInRate(), base.org(), base.status(),
                     dueTotal, repayTotal, coordinators, tiers, base.litigation());
         }
@@ -158,8 +160,10 @@ public class ProjectsM2Controller {
         // 服务商 → ProjectForProvider（物理不含 commInRate / 财务汇总；feeStd 汇总展示串）
         return new ProjectForProvider(
                 "PROVIDER", base.id(), base.name(), base.area(), base.propCompany(),
-                base.contractType(), feeStdOf(base.feeRows()), base.feeCycle(),
-                base.penalty(), base.payInfo(), tiers, base.litigation(), base.status());
+                base.contractType(), base.contractName(), base.servicePeriod(),
+                feeStdOf(base.feeRows()), base.feeCycle(),
+                base.penalty(), base.payInfo(), base.corpAccount(), base.wxQrUrl(),
+                base.reducePolicy(), tiers, base.litigation(), base.status());
     }
 
     // ---------------------------------------------------------------------
@@ -175,12 +179,16 @@ public class ProjectsM2Controller {
         java.math.BigDecimal rate = reqRate(body, "commInRate");   // Rate 分数 0-1
         Long id = jdbc.queryForObject(
                 "INSERT INTO project(org_id, name, org_name, area, province, city, district,"
-                        + " prop_company, contract_type, fee_rows, fee_cycle, penalty, pay_info, comm_in_rate, status)"
-                        + " VALUES (?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,'ACTIVE') RETURNING id",
+                        + " prop_company, contract_type, contract_name, service_period,"
+                        + " fee_rows, fee_cycle, penalty, pay_info, corp_account, wx_qr_url, reduce_policy, comm_in_rate, status)"
+                        + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?,?,?,'ACTIVE') RETURNING id",
                 Long.class, Long.parseLong(s.orgId()), name, s.orgName(), area,
                 str(body, "province"), str(body, "city"), str(body, "district"),
-                str(body, "propCompany"), str(body, "contractType"), feeRowsJson(body.get("feeRows")),
-                str(body, "feeCycle"), str(body, "penalty"), str(body, "payInfo"), rate);
+                str(body, "propCompany"), str(body, "contractType"),
+                str(body, "contractName"), str(body, "servicePeriod"),
+                feeRowsJson(body.get("feeRows")),
+                str(body, "feeCycle"), str(body, "penalty"), str(body, "payInfo"),
+                str(body, "corpAccount"), str(body, "wxQrUrl"), str(body, "reducePolicy"), rate);
         return fetchPlatformProject(id);
     }
 
@@ -198,11 +206,14 @@ public class ProjectsM2Controller {
         java.math.BigDecimal rate = reqRate(body, "commInRate");
         jdbc.update(
                 "UPDATE project SET name=?, area=?, province=?, city=?, district=?, prop_company=?,"
-                        + " contract_type=?, fee_rows=?::jsonb, fee_cycle=?, penalty=?, pay_info=?, comm_in_rate=?, updated_at=now()"
-                        + " WHERE id=?",
+                        + " contract_type=?, contract_name=?, service_period=?,"
+                        + " fee_rows=?::jsonb, fee_cycle=?, penalty=?, pay_info=?, corp_account=?, wx_qr_url=?, reduce_policy=?,"
+                        + " comm_in_rate=?, updated_at=now() WHERE id=?",
                 name, area, str(body, "province"), str(body, "city"), str(body, "district"), str(body, "propCompany"),
-                str(body, "contractType"), feeRowsJson(body.get("feeRows")), str(body, "feeCycle"), str(body, "penalty"),
-                str(body, "payInfo"), rate, projectId);
+                str(body, "contractType"), str(body, "contractName"), str(body, "servicePeriod"),
+                feeRowsJson(body.get("feeRows")), str(body, "feeCycle"), str(body, "penalty"),
+                str(body, "payInfo"), str(body, "corpAccount"), str(body, "wxQrUrl"), str(body, "reducePolicy"),
+                rate, projectId);
         return fetchPlatformProject(projectId);
     }
 
@@ -220,7 +231,9 @@ public class ProjectsM2Controller {
                 (rs, i) -> new CoordinatorRef(String.valueOf(rs.getLong("id")), rs.getString("name")), projectId);
         return new Project("PROPERTY_PLATFORM", base.id(), base.name(), base.area(), base.province(),
                 base.city(), base.district(), base.propCompany(), base.contractType(),
+                base.contractName(), base.servicePeriod(),
                 base.feeRows(), base.feeCycle(), base.penalty(), base.payInfo(),
+                base.corpAccount(), base.wxQrUrl(), base.reducePolicy(),
                 base.commInRate(), base.org(), base.status(),
                 sumCaseDue(projectId), sumRepay(projectId), coords, tiers, base.litigation());
     }
@@ -272,10 +285,15 @@ public class ProjectsM2Controller {
                 rs.getString("district"),
                 rs.getString("prop_company"),
                 rs.getString("contract_type"),
+                rs.getString("contract_name"),
+                rs.getString("service_period"),
                 parseFeeRows(rs.getString("fee_rows")),
                 rs.getString("fee_cycle"),
                 rs.getString("penalty"),
                 rs.getString("pay_info"),
+                rs.getString("corp_account"),
+                rs.getString("wx_qr_url"),
+                rs.getString("reduce_policy"),
                 numOrNull(rs, "comm_in_rate"),
                 rs.getString("org_name"),
                 rs.getString("status"),

@@ -7,7 +7,7 @@ import java.util.List;
  * 字段与契约 1:1；金额 *_cents 原样以「分」返回（契约 Money = integer 分，不转元）。
  * 列名映射见 CasesM2Controller 的 RowMapper：
  *   acctNo←acct_no, projectName←project_name(冗余直读免 JOIN),
- *   dueCents←due_cents, reduceAfterCents←reduce_after_cents,
+ *   dueCents←due_cents, penaltyCents←penalty_cents(滞纳金拆分·null=未拆分), reduceAfterCents←reduce_after_cents,
  *   arrearagePeriods←arrearags_periods(jsonb), litigationFields←litigation_fields(jsonb|null),
  *   legalStage←legal_stage, holderId←holder_id, t2DeadlineAt←t2_deadline,
  *   tCollectorDeadlineAt←t_collector_deadline, closedKind←closed_kind, closedAt←closed_at。
@@ -22,6 +22,7 @@ public record CaseDto(
         String ownerName,
         String room,
         Long dueCents,
+        Long penaltyCents,
         Long reduceAfterCents,
         List<String> arrearagePeriods,
         Object litigationFields,

@@ -4,6 +4,28 @@
  */
 
 export interface paths {
+    "/auth/setup-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 消费一次性 setupToken 设置初始密码(B-04方案A·新 owner/重置成员凭据交付闭环)
+         * @description 消费 credential_setup_token 发放的一次性明文 token（SHA-256 哈希匹配+TTL 24h+一次性）：
+         *     设 account.password_hash + must_change_password=FALSE。token 只能使用一次，过期或已用返 401。
+         *     此端点无需登录（public），由新 owner/成员在收到带外 token 后自行调用。
+         */
+        post: operations["setupPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/sms-code": {
         parameters: {
             query?: never;
@@ -835,7 +857,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 重发缴费链接(受短信冷却约束 BR-M4-15) */
+        /** 重发缴费链接(可指定渠道覆盖创建渠道；SMS 受短信冷却约束 BR-M4-15) */
         post: operations["resendPayLink"];
         delete?: never;
         options?: never;
@@ -1406,6 +1428,40 @@ export interface paths {
         };
         /** 催收员"我的结算/佣金"自查(只读·服务商内部提成 BR-M9-19a) */
         get: operations["getMySettlement"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 催收员"我的业绩"自查(只读·服务商内部考核口径·平台只考核到服务商 BR-M9-19a) */
+        get: operations["getMyStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/pay-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 我的已发缴费链接跟踪(发送时间/业主/房号/项目/批次/金额/渠道/状态·仅本人发出 BR-M4-14/15) */
+        get: operations["listMyPayLinks"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2109,7 +2165,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 重置员工密码(US-M1-05)·写审计 */
+        /**
+         * 重置员工凭据(B-04方案A·一次性 setupToken 交付，管理员带外告知成员·写审计)
+         * @description B-04方案A：不再接受 newPassword 明文，改为清除口令+发放一次性 setupToken（哈希存 credential_setup_token，TTL 24h）。响应体返回 setupToken 明文，管理员带外告知成员走 /auth/setup-password 设密。
+         */
         post: operations["resetMemberPassword"];
         delete?: never;
         options?: never;
@@ -2274,7 +2333,7 @@ export interface components {
         Error: {
             /**
              * @description 错误码字典(前端按 code 差异化提示)：
-             *     通用 AUTH_401(未登录/Token失效) / PERM_403(无权限/越数据范围) / NOT_FOUND_404(资源不存在) / STATE_409(状态机非法流转) / VALIDATION_422(入参校验失败)；
+             *     通用 AUTH_401(未登录/Token失效) / PERM_403(无权限/越数据范围) / NOT_FOUND_404(资源不存在) / STATE_409(状态机非法流转) / VALIDATION_422(入参校验失败) / MUST_CHANGE_PASSWORD(首登须先改密 B-04·受保护端点拦截返 403)；
              *     业务 BIZ_PAYOUT_INVERT(防倒挂：催收员比例>付佣比例) / BIZ_CAP_EXCEEDED(派单超持有余量 CFG-HOLDCAP) / BIZ_LINE_LOCKED(明细已结算/已纳入其他支付申请单) /
              *     BIZ_PR_PAID(支付申请单已完成PAID，不可撤销) / BIZ_WRONG_SETTLE_SIDE(错线访问结算资源：收佣线非平台/物业，或付佣线非平台/服务商) /
              *     BIZ_NO_VOUCHER(完成支付申请单必须上传收款/支付凭证 BR-M9-12d) /
@@ -2287,7 +2346,7 @@ export interface components {
              *     BIZ_REDISPATCH_GUARD(单案再派护栏①:目标=原退回服务商/已停用 US-M3-02) /
              * @enum {string}
              */
-            code: "AUTH_401" | "PERM_403" | "NOT_FOUND_404" | "STATE_409" | "VALIDATION_422" | "BIZ_PAYOUT_INVERT" | "BIZ_CAP_EXCEEDED" | "BIZ_LINE_LOCKED" | "BIZ_PR_PAID" | "BIZ_WRONG_SETTLE_SIDE" | "BIZ_NO_VOUCHER" | "BIZ_CASE_CLOSED" | "BIZ_REDUCE_OVER_SELF" | "BIZ_NO_RECORDING" | "BIZ_TOKEN_EXPIRED" | "BIZ_OPEN_RATE_REQUIRED" | "BIZ_NOT_PENDING_DISPATCH" | "BIZ_DUP_ACCT" | "BIZ_SMS_COOLDOWN" | "BIZ_QUOTA_EXHAUSTED" | "BIZ_ALREADY_CLAIMED" | "BIZ_HOLD_CAP" | "BIZ_REDISPATCH_GUARD";
+            code: "AUTH_401" | "PERM_403" | "NOT_FOUND_404" | "STATE_409" | "VALIDATION_422" | "MUST_CHANGE_PASSWORD" | "BIZ_PAYOUT_INVERT" | "BIZ_CAP_EXCEEDED" | "BIZ_LINE_LOCKED" | "BIZ_PR_PAID" | "BIZ_WRONG_SETTLE_SIDE" | "BIZ_NO_VOUCHER" | "BIZ_CASE_CLOSED" | "BIZ_REDUCE_OVER_SELF" | "BIZ_NO_RECORDING" | "BIZ_TOKEN_EXPIRED" | "BIZ_OPEN_RATE_REQUIRED" | "BIZ_NOT_PENDING_DISPATCH" | "BIZ_DUP_ACCT" | "BIZ_SMS_COOLDOWN" | "BIZ_QUOTA_EXHAUSTED" | "BIZ_ALREADY_CLAIMED" | "BIZ_HOLD_CAP" | "BIZ_REDISPATCH_GUARD" | "BIZ_EVIDENCE_FAILED" | "BIZ_SMS_FAILED";
             message: string;
             traceId?: string;
             details?: {
@@ -2422,7 +2481,7 @@ export interface components {
             /** @description JWT/access token */
             token?: string;
         };
-        /** @description 登录结果；单账号返回 token；多账号返回 loginTicket+accounts，需调 /auth/select-account 换取 token(BR-M1-11) */
+        /** @description 登录结果；单账号返回 token；多账号返回 loginTicket+accounts，需调 /auth/select-account 换取 token(BR-M1-11)。B-04方案A：mustChangePassword=true 时前端须强制跳转改密页。 */
         LoginResult: {
             /** @description 单账号直接返回token；多账号为空，需选 account 后换取 */
             token?: string | null;
@@ -2435,6 +2494,8 @@ export interface components {
                 role?: components["schemas"]["RoleTemplateEnum"];
                 name?: string;
             }[] | null;
+            /** @description B-04方案A：true=首登须改密，前端强制跳转 /auth/setup-password；null/false=正常登录 */
+            mustChangePassword?: boolean | null;
         };
         Me: {
             accountId?: string;
@@ -2474,6 +2535,10 @@ export interface components {
             district?: string;
             propCompany?: string;
             contractType?: string;
+            /** @description 物业合同名称（高保真§项目档案） */
+            contractName?: string;
+            /** @description 服务期限（高保真§项目档案） */
+            servicePeriod?: string;
             feeRows?: {
                 biz?: string;
                 std?: string;
@@ -2481,6 +2546,12 @@ export interface components {
             feeCycle?: string;
             penalty?: string;
             payInfo?: string;
+            /** @description 对公账户（高保真§收款信息） */
+            corpAccount?: string;
+            /** @description 微信收款码URL（高保真§收款信息） */
+            wxQrUrl?: string;
+            /** @description 减免政策描述（高保真§减免规则） */
+            reducePolicy?: string;
             /** @description 收佣比例(平台↔物业)·必填 BR-M9-01a */
             commInRate: components["schemas"]["Rate"];
             /** @description 关联协调员(PC↔项目 多对多·决定其可见案件范围 BR-M2-13/US-M2-02) */
@@ -2522,10 +2593,15 @@ export interface components {
             area?: string;
             propCompany?: string;
             contractType?: string;
+            contractName?: string;
+            servicePeriod?: string;
             feeStd?: string;
             feeCycle?: string;
             penalty?: string;
             payInfo?: string;
+            corpAccount?: string;
+            wxQrUrl?: string;
+            reducePolicy?: string;
             reduceTiers?: components["schemas"]["ReduceTier"][];
             litigation?: {
                 creditCode?: string;
@@ -2547,6 +2623,8 @@ export interface components {
             phone: string;
             room: string;
             dueCents: components["schemas"]["Money"];
+            /** @description 应收合计中滞纳金部分(≤dueCents，可不填=未拆分) */
+            penaltyCents?: components["schemas"]["Money"] | null;
             /** @description 欠费周期，如 2025-01~2025-12 */
             arrearPeriod: string;
             /** @description 诉讼要素(可后补) */
@@ -2563,6 +2641,8 @@ export interface components {
             phone: string;
             room: string;
             dueCents: components["schemas"]["Money"];
+            /** @description 应收合计中滞纳金部分(≤dueCents，可不填=未拆分) */
+            penaltyCents?: components["schemas"]["Money"] | null;
             /** @description 欠费周期(必填) */
             arrearagePeriods: string[];
             /** @description 诉讼要素(可后补) */
@@ -2665,6 +2745,8 @@ export interface components {
             ownerName?: string;
             room?: string;
             dueCents?: components["schemas"]["Money"];
+            /** @description 应收合计中滞纳金拆分(本金=dueCents-penaltyCents；null=导入未拆分) */
+            penaltyCents?: components["schemas"]["Money"] | null;
             reduceAfterCents?: components["schemas"]["Money"];
             /** @description 欠费周期(必填·要素化诉状数据源 ERD CASE/BR-M2-15) */
             arrearagePeriods?: string[];
@@ -2749,9 +2831,32 @@ export interface components {
             timeline?: components["schemas"]["Activity"][];
             projectRef?: {
                 contractType?: string;
+                /** @description 物业合同名称（高保真§项目档案） */
+                contractName?: string;
+                /** @description 服务期限（高保真§项目档案） */
+                servicePeriod?: string;
+                /** @description 缴费周期（高保真§收费标准） */
+                feeCycle?: string;
+                /** @description 物业费标准（高保真§收费标准） */
                 feeStd?: string;
+                /** @description 费项构成（高保真§收费标准） */
+                feeItems?: string;
+                /** @description 对公账户（高保真§收款信息） */
+                corpAccount?: string;
+                /** @description 微信收款码URL（高保真§收款信息） */
+                wxQrUrl?: string;
                 payInfo?: string;
+                /** @description 减免政策描述（高保真§减免规则） */
+                reducePolicy?: string;
                 reduceTiers?: components["schemas"]["ReduceTier"][];
+                /** @description 批次号（高保真§批次信息） */
+                batchNo?: string;
+                /** @description 收佣比例%（平台↔物业·物业付佣视角）。资金双线：服务商视角字段级省略 BR-M9-11 */
+                commInRate?: string;
+                /** @description 付佣比例%（平台↔服务商·服务商收佣视角）。资金双线：物业视角字段级省略 BR-M9-11 */
+                payOutRate?: string;
+                /** @description 收佣比例是否经平台最终确认（物业提案 false→平台确认 true）；服务商视角省略 */
+                commInConfirmed?: boolean;
             };
             playbook?: {
                 version?: string;
@@ -2912,6 +3017,31 @@ export interface components {
             /** Format: date-time */
             expiresAt?: string;
             status?: components["schemas"]["PayLinkStatusEnum"];
+        };
+        /**
+         * @description "我的缴费链接"展示口径(区别于内部 PayLinkStatusEnum 的 ACTIVE/EXPIRED)：PENDING_VIEW=待查看 VIEWED_UNPAID=已读未缴 PAID=已缴费 EXPIRED=已过期
+         * @enum {string}
+         */
+        PayLinkDisplayStatusEnum: "PENDING_VIEW" | "VIEWED_UNPAID" | "PAID" | "EXPIRED";
+        /** @description 我的已发缴费链接跟踪单条(BR-M4-14/15) */
+        MyPayLinkItem: {
+            id?: string;
+            caseId?: string;
+            /** @description 拼 /pay/{token} 复制链接用 */
+            token?: string;
+            /** Format: date-time */
+            sentAt?: string;
+            ownerName?: string;
+            room?: string;
+            project?: string;
+            batch?: string;
+            amountCents?: components["schemas"]["Money"];
+            channel?: string;
+            status?: components["schemas"]["PayLinkDisplayStatusEnum"];
+        };
+        MyPayLinkPage: {
+            items?: components["schemas"]["MyPayLinkItem"][];
+            meta?: components["schemas"]["PageMeta"];
         };
         ReasonInput: {
             reason: string;
@@ -3241,12 +3371,72 @@ export interface components {
             totalCents?: components["schemas"]["Money"];
             settledCents?: components["schemas"]["Money"];
             unsettledCents?: components["schemas"]["Money"];
+            /** @description 按(结算周期,批次,是否已结)聚合行（对标原型§我的结算） */
             rows?: {
+                /** @description 结算周期 YYYY-MM(按回款到账月) */
+                period?: string;
+                /** @description 项目名 */
+                project?: string;
                 batch?: string;
                 repayCents?: components["schemas"]["Money"];
                 rate?: components["schemas"]["Rate"];
                 commCents?: components["schemas"]["Money"];
                 settled?: boolean;
+            }[];
+        };
+        /** @description 催收员"我的业绩·结算"（服务商内部考核口径·仅本人 BR-M9-19a）：KPI + 提成汇总 + 批次为主线的回款/结算钻取列表（每批含案件级明细与已结/待结分组） */
+        MyStats: {
+            /** @description 统计月 YYYY-MM */
+            month?: string;
+            /** @description 当期本人回款(到账归属快照口径) */
+            repayCents?: components["schemas"]["Money"];
+            /** @description 回款户数(distinct 案件) */
+            repayCases?: number;
+            /** @description 当期提成(回款×批次比例累计) */
+            commissionCents?: components["schemas"]["Money"];
+            /** @description 接通率=已标注通话中接通占比；无标注数据为 null */
+            connectRate?: components["schemas"]["Rate"] | null;
+            /** @description 承诺兑现率=已兑现/(已兑现+部分+爽约)；无到期承诺为 null */
+            promiseFulfillRate?: components["schemas"]["Rate"] | null;
+            /** @description 累计提成(全批次·全时段·非仅当月) */
+            totalCommissionCents?: components["schemas"]["Money"];
+            /** @description 已结提成(关联 SETTLED 内部结算单) */
+            settledCommissionCents?: components["schemas"]["Money"];
+            /** @description 待结提成=累计-已结 */
+            unsettledCommissionCents?: components["schemas"]["Money"];
+            /** @description 批次为主线的回款/结算列表（对标原型§我的业绩·结算） */
+            rows?: {
+                batchId?: string;
+                batch?: string;
+                project?: string;
+                /** @description 当前持有案件数 */
+                holdCount?: number;
+                repayCents?: components["schemas"]["Money"];
+                /** @description 回款率=回款/应收(本人持有部分) */
+                repayRate?: components["schemas"]["Rate"] | null;
+                /** @description 本批提成比例 */
+                rate?: components["schemas"]["Rate"] | null;
+                /** @description 本批提成合计 */
+                commissionCents?: components["schemas"]["Money"];
+                /** @description 本批已结提成 */
+                settledCommissionCents?: components["schemas"]["Money"];
+                /** @description 本批待结提成 */
+                unsettledCommissionCents?: components["schemas"]["Money"];
+                /** @description 已结笔数 */
+                settledLineCount?: number;
+                /** @description 本批回款笔数 */
+                totalLineCount?: number;
+                /** @description 案件级回款明细(脱敏 BR-M8-09：房号/脱敏姓名/回款额/提成/到账日/是否已结/结清日) */
+                lines?: {
+                    caseId?: string;
+                    ownerMasked?: string;
+                    room?: string;
+                    repayCents?: components["schemas"]["Money"];
+                    commissionCents?: components["schemas"]["Money"];
+                    paidAt?: string;
+                    settled?: boolean;
+                    closedAt?: string | null;
+                }[];
             }[];
         };
         RiskRecord: {
@@ -3266,11 +3456,21 @@ export interface components {
             status?: components["schemas"]["DisposeTaskStatusEnum"];
             tm?: string;
         };
-        /** @description 隐私最小化：仅缴费必要信息，不含催收过程/他案/服务商 BR-M7-07 */
+        /** @description 隐私最小化：仅缴费必要信息，不含催收过程/他案/服务商 BR-M7-07。姓名脱敏后展示；房号为账单归属确认+对公转账备注必要信息 */
         OwnerBill: {
             community?: string;
-            /** @description 减免后应收 */
+            /** @description 业主脱敏姓名(首字+**，如 李**) */
+            ownerMasked?: string;
+            /** @description 房号(账单归属确认；对公转账备注填此) */
+            room?: string;
+            /** @description 最终实缴=减免后应收 */
             payableCents?: components["schemas"]["Money"];
+            /** @description 减免前应收合计(物业费+滞纳金) */
+            dueCents?: components["schemas"]["Money"];
+            /** @description 应收合计中滞纳金拆分(物业费本金=dueCents-penaltyCents；null=未拆分) */
+            penaltyCents?: components["schemas"]["Money"] | null;
+            /** @description 滞纳金政策文字(项目配置)；金额未拆分时的兜底展示 */
+            penaltyPolicy?: string | null;
             reductionCents?: components["schemas"]["Money"];
             feeStd?: string;
             /** @description 欠费周期(如 ["2025-01","2025-02"]) BR-M7-02 */
@@ -3379,6 +3579,14 @@ export interface components {
             certUrl?: string | null;
             /** Format: date-time */
             issuedAt?: string | null;
+            /** @description 易保全保全备案号（多文件逗号分隔）；占位/未对接为 null */
+            preservationId?: string | null;
+            /** @description 易保全保全链交易 hash（ebqChainTransHash） */
+            chainTxHash?: string | null;
+            /** @description 广州互联网法院证据 id */
+            gznetId?: string | null;
+            /** @description 杭州互联网法院证据 id */
+            antId?: string | null;
         };
         /** @description 案件存证打包下载(已出证存证聚合·占位) */
         EvidencePackage: {
@@ -3645,12 +3853,15 @@ export interface components {
             ownerAccount: string;
             ownerPhone: string;
         };
+        /** @description 组织（B-04方案A：POST /orgs 201 响应及 PATCH /orgs/{id}/owner?resetPassword=true 响应含 ownerSetupToken 一次性明文；列表/GET 始终 null） */
         Org: {
             id?: string;
             type?: components["schemas"]["OrgTypeEnum"];
             name?: string;
             ownerAccountId?: string;
             status?: string;
+            /** @description 一次性凭据交付 token 明文（仅 POST /orgs 201 及 PATCH owner?resetPassword=true 响应出现一次，带外转交 owner；审计不记明文） */
+            ownerSetupToken?: string | null;
         };
         OrgPage: {
             items?: components["schemas"]["Org"][];
@@ -3988,6 +4199,38 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    setupPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description 一次性 setupToken 明文（由平台带外转交，24h 有效） */
+                    token: string;
+                    /** @description 新密码（至少 6 位） */
+                    newPassword: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 密码设置成功，账号可正常登录 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description token 无效、已过期或已使用 */
+            401: components["responses"]["Unauthorized"];
+            /** @description 账号已停用 */
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
     requestSmsCode: {
         parameters: {
             query?: never;
@@ -5331,7 +5574,17 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description 指定本次发送渠道，缺省沿用链接当前渠道
+                     * @enum {string}
+                     */
+                    channel?: "SMS" | "WECHAT_COPY";
+                };
+            };
+        };
         responses: {
             /** @description ok */
             200: {
@@ -6213,6 +6466,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MySettlement"];
+                };
+            };
+        };
+    };
+    getMyStats: {
+        parameters: {
+            query?: {
+                /** @description 统计月 YYYY-MM，缺省当月 */
+                month?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyStats"];
+                };
+            };
+        };
+    };
+    listMyPayLinks: {
+        parameters: {
+            query?: {
+                /** @description 搜索 业主/房号 */
+                q?: string;
+                project?: string;
+                batch?: string;
+                status?: components["schemas"]["PayLinkDisplayStatusEnum"];
+                from?: string;
+                to?: string;
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyPayLinkPage"];
                 };
             };
         };
@@ -7305,16 +7611,22 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                "application/json": components["schemas"]["ResetPasswordInput"];
+                "application/json": Record<string, never>;
             };
         };
         responses: {
-            /** @description ok */
+            /** @description ok，响应体含一次性 setupToken */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        ok?: boolean;
+                        /** @description 一次性凭据 token 明文（带外告知成员，24h 有效，一次性） */
+                        setupToken?: string;
+                    };
+                };
             };
             403: components["responses"]["Forbidden"];
         };

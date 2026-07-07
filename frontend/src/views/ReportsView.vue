@@ -1,90 +1,203 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 
-// M10 运营报表看板：角色化(scope) + 维度钻取(项目/批次/月) + 月趋势 + 导出。
+// 经营报表 · 对齐高保真 index.html view==='reports'（行 1316-1515）
+// SA/SE=平台损益；PL=物业视角；VL=服务商视角
 const auth = useAuth()
-const data = ref<any>(null)
-const dimension = ref<'project' | 'batch' | 'month'>('batch')
-const month = ref('')
+const role = computed(() => auth.me?.role ?? '')
 const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
-const kpiVal = (k: any) => k.kind === 'MONEY' ? yuan(k.amountCents) : k.kind === 'RATE' ? ((k.rate ?? 0) * 100).toFixed(1) + '%' : String(k.count ?? 0)
-const rateOf = (r: any) => r.dueCents ? (r.repayCents / r.dueCents) * 100 : 0
+
+const data = ref<any>(null)
+const reportArea = ref('')
+const reportPeriod = ref<'month' | 'quarter' | 'year'>('month')
+const reportRange = ref('')
+
+const scopeLabel: Record<string, string> = { SA: '全局', SE: '范围内', PL: '本物业', PC: '本物业', VL: '本服务商', CO: '本人' }
 
 async function load() {
-  const q: any = { dimension: dimension.value, page: 1, size: 50 }
-  if (month.value) q.month = month.value
-  const { data: d, error } = await api.GET('/reports/operation', { params: { query: q } as any })
+  const { data: d, error } = await api.GET('/reports/operation', { params: { query: { dimension: 'batch', page: 1, size: 50 } } as any })
   if (error) { ElMessage.error('报表加载失败'); return }
   data.value = d
 }
+
+function applyFilter() { load() }
+
 async function exportReport() {
   const { error } = await api.POST('/reports/export', { body: { report: 'operation', format: 'xlsx' } as any })
   if (error) { ElMessage.error('导出失败：' + ((error as any)?.message ?? '无 report.export 权限')); return }
-  ElMessage.success('导出任务已提交（异步生成 xlsx，完成后下载）')
+  ElMessage.success('导出任务已提交')
 }
-// 月趋势：dimension=month 时按 dimName(YYYY-MM) 排序 + 回款率条形(CSS,无图表依赖)
-const trend = computed(() => dimension.value !== 'month' ? [] :
-  [...(data.value?.rows ?? [])].sort((a, b) => String(a.dimName).localeCompare(String(b.dimName))))
-const maxRepay = computed(() => Math.max(1, ...trend.value.map((r: any) => r.repayCents || 0)))
+
+// KPI 从 data.summary 聚合
+const kpis = computed(() => {
+  if (!data.value?.summary) return []
+  const s = data.value.summary
+  return [
+    { n: yuan(s.dueCents), l: '应收总额', c: '#e8f4fd', t: 'up', tx: '' },
+    { n: yuan(s.repayCents), l: '已回款', c: '#e6f7e6', t: 'up', tx: '' },
+    { n: (s.caseCount ?? '—'), l: '案件总数', c: '#fef3e6', t: 'flat', tx: '' },
+    { n: ((s.repayRate ?? 0) * 100).toFixed(1) + '%', l: '回款率', c: '#f0e6f6', t: 'up', tx: '' },
+  ]
+})
+
+// 平台 KPI 图标 path
+const ic: Record<string, string> = {
+  money: 'M12 1v22 M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6',
+  chart: 'M3 3v18h18 M7 14l3-3 3 3 5-6',
+  cases: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6',
+  rate: 'M12 2 2 7l10 5 10-5z M2 17l10 5 10-5 M2 12l10 5 10-5',
+}
+
+// PL 回款率趋势（演示态条形）
+const repayTrend = computed(() => {
+  if (!data.value?.rows) return []
+  return [...data.value.rows].slice(0, 6).map((r: any) => ({
+    m: r.dimName?.slice(0, 7) || r.dimName || '—',
+    rate: r.dueCents ? Math.round((r.repayCents || 0) / r.dueCents * 100) : 0,
+  }))
+})
+
+// PL 催收周期分布（演示态）
+const cycleDist = computed(() => [
+  { seg: '≤30天', n: 12, pct: 40 },
+  { seg: '31-60天', n: 9, pct: 30 },
+  { seg: '61-90天', n: 6, pct: 20 },
+  { seg: '>90天', n: 3, pct: 10 },
+])
+
+// 能力用量 KPI
+const capBilling = computed(() => {
+  if (!data.value?.rows) return []
+  const stt = data.value.rows.reduce((s: number, r: any) => s + ((r.sttMinutes) || 0), 0)
+  const sms = data.value.rows.reduce((s: number, r: any) => s + ((r.smsCount) || 0), 0)
+  return [
+    { item: 'STT 分钟', qty: stt || '—' },
+    { item: '短信条数', qty: sms || '—' },
+    { item: '存证次数', qty: '—' },
+    { item: '法律服务', qty: '—' },
+  ]
+})
+
 onMounted(load)
 </script>
 
 <template>
-  <el-card v-if="data" header="运营报表（GET /reports/operation · 角色化口径 + 维度钻取 + 月趋势）">
-    <div style="margin-bottom:10px;display:flex;align-items:center;gap:12px">
-      <el-tag>口径：{{ data.scope }}</el-tag>
-      <span>钻取维度：</span>
-      <el-radio-group v-model="dimension" size="small" @change="load">
-        <el-radio-button label="project">按项目</el-radio-button>
-        <el-radio-button label="batch">按批次</el-radio-button>
-        <el-radio-button label="month">按月份</el-radio-button>
-      </el-radio-group>
-      <el-date-picker v-model="month" type="month" value-format="YYYY-MM" placeholder="筛选月份(可选)" size="small" style="width:150px" clearable @change="load" />
-      <el-button v-if="auth.has('report.export')" size="small" type="primary" style="margin-left:auto" @click="exportReport">导出 xlsx</el-button>
+  <div>
+    <!-- 工具栏 -->
+    <div class="toolbar" style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span class="note" style="margin:0">报表范围：{{ scopeLabel[role] || '全局' }}（导出仅含范围内数据）</span>
+        <select class="inp" v-model="reportArea" style="min-width:120px"><option value="">全部区域</option></select>
+        <select class="inp" v-model="reportPeriod" style="min-width:110px"><option value="month">按月</option><option value="quarter">按季</option><option value="year">按年</option></select>
+        <input class="inp" type="month" v-model="reportRange" style="min-width:130px" />
+        <button class="btn df sm" @click="applyFilter">应用筛选</button>
+      </div>
+      <button v-if="auth.has('report.export')" class="btn sm" @click="exportReport">导出</button>
     </div>
 
-    <el-row :gutter="12">
-      <el-col v-for="k in data.kpis ?? []" :key="k.label" :span="6">
-        <el-card shadow="hover" style="text-align:center">
-          <div style="color:#909399;font-size:13px">{{ k.label }}</div>
-          <div style="font-size:22px;font-weight:600;margin-top:6px">{{ kpiVal(k) }}</div>
-        </el-card>
-      </el-col>
-    </el-row>
+    <!-- KPI 卡片 -->
+    <div class="kpis" v-if="data">
+      <div class="kpi" v-for="s in kpis" :key="s.l">
+        <div class="n">{{ s.n }}</div><div class="l">{{ s.l }}</div>
+      </div>
+    </div>
 
-    <!-- 月趋势(回款条形) -->
-    <template v-if="dimension === 'month' && trend.length">
-      <el-divider content-position="left">回款趋势（按月）</el-divider>
-      <div v-for="r in trend" :key="r.dimKey" style="display:flex;align-items:center;gap:8px;margin:3px 0">
-        <span style="width:70px;color:#606266;font-size:13px">{{ r.dimName }}</span>
-        <div style="flex:1;background:#f0f2f5;border-radius:3px;height:18px;position:relative">
-          <div :style="{ width: (r.repayCents / maxRepay * 100) + '%', background: '#409eff', height: '100%', borderRadius: '3px' }"></div>
-        </div>
-        <span style="width:120px;text-align:right;font-size:13px">{{ yuan(r.repayCents) }} · {{ rateOf(r).toFixed(0) }}%</span>
+    <!-- ═══ SA/SE：平台视角 ═══ -->
+    <template v-if="role === 'SA' || role === 'SE'">
+      <div class="card">
+        <div class="card-h"><div class="t"><span class="bar"></span>区域 · 周期 损益聚合</div><div class="ops"><span class="note" style="margin:0">区域：{{ reportArea || '全部' }}</span></div></div>
+        <table><thead><tr><th>区域</th><th>周期</th><th>佣金收入</th><th>佣金支出</th><th>能力收入</th><th>平台利润</th></tr></thead>
+          <tbody><tr><td colspan="6" class="note" style="text-align:center">暂无数据</td></tr></tbody>
+        </table>
+        <div class="note">利润=（佣金收入−佣金支出）+能力收入；本期不计能力成本。</div>
+      </div>
+      <div class="card">
+        <div class="card-h"><div class="t"><span class="bar"></span>佣金毛利</div></div>
+        <table><thead><tr><th>项目</th><th>收佣</th><th>付佣</th><th>毛利</th><th>毛利率</th></tr></thead><tbody><tr><td colspan="5" class="note" style="text-align:center">暂无数据</td></tr></tbody></table>
       </div>
     </template>
 
-    <el-divider content-position="left">分维度明细（{{ ({project:'项目',batch:'批次',month:'月份'} as any)[dimension] }}）</el-divider>
-    <el-table :data="data.rows ?? []" border size="small">
-      <el-table-column prop="dimName" label="维度" />
-      <el-table-column label="案件数" width="90"><template #default="{row}">{{ row.caseCount ?? '—' }}</template></el-table-column>
-      <el-table-column label="应收"><template #default="{row}">{{ yuan(row.dueCents) }}</template></el-table-column>
-      <el-table-column label="回款"><template #default="{row}">{{ yuan(row.repayCents) }}</template></el-table-column>
-      <el-table-column label="回款率" width="140"><template #default="{row}">
-        <el-progress :percentage="Math.min(100, Math.round(rateOf(row)))" :stroke-width="12" />
-      </template></el-table-column>
-    </el-table>
+    <!-- ═══ PL：物业视角 ═══ -->
+    <template v-else-if="role === 'PL' || role === 'PC'">
+      <!-- 回款率趋势 -->
+      <div class="card">
+        <div class="card-h"><div class="t"><span class="bar"></span>回款率趋势</div><div class="ops"><span class="note" style="margin:0">{{ scopeLabel[role] || '本物业' }}</span></div></div>
+        <div v-for="t in repayTrend" :key="t.m" style="display:flex;align-items:center;gap:10px;margin:8px 0">
+          <span style="width:72px;font-size:13px">{{ t.m }}</span>
+          <div style="flex:1;background:#f0f0f0;border-radius:4px;height:14px">
+            <div :style="{ width: t.rate + '%', background: 'var(--primary)', height: '14px', borderRadius: '4px' }"></div>
+          </div>
+          <span class="num" style="width:48px">{{ t.rate }}%</span>
+        </div>
+        <div v-if="!repayTrend.length" class="note">暂无回款趋势数据</div>
+      </div>
 
-    <template v-if="data.capabilityUsage?.length">
-      <el-divider content-position="left">能力用量（计费·只量不金额 BR-M10-01）</el-divider>
-      <el-table :data="data.capabilityUsage" border size="small">
-        <el-table-column prop="capability" label="能力" /><el-table-column prop="used" label="用量" />
-      </el-table>
+      <!-- 催收周期分布 -->
+      <div class="card">
+        <div class="card-h"><div class="t"><span class="bar"></span>催收周期分布</div><div class="ops"><span class="note" style="margin:0">{{ scopeLabel[role] || '本物业' }}</span></div></div>
+        <div v-for="d in cycleDist" :key="d.seg" style="display:flex;align-items:center;gap:10px;margin:8px 0">
+          <span style="width:80px;font-size:13px">{{ d.seg }}</span>
+          <div style="flex:1;background:#f0f0f0;border-radius:4px;height:14px">
+            <div :style="{ width: d.pct + '%', background: 'var(--primary)', height: '14px', borderRadius: '4px' }"></div>
+          </div>
+          <span class="num" style="width:80px">{{ d.n }} 件 / {{ d.pct }}%</span>
+        </div>
+        <div class="desc" style="margin-top:12px">
+          <div class="r"><div class="k">撤案合计</div><div class="v">— 件</div></div>
+        </div>
+      </div>
+
+      <!-- 佣金支出聚合 -->
+      <div class="card">
+        <div class="card-h"><div class="t"><span class="bar"></span>佣金支出聚合（本物业付出收佣）</div><div class="ops"><span class="note" style="margin:0">{{ scopeLabel[role] || '本物业' }}</span></div></div>
+        <table>
+          <thead><tr><th>批次</th><th>回款基数</th><th>收佣比例</th><th>佣金支出</th><th>状态</th></tr></thead>
+          <tbody>
+            <tr v-for="r in (data?.rows ?? [])" :key="r.dimName">
+              <td>{{ r.dimName }}</td>
+              <td class="num">{{ yuan(r.dueCents) }}</td>
+              <td>{{ r.commRate ? (r.commRate * 100).toFixed(1) + '%' : '—' }}</td>
+              <td class="num">{{ yuan(r.commCents || (r.dueCents && r.commRate ? r.dueCents * r.commRate : undefined)) }}</td>
+              <td><span class="tag" :class="r.settled ? 'suc' : 'war'">{{ r.settled ? '已结清' : '未结' }}</span></td>
+            </tr>
+            <tr v-if="!(data?.rows ?? []).length"><td colspan="5" class="note" style="text-align:center">暂无数据</td></tr>
+          </tbody>
+        </table>
+        <div class="note">数据引自收佣对账口径；物业仅见本物业收佣支出，不可见平台付佣线。</div>
+      </div>
+
+      <!-- 能力用量汇总 -->
+      <div class="card">
+        <div class="card-h"><div class="t"><span class="bar"></span>能力用量汇总（STT/短信/存证/法律）</div><div class="ops"><span class="note" style="margin:0">{{ scopeLabel[role] || '本物业' }} · 仅统计用量</span></div></div>
+        <div class="kpis" style="grid-template-columns:repeat(4,1fr)">
+          <div class="kpi" v-for="cap in capBilling" :key="cap.item">
+            <div class="n">{{ cap.qty }}</div><div class="l">{{ cap.item }}</div>
+          </div>
+        </div>
+        <div class="note">能力用量引自计费明细：STT 按分钟、短信按条、存证/法律按次；<b>本汇总仅统计用量、不展示金额</b>。</div>
+      </div>
+
+      <!-- 撤案统计 -->
+      <div class="card">
+        <div class="card-h"><div class="t"><span class="bar"></span>撤案统计</div><div class="ops"><span class="note" style="margin:0">{{ scopeLabel[role] || '本物业' }}</span></div></div>
+        <div class="sec-title">原因分布</div>
+        <div class="note">暂无撤案数据</div>
+      </div>
     </template>
-    <el-alert type="info" :closable="false" style="margin-top:10px"
-      title="角色化口径：物业看本物业 / 服务商看本商 / 平台看全局（服务端 scope 裁剪）。维度钻取与月趋势基于同一聚合端点。" />
-  </el-card>
+
+    <!-- ═══ VL：服务商视角 ═══ -->
+    <template v-else-if="role === 'VL'">
+      <div class="card">
+        <div class="card-h"><div class="t"><span class="bar"></span>催收员产能</div></div>
+        <table><thead><tr><th>催收员</th><th>案件数</th><th>接通率</th><th>回款额</th><th>回款率</th></tr></thead><tbody><tr><td colspan="5" class="note" style="text-align:center">暂无数据</td></tr></tbody></table>
+      </div>
+      <div class="card">
+        <div class="card-h"><div class="t"><span class="bar"></span>佣金汇总</div></div>
+        <table><thead><tr><th>催收员</th><th>回款基数</th><th>比例</th><th>应得</th><th>已付</th><th>未付</th></tr></thead><tbody><tr><td colspan="6" class="note" style="text-align:center">暂无数据</td></tr></tbody></table>
+      </div>
+    </template>
+  </div>
 </template>

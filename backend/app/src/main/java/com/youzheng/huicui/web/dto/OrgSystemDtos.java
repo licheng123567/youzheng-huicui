@@ -16,13 +16,17 @@ package com.youzheng.huicui.web.dto;
 public final class OrgSystemDtos {
     private OrgSystemDtos() {}
 
-    /** 契约 Org。type=OrgTypeEnum(PLATFORM/PROPERTY/PROVIDER)。id/ownerAccountId 为 string。 */
+    /** 契约 Org（含一次性凭据交付令牌·B-04方案A）。
+     *  ownerSetupToken：仅 POST /orgs 201 响应返回一次（明文随机串，需带外转交给 owner）；
+     *  PATCH /orgs/{id}/owner?resetPassword=true 的同名令牌亦在响应体一次返回。
+     *  审计绝不记 token 明文，仅记 setupTokenIssued=true。 */
     public record OrgDto(
             String id,
             String type,
             String name,
             String ownerAccountId,
-            String status) {}
+            String status,
+            String ownerSetupToken) {}
 
     /** 契约 OrgInput（POST /orgs 入参，均 required）。 */
     public record OrgInputDto(

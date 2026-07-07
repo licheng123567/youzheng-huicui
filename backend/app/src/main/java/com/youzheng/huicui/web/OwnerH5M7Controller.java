@@ -18,10 +18,11 @@ import java.util.Map;
 
 /**
  * M7 业主缴费 H5 读端点（owner-h5·无登录·凭 token 只读）。
- * 类名带 M7 后缀，承载本组 public 端点；只读不写。
+ * 类名带 M7 后缀，承载本组 public 端点；对外只读（除 viewed_at 首次访问打点，不写业务数据）。
  *
  * 端点（基路径 /v1 由 server.servlet.context-path 提供，方法注解写裸路径）：
  *   GET /pay/{token}  getOwnerBill —— 业主缴费账单，x-data-scope=public。
+ *     首次访问顺带打 pay_link.viewed_at，供 GET /me/pay-links「已读未缴」展示口径消费。
  *
  * **public 免鉴权**：契约 security:[]；JwtAuthFilter.isPublic 已对 path.startsWith("/pay/") 放行。
  *   本端点不加 @RequirePermission、不读 SubjectContext、不依赖 CurrentSubject。
@@ -53,9 +54,13 @@ public class OwnerH5M7Controller {
         List<OwnerBillRow> rows = jdbc.query(
                 "SELECT pl.status AS pl_status,"
                         + " (pl.expires_at < now()) AS pl_expired,"
+                        + " pl.case_id AS case_id,"
                         + " c.project_id AS project_id,"
                         + " c.project_name AS community,"
+                        + " c.owner_name AS owner_name,"
+                        + " c.room AS room,"
                         + " c.due_cents AS due_cents,"
+                        + " c.penalty_cents AS penalty_cents,"
                         + " c.reduce_after_cents AS reduce_after_cents,"
                         + " c.arrearags_periods AS arrearags_periods"
                         + " FROM pay_link pl"
@@ -65,9 +70,14 @@ public class OwnerH5M7Controller {
                     OwnerBillRow r = new OwnerBillRow();
                     r.plStatus = rs.getString("pl_status");
                     r.plExpired = rs.getBoolean("pl_expired");
+                    r.caseId = rs.getLong("case_id");
                     r.projectId = rs.getLong("project_id");
                     r.community = rs.getString("community");
+                    r.ownerName = rs.getString("owner_name");
+                    r.room = rs.getString("room");
                     r.dueCents = rs.getLong("due_cents");
+                    long pc = rs.getLong("penalty_cents");
+                    r.penaltyCents = rs.wasNull() ? null : pc;
                     long ra = rs.getLong("reduce_after_cents");
                     r.reduceAfterCents = rs.wasNull() ? null : ra;
                     r.arrearagsPeriods = rs.getString("arrearags_periods");
@@ -85,36 +95,53 @@ public class OwnerH5M7Controller {
             throw new ApiException(BizError.NOT_FOUND_404, "链接已失效");
         }
 
+        // 首次打开记录 viewed_at（驱动"我的缴费链接"列表 已读未缴 展示口径 BR-M4-14/15）。
+        // 幂等 UPDATE：仅首次置值，不因反复刷新更新时间；链接已过期上面已 404 短路，不会走到这里。
+        jdbc.update("UPDATE pay_link SET viewed_at = now() WHERE token = ? AND viewed_at IS NULL", token);
+
         // 减免后应收（payable）= reduce_after_cents ?: due_cents；减免额 = due − payable。
         long payableCents = r.reduceAfterCents != null ? r.reduceAfterCents : r.dueCents;
         long reductionCents = r.dueCents - payableCents;
 
-        // 项目维度：收费标准摘要 + 收款渠道（按 project_id 单独取，仍不触碰催收过程字段）。
+        // 项目维度：收费标准摘要 + 滞纳金政策文字 + 收款渠道（按 project_id 单独取，仍不触碰催收过程字段）。
         String feeStd = null;
+        String penaltyPolicy = null;
         PayChannelsDto payChannels = new PayChannelsDto(null, null);
         List<ProjPayRow> projRows = jdbc.query(
-                "SELECT fee_rows, pay_info FROM project WHERE id = ?",
+                "SELECT fee_rows, penalty, pay_info FROM project WHERE id = ?",
                 (rs, i) -> {
                     ProjPayRow p = new ProjPayRow();
                     p.feeRows = rs.getString("fee_rows");
+                    p.penalty = rs.getString("penalty");
                     p.payInfo = rs.getString("pay_info");
                     return p;
                 },
                 r.projectId);
         if (!projRows.isEmpty()) {
             feeStd = summarizeFeeRows(projRows.get(0).feeRows);
+            penaltyPolicy = projRows.get(0).penalty;
             payChannels = parsePayChannels(projRows.get(0).payInfo);
         }
 
         List<String> arrearagePeriods = parseStringArray(r.arrearagsPeriods);
 
-        // 政策分期 BR-M7-06：承诺分期 ≠ 政策分期；地基期返 null（留 TODO 接政策/减免规则分期）。
-        List<InstallmentDto> installments = null;
+        // 分期展示 BR-M7-03/06：分期不是业主自选，而是协调员在跟进时录入的承诺分期
+        //   （promise_installment，BR-M4-13，经 POST /cases/{id}/promises 落库）。
+        //   H5 只读把"协调员已设的分期计划"展示出来：取该案最近一条 promise 的分期明细
+        //   （seq→period「第N期」、due_date→dueDate、amount_cents→amountCents、state→status）。
+        //   无任何分期承诺则返 null（≠ 空数组，对齐契约 [array,'null']，前端据此判定不展示分期段）。
+        //   业主侧只读：仅 SELECT，绝不写/改分期。
+        List<InstallmentDto> installments = loadInstallments(r.caseId);
 
-        // onlinePay 恒 false（本期线下缴·BR-M7-05）。
+        // onlinePay 恒 false（本期线下缴·BR-M7-05）。姓名脱敏首字+**（隐私最小化 BR-M7-07）。
         return new OwnerBillDto(
                 r.community,
+                maskName(r.ownerName),
+                r.room,
                 payableCents,
+                r.dueCents,
+                r.penaltyCents,
+                penaltyPolicy,
                 reductionCents,
                 feeStd,
                 arrearagePeriods,
@@ -123,7 +150,42 @@ public class OwnerH5M7Controller {
                 false);
     }
 
+    /** 姓名脱敏：首字 + **（同高保真 maskName 口径）；空返 null。 */
+    private static String maskName(String name) {
+        if (name == null || name.isBlank()) return null;
+        return name.substring(0, 1) + "**";
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    /**
+     * 读该案"协调员已设的分期计划"→ InstallmentDto[]（只读，业主不可改）。
+     * 数据源 = 最近一条 promise 的 promise_installment 明细（BR-M4-13 承诺分期，协调员跟进时录入）。
+     * 该案无任何分期承诺 → 返 null（契约 installments 为 [array,'null']；null 表示无分期计划）。
+     * 映射：seq→period「第N期」、due_date→dueDate(yyyy-MM-dd)、amount_cents→amountCents、state→status。
+     */
+    private List<InstallmentDto> loadInstallments(long caseId) {
+        List<InstallmentDto> list = jdbc.query(
+                "SELECT pi.seq AS seq, pi.due_date AS due_date,"
+                        + " pi.amount_cents AS amount_cents, pi.state AS state"
+                        + " FROM promise_installment pi"
+                        + " WHERE pi.promise_id = ("
+                        + "   SELECT id FROM promise WHERE case_id = ?"
+                        + "   ORDER BY created_at DESC, id DESC LIMIT 1)"
+                        + " ORDER BY pi.seq",
+                (rs, i) -> {
+                    java.sql.Date d = rs.getDate("due_date");
+                    long amt = rs.getLong("amount_cents");
+                    return new InstallmentDto(
+                            "第" + rs.getInt("seq") + "期",
+                            d == null ? null : d.toString(),   // java.sql.Date#toString = yyyy-MM-dd
+                            rs.wasNull() ? null : amt,
+                            rs.getString("state"));
+                },
+                caseId);
+        // 无分期承诺 → null（对齐契约 [array,'null']，前端据此不渲染分期段）。
+        return list.isEmpty() ? null : list;
+    }
 
     /** jsonb 文本 → List<String>（arrearags_periods）。空/异常返回空列表，绝不抛 5xx。 */
     private List<String> parseStringArray(String jsonText) {
@@ -173,15 +235,20 @@ public class OwnerH5M7Controller {
     private static final class OwnerBillRow {
         String plStatus;
         boolean plExpired;
+        long caseId;
         long projectId;
         String community;
+        String ownerName;
+        String room;
         long dueCents;
+        Long penaltyCents;
         Long reduceAfterCents;
         String arrearagsPeriods;
     }
 
     private static final class ProjPayRow {
         String feeRows;
+        String penalty;
         String payInfo;
     }
 }

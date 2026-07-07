@@ -6,7 +6,7 @@ import { loginRole } from './helpers'
 test.describe('BR-M3-27 释放记录(VL 可见 / CO 不可见)', () => {
   test('VL 打开释放记录抽屉→见本商释放历史(类型/案件/催收员/时间)', async ({ page }) => {
     await loginRole(page, 'VL')
-    await page.getByRole('menuitem', { name: '公海' }).click()
+    await page.getByRole('menuitem', { name: '案件公海' }).click()
     await expect(page).toHaveURL(/\/sea/)
     const entry = page.getByRole('button', { name: /释放记录/ })
     if (!(await entry.count())) {
@@ -23,7 +23,7 @@ test.describe('BR-M3-27 释放记录(VL 可见 / CO 不可见)', () => {
 
   test('CO 无释放记录管理入口', async ({ page }) => {
     await loginRole(page, 'CO')
-    await page.getByRole('menuitem', { name: '公海' }).click()
+    await page.getByRole('menuitem', { name: '案件公海' }).click()
     await expect(page).toHaveURL(/\/sea/)
     // 释放记录为管理视图，CO 不可见
     await expect(page.getByRole('button', { name: /释放记录/ })).toHaveCount(0)

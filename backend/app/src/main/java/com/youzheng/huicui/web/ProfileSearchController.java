@@ -45,7 +45,9 @@ public class ProfileSearchController {
         }
         String hash = (String) row.get("password_hash");
         if (hash == null || !bcrypt.matches(oldPw, hash)) throw new ApiException(BizError.AUTH_401, "旧密码错误");
-        jdbc.update("UPDATE account SET password_hash = ?, updated_at = now() WHERE id = ?", bcrypt.encode(newPw), me);
+        // M-a：改密同时清 must_change_password 标志（首次改密后解锁全部 API）。
+        jdbc.update("UPDATE account SET password_hash = ?, must_change_password = FALSE, updated_at = now() WHERE id = ?",
+                bcrypt.encode(newPw), me);
         return Map.of("ok", true);
     }
 

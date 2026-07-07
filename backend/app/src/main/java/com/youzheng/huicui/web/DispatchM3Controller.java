@@ -62,6 +62,9 @@ public class DispatchM3Controller {
 
     public record OpenRateInput(BigDecimal openRate) {}
 
+    // 平台撮合定双佣入参：收佣(平台↔物业) + 付佣(平台↔服务商)，一处同设。
+    public record CommissionRatesInput(BigDecimal commInRate, BigDecimal payOutRate) {}
+
     // 单案再派入参（契约 /cases/{id}/redispatch requestBody：{providerId}）。
     public record RedispatchInput(String providerId) {}
 
@@ -172,7 +175,7 @@ public class DispatchM3Controller {
 
         // 修 codex HIGH 并发超额：对目标 CO 加行锁，序列化同 CO 的并发批量指派/单案分配。
         // 锁持有至事务提交，锁内再算余量并逐案扣减，关闭「remaining 循环外只算一次」的并发窗口。
-        lockCollector(collectorId);
+        caseState.lockCollector(collectorId);
 
         // 余量预算（锁内计算）：CFG-HOLDCAP - 该 CO 当前私海持有；每成功一件递减一。超额度→rejected(BIZ_HOLD_CAP)。
         int remaining = caseState.holdCap() - caseState.holdCount(collectorId);
@@ -250,16 +253,6 @@ public class DispatchM3Controller {
         return out;
     }
 
-    /**
-     * 对目标 CO 取行锁（SELECT ... FOR UPDATE），序列化同一 CO 的并发持有变更（批量指派/单案分配）。
-     * 须在 @Transactional 内；锁持有至提交，确保锁内 holdCount 余量计算与扣减无并发窗口。
-     */
-    private void lockCollector(long collectorId) {
-        // 仅取行锁，不关心列值；不存在则无行可锁（前置 requireOwnCollector 已校验存在/在岗）。
-        jdbc.query("SELECT id FROM account WHERE id = ? FOR UPDATE",
-                rs -> { /* 仅占锁 */ }, collectorId);
-    }
-
     /** 目标 collector 必须属本商且 role_template=CO 且 status=ACTIVE，否则 403（与 HolderM3 同口径）。 */
     private void requireOwnCollector(CurrentSubject s, long collectorId) {
         if (s.isPlatform()) return;                           // 平台代分配放行（own-org 由前端选商，地基期不细分）
@@ -320,6 +313,38 @@ public class DispatchM3Controller {
             throw new ApiException(BizError.NOT_FOUND_404, "批次不存在: " + id);
         }
         caseState.audit(s, "batch.open-rate", batchId, "openRate=" + in.openRate(), null, null);
+        return ok();
+    }
+
+    // ── [3'] PUT /batches/{id}/commission-rates ──────────────────────────────
+    // 平台撮合层「一处同定双方佣金」：收佣(平台↔物业) + 付佣(平台↔服务商)，平台最终决定权。
+    // 置 comm_in_confirmed=true（物业提案→平台确认）。防倒挂 BR-M9-18：付佣≤收佣（平台毛利≥0）。
+    @PutMapping("/batches/{id}/commission-rates")
+    @RequirePermission("case.dispatch")
+    @Transactional
+    public Map<String, Object> setBatchCommissionRates(@PathVariable String id, @RequestBody(required = false) CommissionRatesInput in) {
+        CurrentSubject s = requirePlatform();
+        long batchId = parseId(id, "批次");
+        if (in == null || in.commInRate() == null || in.payOutRate() == null) {
+            throw new ApiException(BizError.VALIDATION_422, "commInRate 与 payOutRate 必填");
+        }
+        BigDecimal comm = in.commInRate(), pay = in.payOutRate();
+        if (comm.signum() < 0 || comm.compareTo(BigDecimal.ONE) > 0
+                || pay.signum() < 0 || pay.compareTo(BigDecimal.ONE) > 0) {
+            throw new ApiException(BizError.VALIDATION_422, "比例须为 0-1 分数");
+        }
+        // 防倒挂 BR-M9-18：付佣比例 > 收佣比例 → 平台亏损，拒绝。
+        if (pay.compareTo(comm) > 0) {
+            throw new ApiException(BizError.BIZ_PAYOUT_INVERT, "付佣比例不得大于收佣比例");
+        }
+        int n = jdbc.update(
+                "UPDATE batch SET comm_in_rate = ?, pay_out_rate = ?, comm_in_inherited = false,"
+                        + " comm_in_confirmed = true, updated_at = now() WHERE id = ?",
+                comm, pay, batchId);
+        if (n == 0) {
+            throw new ApiException(BizError.NOT_FOUND_404, "批次不存在: " + id);
+        }
+        caseState.audit(s, "batch.commission-rates", batchId, "commIn=" + comm + " payOut=" + pay, null, null);
         return ok();
     }
 

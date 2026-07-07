@@ -1,0 +1,51 @@
+/* ElementPlus 主题桥接 → 对齐 ds-admin 设计 tokens（政务蓝）。
+   作用：未改写为 ds-admin markup 的 EL 组件（下拉/日期/弹窗/分页等）也立刻同风格，
+   保证「设计系统级一致」。改写过的页面用 ds-admin 原生 class，二者视觉同源。 */
+:root {
+  --el-color-primary: #2563EB;
+  --el-color-primary-light-3: #5a8af0;
+  --el-color-primary-light-5: #92b4f5;
+  --el-color-primary-light-7: #c4dbff;
+  --el-color-primary-light-8: #dbe8ff;
+  --el-color-primary-light-9: #ecf3ff;
+  --el-color-primary-dark-2: #1d4ed8;
+  --el-color-success: #15A35B;
+  --el-color-warning: #E6A23C;
+  --el-color-danger: #F56C6C;
+  --el-color-info: #909399;
+  --el-border-radius-base: 4px;
+  --el-border-color: #dcdfe6;
+  --el-border-color-light: #e4e7ed;
+  --el-border-color-lighter: #ebeef5;
+  --el-text-color-primary: #303133;
+  --el-text-color-regular: #606266;
+  --el-text-color-secondary: #909399;
+  --el-font-size-base: 14px;
+  --el-fill-color-blank: #fff;
+}
+
+/* 表头底色与 ds-admin 表格一致 */
+.el-table th.el-table__cell {
+  background: #fafafa;
+  color: #515a6e;
+  font-weight: 600;
+}
+.el-table tr:hover > td.el-table__cell {
+  background: #f5f9ff;
+}
+
+/* 卡片：与 ds-admin .card 同款圆角/描边/投影 */
+.el-card {
+  border-radius: 8px;
+  border-color: #ebeef5;
+  box-shadow: 0 1px 4px rgba(20, 40, 90, .04);
+}
+.el-card__header {
+  font-weight: 600;
+  color: #303133;
+}
+
+/* 按钮主色圆角对齐 */
+.el-button {
+  border-radius: 4px;
+}

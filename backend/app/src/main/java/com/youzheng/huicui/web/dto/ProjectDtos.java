@@ -44,10 +44,15 @@ public final class ProjectDtos {
             String district,
             String propCompany,
             String contractType,
+            String contractName,          // 物业合同名称（高保真§项目档案）
+            String servicePeriod,         // 服务期限（高保真§项目档案）
             List<FeeRow> feeRows,
             String feeCycle,
             String penalty,
             String payInfo,
+            String corpAccount,           // 对公账户（高保真§收款信息）
+            String wxQrUrl,               // 微信收款码URL（高保真§收款信息）
+            String reducePolicy,          // 减免政策描述（高保真§减免规则）
             Double commInRate,          // 收佣线（IN）·百分比 BR-M9-01a；服务商视角物理不含
             String org,                 // 归属物业短名（<- project.org_name）
             String status,
@@ -69,10 +74,15 @@ public final class ProjectDtos {
             String area,
             String propCompany,
             String contractType,
+            String contractName,
+            String servicePeriod,
             String feeStd,              // fee_rows 汇总展示串
             String feeCycle,
             String penalty,
             String payInfo,
+            String corpAccount,
+            String wxQrUrl,
+            String reducePolicy,
             List<ReduceTier> reduceTiers,
             Litigation litigation,
             String status

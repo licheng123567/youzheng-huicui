@@ -167,6 +167,31 @@ public class RecordingService {
                 durationSec, phone);
     }
 
+    /** 存储上传的录音音频字节（BR-M4-01b，供回听）。 */
+    public void storeAudio(long recId, byte[] bytes, String contentType) {
+        jdbc.update("UPDATE call_recording SET audio_bytes = ?, audio_content_type = ? WHERE id = ?",
+                bytes, contentType == null ? "application/octet-stream" : contentType, recId);
+    }
+
+    /** 取录音所属 case_id（供 audio 流式端点做 case-actor 裁剪）；不存在返 null。 */
+    public Long caseIdOfRecording(long recId) {
+        return jdbc.query("SELECT case_id FROM call_recording WHERE id = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, recId);
+    }
+
+    /** 取录音音频字节+Content-Type；无音频返 null。返回 [bytes, contentType]。 */
+    public Object[] loadAudio(long recId) {
+        return jdbc.query(
+                "SELECT audio_bytes, audio_content_type FROM call_recording WHERE id = ?",
+                rs -> {
+                    if (!rs.next()) return null;
+                    byte[] b = rs.getBytes("audio_bytes");
+                    if (b == null) return null;
+                    String ct = rs.getString("audio_content_type");
+                    return new Object[]{ b, ct == null ? "application/octet-stream" : ct };
+                }, recId);
+    }
+
     /** 写一条 activity（type=CALL/NOTE 等）。actor=当前主体；ref_type/ref_id 关联录音。 */
     public void writeActivity(Long actorId, long caseId, String type, String content,
                               String refType, Long refId, String method) {
@@ -201,7 +226,12 @@ public class RecordingService {
                 redactPhone ? REDACTED_PHONE : rs.getString("phone"),
                 rs.getString("transcript"),
                 rs.getString("failure_code"),
-                rs.getString("failure_message"));
+                rs.getString("failure_message"),
+                null, // ownerName — 列表查询时由 listRecordings join 回填
+                null, // room
+                null, // projectName
+                null  // batchCode
+        );
     }
 
     private static final String REDACTED_PHONE = "***";

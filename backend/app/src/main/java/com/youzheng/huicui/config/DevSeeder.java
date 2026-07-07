@@ -2,6 +2,7 @@ package com.youzheng.huicui.config;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Component;
@@ -32,6 +33,7 @@ import org.springframework.stereotype.Component;
  * 与 project.pay_info 使 OwnerBill 字段非空；M10 报表走聚合查询无需专门种子。
  * 见 {@link #seedM6Evidence} / {@link #seedM7Bill}。全部幂等，物理隔离。
  */
+@Profile("dev")
 @Component
 public class DevSeeder implements CommandLineRunner {
 
@@ -56,10 +58,28 @@ public class DevSeeder implements CommandLineRunner {
 
         // 2) 两个物业组织 + PL + 项目（幂等）
         Long cuihu = ensureProperty("翠湖物业", "cuihu_pl", "翠湖负责人", "13900000001", hash);
-        ensureProject(cuihu, "翠湖物业", "翠湖一期", "A区", "0.3000");
-        ensureProject(cuihu, "翠湖物业", "翠湖二期", "B区", "0.2800");
+        ensureProject(cuihu, "翠湖物业", "翠湖一期", "A区", "0.3000",
+                "翠湖物业服务合同（HT-2024-03）", "2024-03-01 至 2027-02-28",
+                "按季度缴纳",
+                "[{\"biz\":\"物业费\",\"std\":\"2.0元/㎡/月\"},{\"biz\":\"公摊费\",\"std\":\"0.5元/㎡/月\"}]",
+                "物业费 + 滞纳金（逾期0.5‰/天）",
+                "建设银行 6217 ××××× 翠湖物业", null,
+                "满6期减免滞纳金；最多分6期缴纳");
+        ensureProject(cuihu, "翠湖物业", "翠湖二期", "B区", "0.2800",
+                "翠湖二期物业服务合同（HT-2024-05）", "2024-05-01 至 2027-04-30",
+                "按季度缴纳",
+                "[{\"biz\":\"物业费\",\"std\":\"2.2元/㎡/月\"}]",
+                "物业费 + 滞纳金（逾期0.3‰/天）",
+                "农业银行 6228 ××××× 翠湖物业", "https://qr.example.com/cuihu2",
+                "满3期减免滞纳金；最多分3期缴纳");
         Long yang = ensureProperty("阳光物业", "yang_pl", "阳光负责人", "13900000002", hash);
-        ensureProject(yang, "阳光物业", "阳光花园", "C区", "0.3200");
+        ensureProject(yang, "阳光物业", "阳光花园", "C区", "0.3200",
+                "阳光物业服务合同（HT-2025-08）", "2025-01-01 至 2027-12-31",
+                "按季度缴纳",
+                "[{\"biz\":\"物业费\",\"std\":\"2.5元/㎡/月\"}]",
+                "物业费 + 滞纳金（逾期0.3‰/天）",
+                "工商银行 6212 ××××× 阳光物业", "https://qr.example.com/yang",
+                "满3期减免滞纳金；最多分3期缴纳");
 
         // 3) 服务商组织 + VL 负责人 + 2 个 CO 催收员（M3 承接/分配/抢单主体）
         Long provider = ensureProvider("捷信催收", "jx_vl", "捷信负责人", "13900000003", hash);
@@ -111,6 +131,8 @@ public class DevSeeder implements CommandLineRunner {
                     rs -> rs.next() ? rs.getLong(1) : null);
             if (saAcct != null) {
                 seedM9Billing(cuihu, provider, saAcct);
+                // 物业负责人财务演示：收佣线支付申请单(IN) + 逐笔计费用量(billing_usage) + 补充充值/短信流水
+                seedPropertyFinance(cuihu, proj, saAcct, co1);
             }
             seedSmsRecords(cuihu, proj, caseS3Id);
 
@@ -121,7 +143,14 @@ public class DevSeeder implements CommandLineRunner {
             seedProxyAuditLog(cuihu);
             seedSeaReturnedCase(proj, provider);
             seedBatchReduceDrift(proj);
+            seedBatchPlaybookDrift(proj);
         }
+
+        // ── 丰富演示数据（多批次/多案件/多状态，方便前端全流程测试）──
+        seedRichDemoData(cuihu, yang, provider, co1, co2, proj, hash);
+
+        // ── 催收员业绩/结算演示数据（我的业绩 GET /me/stats + 我的结算 GET /me/settlement 全字段可见）──
+        seedCoPerformance(proj, provider, co1, co2);
 
         // 案件级 provider_id 回填（V913）：DevSeeder 经 SQL 直插案件、绕过 dispatch/accept 控制器，
         // 故 case.provider_id 留空；而 V913 回填在 Flyway 期(种子前)执行、看不到这些行。
@@ -190,6 +219,120 @@ public class DevSeeder implements CommandLineRunner {
         jdbc.update("INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by) "
                         + "VALUES (?, 'STT', -50.000, 250.000, NULL, '(演示)服务商STT用量扣减', ?)",
                 providerOrg, operatorAccountId);
+    }
+
+    // ── 物业负责人财务演示（收佣线支付申请单 IN + 逐笔计费用量 billing_usage + 补充充值/短信流水）──
+    //   物业只可见收佣线(IN·平台↔物业)。全部幂等、物理隔离；复用 M2 演示批次 B-CH-2026-01 与其已回款明细。
+    private void seedPropertyFinance(Long cuihuOrg, Long projId, Long saAcct, Long coHolder) {
+        if (cuihuOrg == null || projId == null || saAcct == null) return;
+
+        // ① 逐笔计费用量 billing_usage（计费明细页 /billing/usage 主数据）：跨本月/上月，四类计费。
+        //    幂等哨兵：本 org 已有任一 billing_usage 则跳过。
+        Integer buExists = jdbc.queryForObject(
+                "SELECT count(*) FROM billing_usage WHERE org_id = ?", Integer.class, cuihuOrg);
+        if (buExists == null || buExists == 0) {
+            Long caseS3 = caseIdByAcctGlobal("M3-S3-01");
+            Long caseQb = caseIdByAcctGlobal("M5-QB-01");
+            // STT 转写（按分钟 min）——上月 3 笔、本月 2 笔
+            insertUsage(cuihuOrg, "STT", "3.500", "min", caseS3, "-32 days");
+            insertUsage(cuihuOrg, "STT", "5.200", "min", caseS3, "-28 days");
+            insertUsage(cuihuOrg, "STT", "2.800", "min", caseQb, "-20 days");
+            insertUsage(cuihuOrg, "STT", "4.100", "min", caseS3, "-6 days");
+            insertUsage(cuihuOrg, "STT", "3.300", "min", caseQb, "-2 days");
+            // 短信（按条 count）
+            insertUsage(cuihuOrg, "SMS", "1.000", "count", caseS3, "-30 days");
+            insertUsage(cuihuOrg, "SMS", "1.000", "count", caseQb, "-15 days");
+            insertUsage(cuihuOrg, "SMS", "1.000", "count", caseS3, "-3 days");
+            // 存证（按次 count）
+            insertUsage(cuihuOrg, "EVIDENCE", "1.000", "count", caseS3, "-25 days");
+            insertUsage(cuihuOrg, "EVIDENCE", "1.000", "count", caseS3, "-5 days");
+            // 法务文书（按次 count）
+            insertUsage(cuihuOrg, "LEGAL", "1.000", "count", caseS3, "-18 days");
+        }
+
+        // ② 收佣线支付申请单（side=IN·平台向物业收撮合佣金）：复用 B-CH-2026-01（comm_in_rate=0.30）已回款明细。
+        Long batchId = jdbc.query("SELECT id FROM batch WHERE no = 'B-CH-2026-01'",
+                rs -> rs.next() ? rs.getLong(1) : null);
+        if (batchId != null) {
+            java.math.BigDecimal commInRate = new java.math.BigDecimal("0.3000");
+            Long c1 = caseIdByAcct(batchId, "C-1001");
+            Long c2 = caseIdByAcct(batchId, "C-1002");
+            // 该案在本批的既有回款明细（seedM9Settlement 已种 line：C-1001/360000、C-1002/480000）
+            Long l1 = repayLineOfCase(c1, batchId);
+            Long l2 = repayLineOfCase(c2, batchId);
+
+            // PENDING 收佣单（勾选 C-1001/360000）
+            String prPendNo = "PR-IN-" + batchId + "-1";
+            if (l1 != null && !paymentRequestExists(prPendNo)) {
+                long comm = com.youzheng.huicui.common.Commission.lineCommissionCents(360000L, commInRate); // 108000
+                String lines = "[{\"lineId\":" + l1 + ",\"caseId\":" + c1
+                        + ",\"ownerName\":\"张三\",\"room\":\"1-101\",\"repayCents\":360000,\"commCents\":" + comm + "}]";
+                jdbc.update("INSERT INTO payment_request(no, side, batch_id, generated_by, comm_rate, lines, "
+                                + "base_cents, comm_cents, status, version) "
+                                + "VALUES (?, 'IN', ?, ?, ?::numeric, ?::jsonb, 360000, ?, 'PENDING', 1)",
+                        prPendNo, batchId, saAcct, commInRate.toPlainString(), lines, comm);
+            }
+            // PAID 收佣单（勾选 C-1002/480000，平台已收款）
+            String prPaidNo = "PR-IN-" + batchId + "-2";
+            if (l2 != null && !paymentRequestExists(prPaidNo)) {
+                long comm = com.youzheng.huicui.common.Commission.lineCommissionCents(480000L, commInRate); // 144000
+                String lines = "[{\"lineId\":" + l2 + ",\"caseId\":" + c2
+                        + ",\"ownerName\":\"李四\",\"room\":\"2-202\",\"repayCents\":480000,\"commCents\":" + comm + "}]";
+                jdbc.update("INSERT INTO payment_request(no, side, batch_id, generated_by, comm_rate, lines, "
+                                + "base_cents, comm_cents, status, completed_by, completed_at, version) "
+                                + "VALUES (?, 'IN', ?, ?, ?::numeric, ?::jsonb, 480000, ?, 'PAID', ?, now(), 2)",
+                        prPaidNo, batchId, saAcct, commInRate.toPlainString(), lines, comm, saAcct);
+            }
+        }
+
+        // ③ 补充充值/短信流水（丰富充值中心 / 短信通道）。幂等：ref/内容判存在。
+        if (!rechargeRefExists(cuihuOrg, "RC-2026-010")) {
+            jdbc.update("INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by) "
+                            + "VALUES (?, 'SMS', 500.000, 1497.000, 'RC-2026-010', '(演示)短信条数追加充值', ?)",
+                    cuihuOrg, saAcct);
+            jdbc.update("INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by) "
+                            + "VALUES (?, 'STT', 400.000, 880.000, 'RC-2026-011', '(演示)STT分钟追加充值', ?)",
+                    cuihuOrg, saAcct);
+            jdbc.update("INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by) "
+                            + "VALUES (?, 'SMS', -8.000, 1489.000, NULL, '(演示)批量催缴短信扣减', ?)",
+                    cuihuOrg, saAcct);
+        }
+        Long caseS3 = caseIdByAcctGlobal("M3-S3-01");
+        Integer smsCnt = jdbc.queryForObject("SELECT count(*) FROM sms_record WHERE org_id = ?", Integer.class, cuihuOrg);
+        if (smsCnt != null && smsCnt < 6) {
+            jdbc.update("INSERT INTO sms_record(org_id, case_id, project_id, template, status, sent_at) "
+                            + "VALUES (?, ?, ?, '缴费链接', 'DELIVERED', now() - interval '4 days')", cuihuOrg, caseS3, projId);
+            jdbc.update("INSERT INTO sms_record(org_id, case_id, project_id, template, status, sent_at) "
+                            + "VALUES (?, ?, ?, '承诺提醒', 'SENT', now() - interval '3 days')", cuihuOrg, caseS3, projId);
+            jdbc.update("INSERT INTO sms_record(org_id, case_id, project_id, template, status, failure_reason, sent_at) "
+                            + "VALUES (?, ?, ?, '缴费链接', 'FAILED', '停机 BR-M9-08·失败不退条数', now() - interval '1 day')", cuihuOrg, caseS3, projId);
+        }
+    }
+
+    private void insertUsage(Long orgId, String type, String qty, String unit, Long caseId, String ago) {
+        jdbc.update("INSERT INTO billing_usage(org_id, type, qty, unit, case_id, occurred_at) "
+                        + "VALUES (?, ?, ?::numeric, ?, ?, now() + (?)::interval)",
+                orgId, type, qty, unit, caseId, ago);
+    }
+
+    private Long caseIdByAcctGlobal(String acctNo) {
+        return jdbc.query("SELECT id FROM \"case\" WHERE acct_no = ? LIMIT 1", rs -> rs.next() ? rs.getLong(1) : null, acctNo);
+    }
+
+    private Long repayLineOfCase(Long caseId, Long batchId) {
+        if (caseId == null) return null;
+        return jdbc.query("SELECT id FROM repay_line WHERE case_id = ? AND batch_id = ? AND reversed = false ORDER BY id LIMIT 1",
+                rs -> rs.next() ? rs.getLong(1) : null, caseId, batchId);
+    }
+
+    private boolean paymentRequestExists(String no) {
+        Integer n = jdbc.queryForObject("SELECT count(*) FROM payment_request WHERE no = ?", Integer.class, no);
+        return n != null && n > 0;
+    }
+
+    private boolean rechargeRefExists(Long orgId, String ref) {
+        Integer n = jdbc.queryForObject("SELECT count(*) FROM recharge_log WHERE org_id = ? AND ref = ?", Integer.class, orgId, ref);
+        return n != null && n > 0;
     }
 
     // ── M9-B 短信发送流水种子（sms_record，挂 base 物业 org/project/case）────────
@@ -410,7 +553,7 @@ public class DevSeeder implements CommandLineRunner {
                     caseS3Id, coHolder);
         }
 
-        // 6a) 缴费链接 1 条（ACTIVE，供 resend/void 端点有目标 id）
+        // 6a) 缴费链接 1 条（ACTIVE，供 resend/void 端点有目标 id；6c 的回款覆盖其创建日 → GET /me/pay-links 展示态=已缴费）
         Integer payLinkExists = jdbc.queryForObject(
                 "SELECT count(*) FROM pay_link WHERE case_id = ?", Integer.class, caseS3Id);
         if (payLinkExists == null || payLinkExists == 0) {
@@ -418,6 +561,23 @@ public class DevSeeder implements CommandLineRunner {
                     "INSERT INTO pay_link(case_id, token, amount_cents, expires_at, status, channel, created_by) "
                             + "VALUES (?, ?, 260000, now() + interval '7 days', 'ACTIVE', 'WECHAT_COPY', ?)",
                     caseS3Id, "demo-paylink-" + caseS3Id, coHolder);
+        }
+        // 6a') 补 3 条缴费链接（不同展示态：待查看/已读未缴/已过期），使「我的缴费链接」演示齐全 4 态。
+        Integer moreLinksExist = jdbc.queryForObject(
+                "SELECT count(*) FROM pay_link WHERE case_id = ? AND channel = 'SMS'", Integer.class, caseS3Id);
+        if (moreLinksExist == null || moreLinksExist == 0) {
+            jdbc.update(
+                    "INSERT INTO pay_link(case_id, token, amount_cents, expires_at, status, channel, created_by) "
+                            + "VALUES (?, ?, 260000, now() + interval '7 days', 'ACTIVE', 'SMS', ?)",
+                    caseS3Id, "demo-paylink-pending-" + caseS3Id, coHolder);
+            jdbc.update(
+                    "INSERT INTO pay_link(case_id, token, amount_cents, expires_at, status, channel, created_by, viewed_at) "
+                            + "VALUES (?, ?, 260000, now() + interval '7 days', 'ACTIVE', 'SMS', ?, now() - interval '1 day')",
+                    caseS3Id, "demo-paylink-viewed-" + caseS3Id, coHolder);
+            jdbc.update(
+                    "INSERT INTO pay_link(case_id, token, amount_cents, expires_at, status, channel, created_by) "
+                            + "VALUES (?, ?, 260000, now() - interval '1 day', 'EXPIRED', 'SMS', ?)",
+                    caseS3Id, "demo-paylink-expired-" + caseS3Id, coHolder);
         }
 
         // 6b) 减免 1 条（催收员自决，生效，供减免相关端点有目标 id）
@@ -551,6 +711,10 @@ public class DevSeeder implements CommandLineRunner {
         jdbc.update(
                 "UPDATE \"case\" SET reduce_after_cents = 234000 WHERE id = ? AND reduce_after_cents IS NULL",
                 caseS3Id);
+        // 滞纳金拆分（V920）：演示案件按一成拆分（对齐原型 h5.html 物业费 1080 + 滞纳金 120 口径），
+        // 本金 = due - penalty。幂等：仅当 NULL 时回填，覆盖全部 M3/M5/RD 系列演示案件。
+        jdbc.update(
+                "UPDATE \"case\" SET penalty_cents = due_cents / 10 WHERE penalty_cents IS NULL");
         // 欠费周期（arrearags_periods 默认 '[]'，空时补两期）。
         jdbc.update(
                 "UPDATE \"case\" SET arrearags_periods = '[\"2025-01\",\"2025-02\"]'::jsonb "
@@ -914,6 +1078,53 @@ public class DevSeeder implements CommandLineRunner {
                 projId, firstBatch);
     }
 
+    /**
+     * 批次级作战手册覆盖 drift（batch-sync-drift.spec.ts:42 手册闭环 · issue #2）。
+     * e2e 进 /batches 取首行(ORDER BY b.id DESC → 翠湖 id 最大批次)，需该批 getBatch.playbookDrift=true：
+     *  (a) 项目级现行手册(batch_id IS NULL)更新 updated_at=现在（V910 已种 翠湖一期 v1.0 项目级手册）；
+     *  (b) 该批次级覆盖手册(batch_id=首批次，status=PUBLISHED)，baseline_project_updated_at=过去时刻；
+     *  (c) 项目级手册 updated_at 更晚 → 项目级 > 基线 → playbookDrift=true（getBatch/deriveOverride 判定）。
+     * 注：drift 批次=reduce 同一首批次，但 reduce 测试(:18/:29)与手册测试(:42)互不删对方覆盖行——
+     *     reduce sync 仅删 reduce_tier(batch_id)，playbook sync 仅删 playbook(batch_id)，故同批共存。
+     *     批次手册采纳/恢复 e2e(batch-playbook-adopt.spec)操作另一批次(B-CH-2026-01·非首批次)，不触本 drift 种子。
+     * 幂等：首批次已有任一批次级手册行则整体跳过（:42 一键同步会删覆盖行，重启后重新种回）。
+     *
+     * @param projId 项目 id（翠湖一期）
+     */
+    private void seedBatchPlaybookDrift(Long projId) {
+        if (projId == null) return;
+        // e2e 首批次：翠湖项目下 id 最大批次（与 BatchesM2Controller ORDER BY b.id DESC 对齐）。
+        Long firstBatch = jdbc.query(
+                "SELECT id FROM batch WHERE project_id = ? ORDER BY id DESC LIMIT 1",
+                rs -> rs.next() ? rs.getLong(1) : null, projId);
+        if (firstBatch == null) return;
+        // 幂等：首批次已有批次级手册行则跳过。
+        Integer ovExists = jdbc.queryForObject(
+                "SELECT count(*) FROM playbook WHERE batch_id = ?", Integer.class, firstBatch);
+        if (ovExists != null && ovExists > 0) return;
+
+        // 采纳人：翠湖物业 PL（与项目级手册 adopted_by 同口径）。
+        Long plid = jdbc.query(
+                "SELECT a.id FROM account a JOIN project p ON p.org_id = a.org_id "
+                        + "WHERE p.id = ? AND a.role_template = 'PL' LIMIT 1",
+                rs -> rs.next() ? rs.getLong(1) : null, projId);
+
+        // (a) 确保项目级现行手册 updated_at=现在（晚于下面覆盖行的过去基线）。V910 已种项目级 v1.0。
+        jdbc.update(
+                "UPDATE playbook SET updated_at = now() "
+                        + "WHERE project_id = ? AND batch_id IS NULL AND status = 'PUBLISHED'",
+                projId);
+
+        // (b) 批次级覆盖手册：baseline_project_updated_at=1 天前（早于项目级当前 updated_at → drift）。
+        jdbc.update(
+                "INSERT INTO playbook(project_id, batch_id, version, content, status, adopt_mode, "
+                        + "adopted_by, adopted_at, baseline_project_version, baseline_project_updated_at) "
+                        + "VALUES (?, ?, 'v1.0-batch', "
+                        + "'翠湖首批次自定义手册：针对本批高额欠费户加强分期引导。', "
+                        + "'PUBLISHED', 'FORCE_MANUAL', ?, now(), 'v1.0', now() - interval '1 day')",
+                projId, firstBatch, plid);
+    }
+
     /** 按 username 取 account.id（不存在返 null）。 */
     private Long accountIdByUsername(String username) {
         return jdbc.query("SELECT id FROM account WHERE username = ?",
@@ -1068,12 +1279,30 @@ public class DevSeeder implements CommandLineRunner {
                 Long.class, orgId, username, name, phone, hash);
     }
 
-    private void ensureProject(Long orgId, String orgName, String name, String area, String rate) {
-        Integer exists = jdbc.queryForObject(
-                "SELECT count(*) FROM project WHERE org_id = ? AND name = ?", Integer.class, orgId, name);
-        if (exists == null || exists == 0) {
-            jdbc.update("INSERT INTO project(org_id, name, org_name, area, comm_in_rate, status) " +
-                    "VALUES (?, ?, ?, ?, ?::numeric, 'ACTIVE')", orgId, name, orgName, area, rate);
+    private void ensureProject(Long orgId, String orgName, String name, String area, String rate,
+                               String contractName, String servicePeriod, String feeCycle, String feeRows,
+                               String penalty, String corpAccount, String wxQrUrl, String reducePolicy) {
+        Long id = jdbc.query("SELECT id FROM project WHERE org_id = ? AND name = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, orgId, name);
+        if (id == null) {
+            jdbc.update("INSERT INTO project(org_id, name, org_name, area, comm_in_rate, status,"
+                    + " contract_name, service_period, fee_cycle, fee_rows, penalty, corp_account, wx_qr_url, reduce_policy) "
+                    + "VALUES (?, ?, ?, ?, ?::numeric, 'ACTIVE', ?, ?, ?, ?::jsonb, ?, ?, ?, ?)",
+                    orgId, name, orgName, area, rate,
+                    contractName, servicePeriod, feeCycle, feeRows, penalty, corpAccount, wxQrUrl, reducePolicy);
+        } else {
+            // 回填富化字段（V917 加列前老种子/手工建的项目缺这些新列）：仅补空值，不覆盖已有数据。
+            jdbc.update("UPDATE project SET"
+                    + " contract_name = COALESCE(NULLIF(contract_name, ''), ?),"
+                    + " service_period = COALESCE(NULLIF(service_period, ''), ?),"
+                    + " fee_cycle = COALESCE(NULLIF(fee_cycle, ''), ?),"
+                    + " fee_rows = COALESCE(fee_rows, ?::jsonb),"
+                    + " penalty = COALESCE(NULLIF(penalty, ''), ?),"
+                    + " corp_account = COALESCE(NULLIF(corp_account, ''), ?),"
+                    + " wx_qr_url = COALESCE(NULLIF(wx_qr_url, ''), ?),"
+                    + " reduce_policy = COALESCE(NULLIF(reduce_policy, ''), ?)"
+                    + " WHERE id = ?",
+                    contractName, servicePeriod, feeCycle, feeRows, penalty, corpAccount, wxQrUrl, reducePolicy, id);
         }
     }
 
@@ -1123,5 +1352,223 @@ public class DevSeeder implements CommandLineRunner {
                 "INSERT INTO settings(domain, version, rotation, updated_by) "
                         + "VALUES ('ROTATION', 1, ?::jsonb, ?)",
                 "{\"holdCap\":" + holdCap + "}", sa);
+    }
+
+    // ── 丰富演示数据（多批次/多案件/多状态，方便前端全流程测试）──
+    private void seedRichDemoData(Long cuihuOrg, Long yangOrg, Long providerOrg, Long co1, Long co2, Long baseProj, String hash) {
+        if (baseProj == null) return;
+        Integer rich = jdbc.queryForObject("SELECT count(*) FROM batch WHERE no = 'B-CH2-2026-02'", Integer.class);
+        if (rich != null && rich > 0) return;
+
+        Long ygProj = jdbc.query("SELECT id FROM project WHERE name = '阳光花园' AND org_id = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, yangOrg);
+        if (ygProj != null) {
+            Long ygB1 = ensureBatch(ygProj, "B-YG-2026-01", "0.3200", "0.2000", providerOrg, null, "IN_PROGRESS");
+            ensureFullCase(ygB1, ygProj, "阳光花园", "YG-001", "赵建国", "8-1101", 560000L, "IN_PROGRESS", "2024-07", "2025-06", "13900001001", "5101**********001X");
+            ensureFullCase(ygB1, ygProj, "阳光花园", "YG-002", "钱美玲", "8-1102", 480000L, "IN_PROGRESS", "2024-09", "2025-06", "13900001002", "");
+            ensureFullCase(ygB1, ygProj, "阳光花园", "YG-003", "孙志强", "5-301", 1280000L, "PROMISED", "2023-03", "2025-06", "13900001003", "");
+            ensureFullCase(ygB1, ygProj, "阳光花园", "YG-004", "李秀英", "3-205", 240000L, "SETTLED", "2024-11", "2025-03", "13900001004", "");
+            ensureFullCase(ygB1, ygProj, "阳光花园", "YG-005", "周文博", "7-802", 780000L, "IN_PROGRESS", "2024-05", "2025-06", "13900001005", "1101**********0032");
+            Long ygB2 = ensureBatch(ygProj, "B-YG-2026-02", "0.3200", "0.2000", null, null, "PENDING");
+            ensureFullCase(ygB2, ygProj, "阳光花园", "YG-006", "吴桂香", "2-101", 360000L, "PENDING_DISPATCH", "2024-08", "2025-05", "13900001006", "");
+            ensureFullCase(ygB2, ygProj, "阳光花园", "YG-007", "郑海龙", "9-501", 920000L, "PENDING_DISPATCH", "2023-09", "2025-06", "13900001007", "5101**********0056");
+            ensureFullCase(ygB2, ygProj, "阳光花园", "YG-008", "冯丽华", "1-403", 180000L, "PENDING_DISPATCH", "2025-01", "2025-06", "13900001008", "");
+            Long ygB3 = ensureBatch(ygProj, "B-YG-2026-03", "0.3200", "0.2000", providerOrg, null, "CLOSED");
+            ensureFullCase(ygB3, ygProj, "阳光花园", "YG-009", "陈大伟", "4-602", 420000L, "SETTLED", "2024-04", "2024-12", "13900001009", "");
+            ensureFullCase(ygB3, ygProj, "阳光花园", "YG-010", "褚晓芳", "6-303", 650000L, "SETTLED", "2024-02", "2025-01", "13900001010", "5101**********0078");
+        }
+
+        Long ch1Proj = jdbc.query("SELECT id FROM project WHERE name = '翠湖一期' AND org_id = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, cuihuOrg);
+        if (ch1Proj != null) {
+            Long ch1B1 = jdbc.query("SELECT id FROM batch WHERE no = 'B-CH-2026-01' AND project_id = ?",
+                    rs -> rs.next() ? rs.getLong(1) : null, ch1Proj);
+            if (ch1B1 != null) {
+                ensureFullCase(ch1B1, ch1Proj, "翠湖一期", "CH-004", "黄志明", "1-101", 320000L, "VOIDED", "2023-06", "2024-06", "13900002001", "");
+                ensureFullCase(ch1B1, ch1Proj, "翠湖一期", "CH-005", "刘淑珍", "2-305", 540000L, "WITHDRAWN", "2024-01", "2025-03", "13900002002", "5101**********0091");
+                ensureFullCase(ch1B1, ch1Proj, "翠湖一期", "CH-006", "何伟强", "4-701", 890000L, "BAD_DEBT", "2022-09", "2025-06", "13900002003", "");
+            }
+            Long ch1B2 = ensureBatch(ch1Proj, "B-CH-2026-02", "0.3000", "0.2000", providerOrg, null, "IN_PROGRESS");
+            ensureFullCase(ch1B2, ch1Proj, "翠湖一期", "CH-007", "罗玉兰", "3-102", 410000L, "IN_PROGRESS", "2024-06", "2025-06", "13900002004", "");
+            ensureFullCase(ch1B2, ch1Proj, "翠湖一期", "CH-008", "谢建华", "5-804", 270000L, "IN_PROGRESS", "2024-10", "2025-06", "13900002005", "1101**********0023");
+            ensureFullCase(ch1B2, ch1Proj, "翠湖一期", "CH-009", "韩丽丽", "8-201", 960000L, "PROMISED", "2024-03", "2025-06", "13900002006", "");
+        }
+
+        Long ch2Proj = jdbc.query("SELECT id FROM project WHERE name = '翠湖二期' AND org_id = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, cuihuOrg);
+        if (ch2Proj != null) {
+            Long ch2B1 = ensureBatch(ch2Proj, "B-CH2-2026-01", "0.2800", "0.1800", providerOrg, null, "IN_PROGRESS");
+            ensureFullCase(ch2B1, ch2Proj, "翠湖二期", "CH2-001", "马云飞", "10-101", 720000L, "IN_PROGRESS", "2024-02", "2025-06", "13900003001", "5101**********0045");
+            ensureFullCase(ch2B1, ch2Proj, "翠湖二期", "CH2-002", "朱雪梅", "12-303", 380000L, "IN_PROGRESS", "2024-07", "2025-06", "13900003002", "");
+            ensureFullCase(ch2B1, ch2Proj, "翠湖二期", "CH2-003", "许海峰", "15-501", 1050000L, "IN_PROGRESS", "2023-11", "2025-06", "13900003003", "1101**********0067");
+            ensureFullCase(ch2B1, ch2Proj, "翠湖二期", "CH2-004", "林小燕", "7-202", 290000L, "SETTLED", "2024-09", "2025-02", "13900003004", "");
+            ensureFullCase(ch2B1, ch2Proj, "翠湖二期", "CH2-005", "唐国强", "9-702", 630000L, "PROMISED", "2024-05", "2025-06", "13900003005", "");
+            Long ch2B2 = ensureBatch(ch2Proj, "B-CH2-2026-02", "0.2800", "0.1800", null, null, "PENDING");
+            ensureFullCase(ch2B2, ch2Proj, "翠湖二期", "CH2-006", "沈德明", "3-401", 510000L, "PENDING_DISPATCH", "2024-08", "2025-05", "13900003006", "5101**********0089");
+            ensureFullCase(ch2B2, ch2Proj, "翠湖二期", "CH2-007", "曹秀兰", "11-102", 340000L, "PENDING_DISPATCH", "2025-01", "2025-06", "13900003007", "");
+        }
+
+        // 给部分案件挂联系人
+        Long yg001 = jdbc.query("SELECT id FROM \"case\" WHERE acct_no = 'YG-001'", rs -> rs.next() ? rs.getLong(1) : null);
+        if (yg001 != null) {
+            jdbc.update("INSERT INTO contact(case_id, phone, label, is_primary, invalid) VALUES (?, '13900001001', '本人', TRUE, FALSE) ON CONFLICT DO NOTHING", yg001);
+            jdbc.update("INSERT INTO contact(case_id, phone, label, is_primary, invalid) VALUES (?, '13800001001', '配偶', FALSE, FALSE) ON CONFLICT DO NOTHING", yg001);
+        }
+    }
+
+    // ── 催收员业绩/结算演示数据（jx_co1 视角：我的业绩 /me/stats + 我的结算 /me/settlement 全字段可见）──
+    // 幂等门：已结清案件 RD-S-01 存在则整体跳过。全部真实业务实体：
+    //   已结清案件×3(holder=co1·SETTLED·全额回款·READY 录音) → 结案回款明细/回款户数
+    //   QB 案件多月部分回款 → 结算周期聚合（5/6/7 月多行）
+    //   co_commission(co1×B-CH-M3-S2=8%、co2=6%) + batch1 回款归属回填(co1·15%)
+    //   SETTLED co_pay_doc 关联 batch1 已结明细 → "已结"提成
+    //   承诺 FULFILLED×2/BROKEN×1 → 兑现率 67%；通话结果标记 activity 4接通/1无人接听 → 接通率 80%
+    private void seedCoPerformance(Long projId, Long providerOrg, Long co1, Long co2) {
+        if (projId == null || providerOrg == null || co1 == null) return;
+        // 无总幂等门：各子步骤自身幂等（NOT EXISTS / 按 acct_no 判存在），支持增量补种。
+        Long batchS2 = jdbc.query("SELECT id FROM batch WHERE no = 'B-CH-M3-S2'", rs -> rs.next() ? rs.getLong(1) : null);
+        if (batchS2 == null) return;
+
+        // 1) 提成比例：co1×S2 批次 8%、co2 6%（丰富 VL 端 co-commissions 列表）
+        jdbc.update("INSERT INTO co_commission(collector_id, batch_id, rate) SELECT ?, ?, 0.0800"
+                + " WHERE NOT EXISTS (SELECT 1 FROM co_commission WHERE collector_id = ? AND batch_id = ?)",
+                co1, batchS2, co1, batchS2);
+        if (co2 != null) {
+            jdbc.update("INSERT INTO co_commission(collector_id, batch_id, rate) SELECT ?, ?, 0.0600"
+                    + " WHERE NOT EXISTS (SELECT 1 FROM co_commission WHERE collector_id = ? AND batch_id = ?)",
+                    co2, batchS2, co2, batchS2);
+        }
+
+        // 2) 已结清案件×3（结案回款明细来源）：SETTLED + closed_at + 全额回款 + READY 录音 + 已兑现承诺
+        seedSettledCase(batchS2, projId, "RD-S-01", "张结清", "5-102", 340000L, "2026-06-12", co1, providerOrg, true);
+        seedSettledCase(batchS2, projId, "RD-S-02", "吴桂英", "6-505", 180000L, "2026-05-28", co1, providerOrg, true);
+        seedSettledCase(batchS2, projId, "RD-S-03", "郑福生", "9-302", 220000L, "2026-05-20", co1, providerOrg, false);
+
+        // 3) QB 案件（holder=co1）多月部分回款 → 结算按（月,批次）聚合出多行
+        addRepayOnce("M5-QB-01", batchS2, 80000L, "2026-07-02", co1, providerOrg);
+        addRepayOnce("M5-QB-02", batchS2, 60000L, "2026-06-18", co1, providerOrg);
+
+        // 4) batch1（B-CH-2026-01·rate 15% 已有）历史回款归属回填给 co1（到账快照演示）
+        jdbc.update("UPDATE repay_line SET collector_id_at_repay = ?"
+                + " WHERE collector_id_at_repay IS NULL AND batch_id ="
+                + " (SELECT id FROM batch WHERE no = 'B-CH-2026-01' LIMIT 1)", co1);
+
+        // 5) 已结算单据：SETTLED co_pay_doc 关联 batch1 settled=true 那笔明细 → "已结"提成可见
+        Long settledLine = jdbc.query(
+                "SELECT id FROM repay_line WHERE settled = true AND collector_id_at_repay = ? ORDER BY id LIMIT 1",
+                rs -> rs.next() ? rs.getLong(1) : null, co1);
+        if (settledLine != null) {
+            Integer hasDoc = jdbc.queryForObject(
+                    "SELECT count(*) FROM co_pay_doc_line WHERE repay_line_id = ?", Integer.class, settledLine);
+            if (hasDoc == null || hasDoc == 0) {
+                Long amt = jdbc.queryForObject("SELECT amount_cents FROM repay_line WHERE id = ?", Long.class, settledLine);
+                long comm = Math.round((amt == null ? 0 : amt) * 0.15);
+                Long docId = jdbc.queryForObject(
+                        "INSERT INTO co_pay_doc(collector_id, line_ids, count, amount_cents, status)"
+                                + " VALUES (?, ?::jsonb, 1, ?, 'SETTLED') RETURNING id",
+                        Long.class, co1, "[" + settledLine + "]", comm);
+                jdbc.update("INSERT INTO co_pay_doc_line(co_pay_doc_id, repay_line_id) VALUES (?, ?)", docId, settledLine);
+            }
+        }
+
+        // 6) 承诺兑现样本：QB-103 一条爽约（BROKEN）→ 兑现率 = 2 FULFILLED / 3 = 67%
+        Long qb103 = jdbc.query("SELECT id FROM \"case\" WHERE acct_no = 'M5-QB-03'", rs -> rs.next() ? rs.getLong(1) : null);
+        if (qb103 != null) {
+            jdbc.update("INSERT INTO promise(case_id, \"date\", amount_cents, state, created_by)"
+                    + " SELECT ?, '2026-06-01', 250000, 'BROKEN', ?"
+                    + " WHERE NOT EXISTS (SELECT 1 FROM promise WHERE case_id = ? AND state = 'BROKEN')",
+                    qb103, co1, qb103);
+        }
+
+        // 7) 通话结果标记 activity（接通率样本：4 接通 / 1 无人接听 = 80%）
+        String[] marks = { "已承诺", "已承诺", "待跟进", "拒接/拒还", "无人接听" };
+        String[] accts = { "RD-S-01", "RD-S-02", "M5-QB-01", "M5-QB-02", "M5-QB-03" };
+        for (int i = 0; i < marks.length; i++) {
+            Long cid = jdbc.query("SELECT id FROM \"case\" WHERE acct_no = ?", rs -> rs.next() ? rs.getLong(1) : null, accts[i]);
+            if (cid == null) continue;
+            jdbc.update("INSERT INTO activity(case_id, type, actor_id, content, method)"
+                    + " SELECT ?, 'CALL', ?, ?, 'CALL'"
+                    + " WHERE NOT EXISTS (SELECT 1 FROM activity WHERE case_id = ? AND content = ?)",
+                    cid, co1, "通话结果标记: " + marks[i], cid, "通话结果标记: " + marks[i]);
+        }
+    }
+
+    /** 已结清演示案件：SETTLED+closed_at+滞纳金拆分+全额回款(到账快照=co1)+READY 录音+（可选）已兑现承诺。幂等按 acct_no。 */
+    private void seedSettledCase(Long batchId, Long projId, String acctNo, String owner, String room,
+                                 long dueCents, String settledDate, Long co1, Long providerOrg, boolean withPromise) {
+        Integer exists = jdbc.queryForObject(
+                "SELECT count(*) FROM \"case\" WHERE batch_id = ? AND acct_no = ?", Integer.class, batchId, acctNo);
+        if (exists != null && exists > 0) return;
+        Long caseId = jdbc.queryForObject(
+                "INSERT INTO \"case\"(batch_id, project_id, project_name, acct_no, owner_name, room, due_cents,"
+                        + " penalty_cents, reduce_after_cents, arrearags_periods, status, pool, holder_id, source,"
+                        + " provider_id, closed_at)"
+                        + " VALUES (?, ?, '翠湖一期', ?, ?, ?, ?, ?, ?, '[\"2025-10\",\"2025-11\",\"2025-12\"]'::jsonb,"
+                        + " 'SETTLED', 'PRIVATE', ?, 'CLAIM', ?, ?::date) RETURNING id",
+                Long.class, batchId, projId, acctNo, owner, room, dueCents, dueCents / 10, dueCents,
+                co1, providerOrg, settledDate);
+        // 全额回款（到账快照归属 co1）
+        jdbc.update("INSERT INTO repay_line(case_id, batch_id, amount_cents, channel, paid_at, marked_by, settled,"
+                + " provider_id_at_repay, collector_id_at_repay)"
+                + " VALUES (?, ?, ?, 'WECHAT_QR', ?::date, ?, false, ?, ?)",
+                caseId, batchId, dueCents, settledDate, co1, providerOrg, co1);
+        // READY 录音（丰富通话记录页）
+        jdbc.update("INSERT INTO call_recording(case_id, collector_id, source, status, recorded_at, duration_sec, phone, transcript)"
+                + " VALUES (?, ?, 'APP_AUTO', 'READY', ?::date - interval '3 days', 156, '13900000066',"
+                + " '(演示)业主确认月底前结清，已按承诺缴费')",
+                caseId, co1, settledDate);
+        // 已兑现承诺（兑现率分子）
+        if (withPromise) {
+            jdbc.update("INSERT INTO promise(case_id, \"date\", amount_cents, state, created_by) VALUES (?, ?::date, ?, 'FULFILLED', ?)",
+                    caseId, settledDate, dueCents, co1);
+        }
+    }
+
+    /** 给既有案件（按 acct_no）补一笔回款（到账快照=co1）。幂等按（case,金额,日期）。 */
+    private void addRepayOnce(String acctNo, Long batchId, long amountCents, String paidAt, Long co1, Long providerOrg) {
+        Long caseId = jdbc.query("SELECT id FROM \"case\" WHERE acct_no = ?", rs -> rs.next() ? rs.getLong(1) : null, acctNo);
+        if (caseId == null) return;
+        jdbc.update("INSERT INTO repay_line(case_id, batch_id, amount_cents, channel, paid_at, marked_by, settled,"
+                + " provider_id_at_repay, collector_id_at_repay)"
+                + " SELECT ?, ?, ?, 'BANK_TRANSFER', ?::date, ?, false, ?, ?"
+                + " WHERE NOT EXISTS (SELECT 1 FROM repay_line WHERE case_id = ? AND amount_cents = ? AND paid_at = ?::date)",
+                caseId, batchId, amountCents, paidAt, co1, providerOrg, co1,
+                caseId, amountCents, paidAt);
+    }
+
+    private void ensureFullCase(Long batchId, Long projectId, String projectName, String acctNo, String owner,
+                                String room, long dueCents, String status, String arrearFrom, String arrearTo,
+                                String phone, String idCard) {
+        Integer exists = jdbc.queryForObject("SELECT count(*) FROM \"case\" WHERE batch_id = ? AND acct_no = ?",
+                Integer.class, batchId, acctNo);
+        if (exists != null && exists > 0) return;
+        // arrearags_periods: 生成起止月份数组 ["2024-07",...,"2025-06"]
+        String periods = "[]";
+        try {
+            java.time.YearMonth from = java.time.YearMonth.parse(arrearFrom);
+            java.time.YearMonth to = java.time.YearMonth.parse(arrearTo);
+            StringBuilder sb = new StringBuilder("[");
+            java.time.YearMonth m = from;
+            while (!m.isAfter(to)) {
+                if (sb.length() > 1) sb.append(",");
+                sb.append("\"").append(m.toString()).append("\"");
+                m = m.plusMonths(1);
+            }
+            sb.append("]");
+            periods = sb.toString();
+        } catch (Exception ignored) {}
+        // litigation_fields: {"idCard":"..."}
+        String lit = idCard.isEmpty() ? null : "{\"idCard\":\"" + idCard + "\"}";
+        Long caseId = jdbc.queryForObject(
+                "INSERT INTO \"case\"(batch_id, project_id, project_name, acct_no, owner_name, room, due_cents, " +
+                        "status, arrearags_periods, litigation_fields) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb) RETURNING id",
+                Long.class, batchId, projectId, projectName, acctNo, owner, room, dueCents,
+                status, periods, lit);
+        // 号码存联系人
+        if (caseId != null && phone != null && !phone.isEmpty()) {
+            jdbc.update("INSERT INTO contact(case_id, phone, label, is_primary, invalid) " +
+                    "VALUES (?, ?, '本人', TRUE, FALSE) ON CONFLICT DO NOTHING", caseId, phone);
+        }
     }
 }

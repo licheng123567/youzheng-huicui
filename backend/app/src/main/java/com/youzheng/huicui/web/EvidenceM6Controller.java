@@ -15,6 +15,7 @@ import com.youzheng.huicui.web.dto.EvidenceVerifyDto;
 import com.youzheng.huicui.web.dto.LegalDocDto;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.transaction.annotation.Transactional;
@@ -70,10 +71,16 @@ public class EvidenceM6Controller {
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
+    private final com.youzheng.huicui.integration.EbaoquanClient ebaoquan;
+    private final com.youzheng.huicui.dispatch.RecordingService recordings;
 
-    public EvidenceM6Controller(JdbcTemplate jdbc, ObjectMapper json) {
+    public EvidenceM6Controller(JdbcTemplate jdbc, ObjectMapper json,
+                                com.youzheng.huicui.integration.EbaoquanClient ebaoquan,
+                                com.youzheng.huicui.dispatch.RecordingService recordings) {
         this.jdbc = jdbc;
         this.json = json;
+        this.ebaoquan = ebaoquan;
+        this.recordings = recordings;
     }
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ISO_INSTANT;
@@ -104,7 +111,7 @@ public class EvidenceM6Controller {
         String note = parseOptionalString(body, "note");
 
         // 场景校验（BR-M6，失败→422）。
-        validateScene(scene, refIds);
+        validateScene(caseId, scene, refIds);
 
         // 重复发起防护（同 case 同 scene 同 refIds 仍在 ISSUING/ISSUED → 409）。
         // Idempotency-Key 命中由 IdempotencyInterceptor 兜底 409。
@@ -114,17 +121,74 @@ public class EvidenceM6Controller {
         }
 
         long actorId = actorIdOrThrow(s);   // created_by NOT NULL：无效主体→403，绝不传 null 触发约束 5xx
-        // 出证异步（上链）：落 ISSUING，cert_no/cert_url/issued_at 均 null。org_id 派生自 project.org_id。
+        // 出证异步（备案上链）：落 ISSUING，cert_no/cert_url/issued_at 均 null。org_id 派生自 project.org_id。
+        // provider：接入易保全→EBAOQUAN；未对接（enabled=false）→ null 占位。
+        String provider = ebaoquan.isEnabled() ? "EBAOQUAN" : null;
         Long evidenceId = jdbc.queryForObject(
-                "INSERT INTO evidence(org_id, case_id, scene, ref_ids, status, note, created_by)"
-                        + " VALUES (?, ?, ?, ?::jsonb, 'ISSUING', ?, ?) RETURNING id",
-                Long.class, co.orgId, caseId, scene, refIdsJson, note, actorId);
+                "INSERT INTO evidence(org_id, case_id, scene, ref_ids, status, note, created_by, provider)"
+                        + " VALUES (?, ?, ?, ?::jsonb, 'ISSUING', ?, ?, ?) RETURNING id",
+                Long.class, co.orgId, caseId, scene, refIdsJson, note, actorId, provider);
+
+        // 真实存证：对每个 refId 取字节→SHA-512→易保全 createEvidenceHash→落 evidence_ebq_item（逐件保全）。
+        // 易保全出证/上链异步，本请求只提交哈希拿 evidenceId；备案号/链信息由 EvidencePollScheduler 轮询回填。
+        // 任一提交失败抛 BIZ_EVIDENCE_FAILED（@Transactional 回滚，用户见“存证失败”）。未 enabled 则跳过（占位）。
+        if (ebaoquan.isEnabled()) {
+            submitToEbaoquan(evidenceId, scene, refIds, note);
+        }
 
         // TODO(BR-M6-03/M9-B): 按次计费只向物业 —— recharge_log(org_id=co.orgId, type='EVIDENCE', delta=-1, ...)。
-        //   地基期不落（balance 快照/operated_by 取值待 M9 计费域定）。
 
         return new EvidenceItemDto(String.valueOf(evidenceId), String.valueOf(caseId),
-                scene, "ISSUING", null, null, null);
+                scene, "ISSUING", null, null, null, null, null, null, null);
+    }
+
+    /** 逐文件送易保全哈希保全：解析字节+类型→SHA-512→createEvidenceHash→落 evidence_ebq_item。 */
+    private void submitToEbaoquan(long evidenceId, String scene, List<String> refIds, String note) {
+        for (String ref : refIds) {
+            long refId = parseId(ref, "关联");
+            byte[] bytes;
+            String refType, name;
+            int type;
+            if ("RECORDING".equals(scene)) {
+                Object[] audio = recordings.loadAudio(refId);   // [bytes, contentType]
+                if (audio == null) throw new ApiException(BizError.VALIDATION_422, "录音无音频文件，无法存证: " + ref);
+                bytes = (byte[]) audio[0];
+                refType = "RECORDING"; type = 3; name = "录音存证-录音" + refId;
+            } else {  // DELIVERY：refId 指向 case_attachment
+                Map<String, Object> row;
+                try {
+                    row = jdbc.queryForMap("SELECT filename, content_type, bytes FROM case_attachment WHERE id = ?", refId);
+                } catch (EmptyResultDataAccessException e) {
+                    throw new ApiException(BizError.VALIDATION_422, "送达凭证附件不存在: " + ref);
+                }
+                bytes = (byte[]) row.get("bytes");
+                String ct = (String) row.get("content_type");
+                type = ebqTypeOf(ct);
+                refType = "ATTACHMENT";
+                name = "送达存证-" + clip50((String) row.get("filename"));
+            }
+            String hash = com.youzheng.huicui.integration.EbaoquanClient.sha512Hex(bytes);
+            long providerId = ebaoquan.createEvidenceHash(hash, name, note, type);
+            jdbc.update(
+                    "INSERT INTO evidence_ebq_item(evidence_id, ref_type, ref_id, file_hash, provider_evidence_id, status)"
+                            + " VALUES (?, ?, ?, ?, ?, 'SUBMITTED')",
+                    evidenceId, refType, refId, hash, providerId);
+        }
+    }
+
+    /** content_type → 易保全证据类型：1图片/2文档/3音频/4视频/99其他。 */
+    private static int ebqTypeOf(String ct) {
+        if (ct == null) return 99;
+        if (ct.startsWith("image/")) return 1;
+        if (ct.startsWith("audio/")) return 3;
+        if (ct.startsWith("video/")) return 4;
+        if (ct.contains("pdf") || ct.contains("word") || ct.contains("document") || ct.startsWith("text/")) return 2;
+        return 99;
+    }
+
+    private static String clip50(String s) {
+        if (s == null) return "";
+        return s.length() <= 40 ? s : s.substring(0, 40);
     }
 
     // ── [2] GET /evidence  listEvidence ──────────────────────────────────────────
@@ -153,8 +217,14 @@ public class EvidenceM6Controller {
         List<Object> pageArgs = new ArrayList<>(args);
         pageArgs.add(pg.size);
         pageArgs.add(pg.offset);
+        // 易保全备案态聚合（一条 evidence 多文件→逐件 preservation_id/链信息，去重逗号拼；占位存证为 null）。
+        String ebqCols =
+                ", (SELECT string_agg(DISTINCT x.preservation_id::text, ',') FROM evidence_ebq_item x WHERE x.evidence_id=e.id AND x.preservation_id IS NOT NULL) AS preservation_ids"
+                + ", (SELECT string_agg(DISTINCT x.chain_tx_hash, ',') FROM evidence_ebq_item x WHERE x.evidence_id=e.id AND x.chain_tx_hash IS NOT NULL) AS chain_tx_hashes"
+                + ", (SELECT string_agg(DISTINCT x.gznet_id, ',') FROM evidence_ebq_item x WHERE x.evidence_id=e.id AND x.gznet_id IS NOT NULL) AS gznet_ids"
+                + ", (SELECT string_agg(DISTINCT x.ant_id, ',') FROM evidence_ebq_item x WHERE x.evidence_id=e.id AND x.ant_id IS NOT NULL) AS ant_ids";
         List<EvidenceItemDto> items = jdbc.query(
-                "SELECT e.* " + base + " ORDER BY e.id DESC LIMIT ? OFFSET ?",
+                "SELECT e.* " + ebqCols + " " + base + " ORDER BY e.id DESC LIMIT ? OFFSET ?",
                 evidenceMapper(), pageArgs.toArray());
 
         return Page.of(items, pg, total == null ? 0 : total);
@@ -218,6 +288,31 @@ public class EvidenceM6Controller {
         // TODO(BR-M6-03/M9-B): 重试同样按次计费只向物业 —— recharge_log(type='EVIDENCE') 待 M9 计费域定。
 
         return loadEvidence(evidenceId);
+    }
+
+    // ── [3d] GET /evidence/{id}/certificate  下载易保全备案证书（非契约二进制端点，仿 AttachmentController） ──
+    // perm 靠 scope 复核（own-org）；仅 ISSUED（备案就绪）可下；代理 downPreservationCert 返回 zip。
+    @GetMapping("/evidence/{id}/certificate")
+    public ResponseEntity<byte[]> downloadCertificate(@PathVariable("id") String id) {
+        CurrentSubject s = SubjectContext.get();
+        long evidenceId = parseId(id, "存证");
+        EvidenceLock ev = lockEvidence(evidenceId);            // 不存在→404
+        requireOwnOrg(s, ev.orgId, ev.caseId);                 // 越组织→403；PC 须协调该案
+        if (!"ISSUED".equals(ev.status)) {
+            throw new ApiException(BizError.STATE_409, "备案证书未就绪（约10分钟出证），请稍后再下");
+        }
+        List<Long> presIds = jdbc.query(
+                "SELECT DISTINCT preservation_id FROM evidence_ebq_item WHERE evidence_id = ? AND preservation_id IS NOT NULL",
+                (rs, i) -> rs.getLong("preservation_id"), evidenceId);
+        if (presIds.isEmpty()) {
+            throw new ApiException(BizError.STATE_409, "无可下载的备案证书（尚未备案成功）");
+        }
+        String csv = presIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        byte[] zip = ebaoquan.downPreservationCert(csv);       // 失败→BIZ_EVIDENCE_FAILED
+        return ResponseEntity.ok()
+                .header("Content-Type", "application/zip")
+                .header("Content-Disposition", "attachment; filename=\"evidence-cert-" + evidenceId + ".zip\"")
+                .body(zip);
     }
 
     // ── [3c] GET /cases/{id}/evidence/package  getEvidencePackage ─────────────────
@@ -365,7 +460,7 @@ public class EvidenceM6Controller {
 
     // ── 场景校验（BR-M6）────────────────────────────────────────────────────────
 
-    private void validateScene(String scene, List<String> refIds) {
+    private void validateScene(long caseId, String scene, List<String> refIds) {
         switch (scene) {
             case "RECORDING" -> {
                 // 校验 refIds 指向 call_recording.status='READY'。
@@ -383,18 +478,25 @@ public class EvidenceM6Controller {
                 }
             }
             case "DELIVERY" -> {
-                // 校验关联 legal_doc 已签收（SIGNED）。refIds 指向 legal_doc id。
+                // 送达存证：refIds 可指向本案上传的送达凭证附件(case_attachment)或已签收文书(legal_doc.SIGNED)。
+                // 每个 id 满足其一即可（凭证以 PC 上传的签收/送达文件为主，文书签收为辅）。
                 if (refIds.isEmpty()) {
-                    throw new ApiException(BizError.VALIDATION_422, "送达存证须指定 refIds(已签收文书)");
+                    throw new ApiException(BizError.VALIDATION_422, "送达存证须指定 refIds(送达凭证附件或已签收文书)");
                 }
-                List<Long> ids = toLongIds(refIds);            // 非数→422
+                List<Long> ids = toLongIds(refIds).stream().distinct().toList();   // 非数→422；去重
                 String ph = ids.stream().map(x -> "?").collect(java.util.stream.Collectors.joining(","));
-                Integer signed = jdbc.query(
-                        "SELECT count(*) FROM legal_doc WHERE id IN (" + ph + ") AND status = 'SIGNED'",
-                        rs -> rs.next() ? rs.getInt(1) : 0,
-                        ids.toArray());
-                if (signed == null || signed != ids.size()) {
-                    throw new ApiException(BizError.VALIDATION_422, "存在未签收文书，无法发起送达存证");
+                // UNION 去重：命中本案附件或已签收文书的 id 各计一次，避免同 id 双表命中被重复计数误拒。
+                Object[] args = new Object[ids.size() * 2 + 1];
+                args[0] = caseId;
+                for (int i = 0; i < ids.size(); i++) { args[i + 1] = ids.get(i); args[ids.size() + 1 + i] = ids.get(i); }
+                Integer okCount = jdbc.query(
+                        "SELECT count(*) FROM ("
+                                + "SELECT id FROM case_attachment WHERE case_id = ? AND id IN (" + ph + ")"
+                                + " UNION SELECT id FROM legal_doc WHERE id IN (" + ph + ") AND status = 'SIGNED'"
+                                + ") t",
+                        rs -> rs.next() ? rs.getInt(1) : 0, args);
+                if (okCount == null || okCount != ids.size()) {
+                    throw new ApiException(BizError.VALIDATION_422, "存在无效 refId(非本案送达凭证/未签收文书)，无法发起送达存证");
                 }
             }
             case "MATERIAL_PACK" -> {
@@ -600,7 +702,22 @@ public class EvidenceM6Controller {
                 rs.getString("status"),
                 rs.getString("cert_no"),
                 rs.getString("cert_url"),
-                ts(rs.getTimestamp("issued_at")));
+                ts(rs.getTimestamp("issued_at")),
+                hasCol(rs, "preservation_ids") ? rs.getString("preservation_ids") : null,
+                hasCol(rs, "chain_tx_hashes") ? rs.getString("chain_tx_hashes") : null,
+                hasCol(rs, "gznet_ids") ? rs.getString("gznet_ids") : null,
+                hasCol(rs, "ant_ids") ? rs.getString("ant_ids") : null);
+    }
+
+    /** 该结果集是否含某列（listEvidence 带易保全聚合列；其它复用 mapper 的查询不带，容错返 false）。 */
+    private static boolean hasCol(ResultSet rs, String col) {
+        try {
+            java.sql.ResultSetMetaData md = rs.getMetaData();
+            for (int c = 1; c <= md.getColumnCount(); c++) {
+                if (col.equalsIgnoreCase(md.getColumnLabel(c))) return true;
+            }
+        } catch (SQLException ignore) { /* 容错 */ }
+        return false;
     }
 
     private RowMapper<LegalDocDto> legalDocMapper() {

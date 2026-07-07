@@ -128,9 +128,15 @@ public class MasterWriteController {
                 errors.add(new ImportError(rowNo, "dueCents", "VALIDATION_422", "dueCents 不能为负"));
                 continue;
             }
+            // 滞纳金拆分可选：给了须 0 ≤ penalty ≤ due（本金 = due - penalty 不可为负）。
+            if (r.penaltyCents() != null && (r.penaltyCents() < 0 || r.penaltyCents() > r.dueCents())) {
+                skipped++;
+                errors.add(new ImportError(rowNo, "penaltyCents", "VALIDATION_422", "penaltyCents 须在 0~dueCents 之间"));
+                continue;
+            }
             try {
                 insertCase(batchId, projectId, proj.name(), r.acctNo(), r.ownerName(), r.room(),
-                        r.dueCents(), List.of(r.arrearPeriod()), litigationFromImport(r.litigation()));
+                        r.dueCents(), r.penaltyCents(), List.of(r.arrearPeriod()), litigationFromImport(r.litigation()));
                 succeeded++;
             } catch (DuplicateKeyException dup) {
                 // uq_case_batch_acct：同批户号重复 → 进 errors 不中断（BR-M2-14）。
@@ -175,6 +181,9 @@ public class MasterWriteController {
         if (isBlank(in.room())) throw validation("room 必填");
         if (in.dueCents() == null) throw validation("dueCents 必填");
         if (in.dueCents() < 0) throw validation("dueCents 不能为负");
+        if (in.penaltyCents() != null && (in.penaltyCents() < 0 || in.penaltyCents() > in.dueCents())) {
+            throw validation("penaltyCents 须在 0~dueCents 之间");
+        }
         if (in.arrearagePeriods() == null || in.arrearagePeriods().isEmpty()) throw validation("arrearagePeriods 必填");
 
         long batchId = parseIdOr404(id);
@@ -187,7 +196,7 @@ public class MasterWriteController {
         long caseId;
         try {
             caseId = insertCase(batchId, batch.projectId(), batch.projectName(), in.acctNo(), in.ownerName(),
-                    in.room(), in.dueCents(), in.arrearagePeriods(), litigationToJson(in.litigationFields()));
+                    in.room(), in.dueCents(), in.penaltyCents(), in.arrearagePeriods(), litigationToJson(in.litigationFields()));
         } catch (DuplicateKeyException dup) {
             // 同批户号重复 → 409 BIZ_DUP_ACCT（契约 409）。
             throw new ApiException(BizError.STATE_409, "同批户号重复: " + in.acctNo());
@@ -195,7 +204,7 @@ public class MasterWriteController {
 
         CaseDto dto = new CaseDto(
                 String.valueOf(caseId), in.acctNo(), String.valueOf(batchId), String.valueOf(batch.projectId()),
-                batch.projectName(), in.ownerName(), in.room(), in.dueCents(), in.dueCents(),
+                batch.projectName(), in.ownerName(), in.room(), in.dueCents(), in.penaltyCents(), in.dueCents(),
                 in.arrearagePeriods(), in.litigationFields(), "PENDING_DISPATCH", "NONE",
                 null, "PLATFORM_SEA", null, null, null, null, null, false);
         return ResponseEntity.status(HttpStatus.CREATED).body(dto);
@@ -330,6 +339,81 @@ public class MasterWriteController {
     }
 
     // =====================================================================
+    // [6c] PUT /batches/{id}/comm-in-rate — proposeCommInRate（物业提案收佣比例）
+    //   物业负责人提「建议收佣比例」→ comm_in_confirmed=false（待平台确认）；平台确认后物业不可再改(409)。
+    //   最终决定权在平台（平台经 /commission-rates 确认双佣）。own-org 本物业裁剪 + proj.edit。
+    // =====================================================================
+    public record CommInProposeInput(BigDecimal commInRate) {}
+
+    @PutMapping("/batches/{id}/comm-in-rate")
+    @RequirePermission("proj.edit")
+    @Transactional
+    public Map<String, Object> proposeCommInRate(@PathVariable("id") String id,
+                                                 @RequestBody(required = false) CommInProposeInput in) {
+        CurrentSubject s = SubjectContext.get();
+        long batchId = parseIdOr404(id);
+        BatchRef batch = loadBatchOwnOrg(s, batchId);   // 不存在→404；越权/跨物业→403
+        if (in == null || in.commInRate() == null) {
+            throw new ApiException(BizError.VALIDATION_422, "commInRate 必填");
+        }
+        BigDecimal r = in.commInRate();
+        if (r.signum() < 0 || r.compareTo(BigDecimal.ONE) > 0) {
+            throw new ApiException(BizError.VALIDATION_422, "commInRate 须为 0-1 分数");
+        }
+        Boolean confirmed = jdbc.queryForObject(
+                "SELECT comm_in_confirmed FROM batch WHERE id = ?", Boolean.class, batchId);
+        if (Boolean.TRUE.equals(confirmed)) {
+            throw new ApiException(BizError.STATE_409, "平台已确认收佣比例，不可再修改");
+        }
+        jdbc.update("UPDATE batch SET comm_in_rate = ?, comm_in_inherited = false,"
+                + " comm_in_confirmed = false, updated_at = now() WHERE id = ?", r, batchId);
+        String proxyFor = proxyForOrg(s, batch.orgId());
+        audit(s, "batch.comm-in.propose", "batch", batchId, "commInRate=" + r, proxyFor,
+                Map.of("batchId", batchId, "commInRate", r.toPlainString()));
+        return Map.of("ok", true);
+    }
+
+    // =====================================================================
+    // [6cs] GET /batches/{id}/comm-status — 批次佣金比例+确认态（供批次详情编辑卡）
+    //   资金双线裁剪：物业→只 commInRate/confirmed；服务商→只 payOutRate；平台→双线全。非契约端点(二进制外读)。
+    //   range 可见即可读（own-org/范围内），故不加 @RequirePermission，靠 loadBatchRange 裁剪。
+    // =====================================================================
+    @org.springframework.web.bind.annotation.GetMapping("/batches/{id}/comm-status")
+    public Map<String, Object> getBatchCommStatus(@PathVariable("id") String id) {
+        CurrentSubject s = SubjectContext.get();
+        long batchId = parseIdOr404(id);
+        Map<String, Object> row;
+        try {
+            row = jdbc.queryForMap(
+                    "SELECT b.comm_in_rate, b.pay_out_rate, b.comm_in_confirmed, p.org_id AS proj_org, b.provider_id"
+                            + " FROM batch b JOIN project p ON p.id = b.project_id WHERE b.id = ?", batchId);
+        } catch (org.springframework.dao.EmptyResultDataAccessException e) {
+            throw new ApiException(BizError.NOT_FOUND_404, "批次不存在: " + id);
+        }
+        // 可见性：平台全见；物业=项目 org 属己；服务商=派给本商(provider_id 属己)。不可见→404（不泄露存在性）。
+        long myOrg = orgIdLong(s);
+        Long projOrg = row.get("proj_org") == null ? null : ((Number) row.get("proj_org")).longValue();
+        Long provId = row.get("provider_id") == null ? null : ((Number) row.get("provider_id")).longValue();
+        boolean visible = s.isPlatform()
+                || (projOrg != null && projOrg == myOrg)
+                || (provId != null && provId == myOrg);
+        if (!visible) {
+            throw new ApiException(BizError.NOT_FOUND_404, "批次不存在: " + id);
+        }
+        boolean isProvider = "PROVIDER".equals(s.orgType());
+        boolean isProperty = "PROPERTY".equals(s.orgType());
+        Map<String, Object> out = new java.util.HashMap<>();
+        if (!isProvider) {   // 平台+物业 见收佣线
+            out.put("commInRate", row.get("comm_in_rate"));
+            out.put("commInConfirmed", row.get("comm_in_confirmed"));
+        }
+        if (!isProperty) {   // 平台+服务商 见付佣线
+            out.put("payOutRate", row.get("pay_out_rate"));
+        }
+        return out;
+    }
+
+    // =====================================================================
     // [7s] POST /batches/{id}/reduce-tiers:sync — syncBatchReduceTiers（一键同步为项目最新 BR-M2-18b）
     //   放弃批次自定义、重新继承项目默认（等价 PUT tiers=[]），同步后 source=INHERITED、reduceDrift=false。
     //   注意路径含冒号子动作 'reduce-tiers:sync'；权限 reduce.policy.edit，own-org。
@@ -350,8 +434,7 @@ public class MasterWriteController {
     // =====================================================================
     // [7p] POST /batches/{id}/playbook:sync — syncBatchPlaybook（一键同步手册为项目最新 BR-M2-18b）
     //   放弃批次自定义、重新继承项目最新手册，同步后 source=INHERITED、playbookDrift=false。
-    //   DDL playbook 仅 project_id 无 batch_id（批次手册经 project 折叠，见 PlaybookController）→ 当前无批次级自定义可清，
-    //   语义上为幂等 no-op（恒已是 INHERITED），仅落审计留痕；待批次级手册存储落地后此处清除批次覆盖+基线。
+    //   V915 起 playbook 有 batch_id 维：删该批次级覆盖行（含 baseline）→ 回退继承项目级，drift 自然消失。
     //   权限 playbook.adopt（对齐契约 syncBatchPlaybook x-permission），own-org；契约 200 无响应体。
     // =====================================================================
     @PostMapping("/batches/{id}/playbook:sync")
@@ -362,7 +445,9 @@ public class MasterWriteController {
         long batchId = parseIdOr404(id);
         BatchRef batch = loadBatchOwnOrg(s, batchId);   // 不存在→404；越权→403
 
-        // 当前无批次级手册存储 → no-op；留痕“恢复继承项目最新手册”。
+        // 删批次级覆盖手册（含基线列）→ 回退继承项目最新；source=INHERITED、playbookDrift 自然消失。
+        jdbc.update("DELETE FROM playbook WHERE batch_id = ?", batchId);
+
         String proxyFor = proxyForOrg(s, batch.orgId());
         audit(s, "playbook.sync.batch", "batch", batchId, "sync-to-project-latest", proxyFor,
                 Map.of("batchId", batchId, "source", "INHERITED"));
@@ -569,14 +654,14 @@ public class MasterWriteController {
 
     /** 插入案件（PENDING_DISPATCH/PLATFORM_SEA）。uq_case_batch_acct 冲突由调用方捕 DuplicateKeyException。 */
     private long insertCase(long batchId, long projectId, String projectName, String acctNo, String ownerName,
-                            String room, long dueCents, List<String> periods, String litigationJson) {
+                            String room, long dueCents, Long penaltyCents, List<String> periods, String litigationJson) {
         Long id = jdbc.queryForObject(
                 "INSERT INTO \"case\"(batch_id, project_id, project_name, acct_no, owner_name, room, due_cents,"
-                        + " reduce_after_cents, arrearags_periods, litigation_fields, status, pool)"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, 'PENDING_DISPATCH', 'PLATFORM_SEA')"
+                        + " penalty_cents, reduce_after_cents, arrearags_periods, litigation_fields, status, pool)"
+                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, 'PENDING_DISPATCH', 'PLATFORM_SEA')"
                         + " RETURNING id",
                 Long.class, batchId, projectId, projectName, acctNo, ownerName, room, dueCents,
-                dueCents, toJson(periods), litigationJson);
+                penaltyCents, dueCents, toJson(periods), litigationJson);
         return id == null ? 0L : id;
     }
 

@@ -3,6 +3,9 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
+import { roleTemplateLabel, dataScopeLabel, settingsDomainLabel, scriptSourceLabel, scriptStatusLabel } from '../constants/enums'
+import { permLabel } from '../constants/permissions'
+import DsDrawer from '../components/DsDrawer.vue'
 import type { components } from '../api/schema'
 
 type SettingsInput = components['schemas']['SettingsInput']
@@ -24,9 +27,11 @@ function domainData(domain: string) {
   const row = items.value.find((x) => x.domain === domain)
   return row ?? {}
 }
-// 通用保存：PUT /settings body={domain, <域字段>:value}，写新版本(对新计时案件生效 BR-M3-19)。
-async function saveDomain(domain: SettingsInput['domain'], value: any) {
+// 通用保存：PUT /settings body={domain, effectiveAt?, <域字段>:value}，写新版本(对新计时案件生效 BR-M3-19)。
+// effectiveAt 可选(SettingsInput.effectiveAt)，留空=立即生效。
+async function saveDomain(domain: SettingsInput['domain'], value: any, effectiveAt?: string | null) {
   const body: any = { domain }
+  if (effectiveAt) body.effectiveAt = effectiveAt
   if (domain === 'TIMERS') body.timers = value
   else if (domain === 'ROTATION') body.rotation = value
   else if (domain === 'MARK_CODES') body.markCodes = value
@@ -39,20 +44,20 @@ async function saveDomain(domain: SettingsInput['domain'], value: any) {
 
 // ROTATION
 const rotDlg = ref(false)
-const rotForm = ref<any>({ holdCap: 50, maxRotations: 3 })
+const rotForm = ref<any>({ holdCap: 50, maxRotations: 3, effectiveAt: null })
 function openRotation() {
   const rot = domainData('ROTATION').rotation ?? {}
-  rotForm.value = { holdCap: rot.holdCap ?? 50, maxRotations: rot.maxRotations ?? 3 }
+  rotForm.value = { holdCap: rot.holdCap ?? 50, maxRotations: rot.maxRotations ?? 3, effectiveAt: null }
   rotDlg.value = true
 }
 async function saveRotation() {
   if (rotForm.value.holdCap < 1 || rotForm.value.maxRotations < 0) { ElMessage.error('请填写非负合理值'); return }
-  if (await saveDomain('ROTATION', { holdCap: rotForm.value.holdCap, maxRotations: rotForm.value.maxRotations })) rotDlg.value = false
+  if (await saveDomain('ROTATION', { holdCap: rotForm.value.holdCap, maxRotations: rotForm.value.maxRotations }, rotForm.value.effectiveAt)) rotDlg.value = false
 }
 
 // TIMERS（CFG-TIMERS-DRAFT：T1=48h / T2=168h / TC=168h / MAXCYCLE=90天，非法/负数拒绝 US-M3-11）
 const timerDlg = ref(false)
-const timerForm = ref<any>({ t1Hours: 48, t2Hours: 168, tCollectorHours: 168, maxCycleDays: 90 })
+const timerForm = ref<any>({ t1Hours: 48, t2Hours: 168, tCollectorHours: 168, maxCycleDays: 90, effectiveAt: null })
 function openTimers() {
   const t = domainData('TIMERS').timers ?? {}
   timerForm.value = {
@@ -60,6 +65,7 @@ function openTimers() {
     t2Hours: t.t2Hours ?? 168,
     tCollectorHours: t.tCollectorHours ?? 168,
     maxCycleDays: t.maxCycleDays ?? 90,
+    effectiveAt: null,
   }
   timerDlg.value = true
 }
@@ -70,12 +76,12 @@ async function saveTimers() {
   }
   if (await saveDomain('TIMERS', {
     t1Hours: f.t1Hours, t2Hours: f.t2Hours, tCollectorHours: f.tCollectorHours, maxCycleDays: f.maxCycleDays,
-  })) timerDlg.value = false
+  }, f.effectiveAt)) timerDlg.value = false
 }
 
 // SMS（cooldownMinutes 物业可见；signature/templates/warnThreshold 平台统一配置 BR-M9-09）
 const smsDlg = ref(false)
-const smsForm = ref<any>({ cooldownMinutes: 60, signature: '', warnThreshold: null, templates: [] })
+const smsForm = ref<any>({ cooldownMinutes: 60, signature: '', warnThreshold: null, templates: [], effectiveAt: null })
 function openSms() {
   const s = domainData('SMS').sms ?? {}
   smsForm.value = {
@@ -83,6 +89,7 @@ function openSms() {
     signature: s.signature ?? '',
     warnThreshold: s.warnThreshold ?? null,
     templates: Array.isArray(s.templates) ? s.templates.map((t: any) => ({ ...t })) : [],
+    effectiveAt: null,
   }
   smsDlg.value = true
 }
@@ -97,18 +104,20 @@ async function saveSms() {
     signature: f.signature || null,
     warnThreshold: f.warnThreshold,
     templates: f.templates,
-  })) smsDlg.value = false
+  }, f.effectiveAt)) smsDlg.value = false
 }
 
 // MARK_CODES（数组域，connected/effectiveFollowUp 结构须与读一致 BR-M4-12）
 const markDlg = ref(false)
 const markRows = ref<any[]>([])
+const markEffectiveAt = ref<string | null>(null)
 function openMarkCodes() {
   const arr = domainData('MARK_CODES').markCodes
   markRows.value = Array.isArray(arr) ? arr.map((m: any) => ({
     code: m.code ?? '', label: m.label ?? '', enabled: m.enabled !== false,
     connected: m.connected === true, effectiveFollowUp: m.effectiveFollowUp === true,
   })) : []
+  markEffectiveAt.value = null
   markDlg.value = true
 }
 function addMarkRow() { markRows.value.push({ code: '', label: '', enabled: true, connected: false, effectiveFollowUp: false }) }
@@ -119,18 +128,20 @@ async function saveMarkCodes() {
   }
   if (await saveDomain('MARK_CODES', markRows.value.map((m) => ({
     code: m.code, label: m.label, enabled: m.enabled, connected: m.connected, effectiveFollowUp: m.effectiveFollowUp,
-  })))) markDlg.value = false
+  })), markEffectiveAt.value)) markDlg.value = false
 }
 
 // CLOSE_REASONS（数组域：kind=CloseKindEnum / code / label）
 const closeDlg = ref(false)
 const closeRows = ref<any[]>([])
+const closeEffectiveAt = ref<string | null>(null)
 const closeKinds: CloseKind[] = ['WITHDRAWN', 'BAD_DEBT']
 function openCloseReasons() {
   const arr = domainData('CLOSE_REASONS').closeReasons
   closeRows.value = Array.isArray(arr) ? arr.map((c: any) => ({
     kind: c.kind ?? 'WITHDRAWN', code: c.code ?? '', label: c.label ?? '',
   })) : []
+  closeEffectiveAt.value = null
   closeDlg.value = true
 }
 function addCloseRow() { closeRows.value.push({ kind: 'WITHDRAWN', code: '', label: '' }) }
@@ -141,7 +152,7 @@ async function saveCloseReasons() {
   }
   if (await saveDomain('CLOSE_REASONS', closeRows.value.map((c) => ({
     kind: c.kind, code: c.code, label: c.label,
-  })))) closeDlg.value = false
+  })), closeEffectiveAt.value)) closeDlg.value = false
 }
 
 // 权限矩阵 + AI 配置 + 话术库（平台·ai.config 写）
@@ -205,48 +216,93 @@ onMounted(() => { load(); loadMore() })
 </script>
 
 <template>
-  <el-card header="系统配置 · 业务规则（平台 · 带版本/生效时间 · 变更只对新计时案件生效 BR-M3-19）">
-    <div v-if="auth.has('settings.manage')" style="margin-bottom:10px">
-      <el-button type="primary" size="small" @click="openTimers">编辑时效参数(TIMERS)</el-button>
-      <el-button type="primary" size="small" @click="openRotation">编辑轮转配置(ROTATION)</el-button>
-      <el-button type="primary" size="small" @click="openMarkCodes">编辑标记码(MARK_CODES)</el-button>
-      <el-button type="primary" size="small" @click="openCloseReasons">编辑结案原因(CLOSE_REASONS)</el-button>
-      <el-button type="primary" size="small" @click="openSms">编辑短信配置(SMS)</el-button>
+  <div class="card">
+    <div class="card-h">
+      <div class="t"><span class="bar"></span>系统配置 · 业务规则</div>
+      <div class="ops"><span class="note" style="margin:0">平台 · 带版本/生效时间 · 变更只对新计时案件生效 BR-M3-19</span></div>
     </div>
-    <el-table :data="items" border size="small">
-      <el-table-column prop="domain" label="配置域" width="140" />
-      <el-table-column prop="version" label="版本" width="80" />
-      <el-table-column prop="effectiveAt" label="生效时间" width="200" />
-      <el-table-column label="配置内容"><template #default="{row}"><code style="font-size:12px">{{ fmt(domainOf(row)) }}</code></template></el-table-column>
-    </el-table>
-    <el-alert type="info" :closable="false" style="margin-top:10px"
-      title="域：TIMERS(计时器) / ROTATION(轮转·持有上限) / MARK_CODES(标记码) / CLOSE_REASONS(结案原因) / SMS。" />
 
-    <el-divider content-position="left">权限矩阵（GET /permission-matrix · 功能×角色×权限码×数据范围 BR-M1-04c）
-      <el-button v-if="auth.has('settings.manage')" size="small" text type="primary" @click="exportMatrix">导出 CSV</el-button></el-divider>
-    <el-table :data="matrix" border size="small" max-height="280">
-      <el-table-column prop="feature" label="功能/模块" /><el-table-column prop="role" label="角色" width="80" />
-      <el-table-column prop="permission" label="权限码" /><el-table-column prop="dataScope" label="数据范围" />
-    </el-table>
+    <div v-if="auth.has('settings.manage')" class="toolbar">
+      <button class="btn sm" @click="openTimers">编辑时效参数(TIMERS)</button>
+      <button class="btn sm" @click="openRotation">编辑轮转配置(ROTATION)</button>
+      <button class="btn sm" @click="openMarkCodes">编辑标记码(MARK_CODES)</button>
+      <button class="btn sm" @click="openCloseReasons">编辑结案原因(CLOSE_REASONS)</button>
+      <button class="btn sm" @click="openSms">编辑短信配置(SMS)</button>
+    </div>
 
-    <el-divider content-position="left">AI 配置（GET/PUT /ai-config · 话术飞轮 LLM/ASR）<el-button v-if="auth.has('ai.config')" size="small" text type="primary" @click="openAiEdit">编辑</el-button></el-divider>
-    <el-descriptions v-if="aiConfig" :column="2" border size="small">
-      <el-descriptions-item label="LLM"><code>{{ fmt(aiConfig.llm) }}</code></el-descriptions-item>
-      <el-descriptions-item label="ASR"><code>{{ fmt(aiConfig.asr) }}</code></el-descriptions-item>
-      <el-descriptions-item label="Prompts"><code style="font-size:11px">{{ fmt(aiConfig.prompts) }}</code></el-descriptions-item>
-      <el-descriptions-item label="飞轮"><code>{{ fmt(aiConfig.flywheel) }}</code></el-descriptions-item>
-    </el-descriptions>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:140px">配置域</th><th style="width:80px">版本</th><th style="width:200px">生效时间</th><th>配置内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="row in items" :key="row.domain">
+          <td><b :title="row.domain">{{ settingsDomainLabel(row.domain) }}</b></td>
+          <td class="num">{{ row.version }}</td>
+          <td>{{ row.effectiveAt }}</td>
+          <td><code style="font-size:12px">{{ fmt(domainOf(row)) }}</code></td>
+        </tr>
+        <tr v-if="!items.length"><td colspan="4" class="note" style="text-align:center">暂无配置数据（仅平台可见）</td></tr>
+      </tbody>
+    </table>
+    <div class="alert info">
+      域：TIMERS(计时器) / ROTATION(轮转·持有上限) / MARK_CODES(标记码) / CLOSE_REASONS(结案原因) / SMS。
+    </div>
 
-    <el-divider content-position="left">话术库（GET /script-lib · 飞轮护城河）<el-button v-if="auth.has('ai.config')" size="small" text type="primary" @click="scDlg=true">+ 新建话术</el-button></el-divider>
-    <el-table :data="scripts" border size="small" max-height="280">
-      <el-table-column prop="scene" label="场景" /><el-table-column prop="intent" label="意图" />
-      <el-table-column prop="source" label="来源" width="90" />
-      <el-table-column label="效果"><template #default="{row}">承诺 {{ ((row.promiseRate??0)*100).toFixed(0) }}% / 回款 {{ ((row.repayRate??0)*100).toFixed(0) }}%</template></el-table-column>
-      <el-table-column label="状态" width="100"><template #default="{row}"><el-tag size="small" :type="row.status==='EFFECTIVE'?'success':row.status==='RETIRED'?'info':'warning'">{{ row.status }}</el-tag></template></el-table-column>
-      <el-table-column label="操作" width="90"><template #default="{row}"><el-button v-if="auth.has('ai.config') && row.variant" size="small" @click="promote(row)">变体晋升</el-button></template></el-table-column>
-    </el-table>
+    <div class="sec-title" style="justify-content:space-between">
+      <span style="display:flex;align-items:center;gap:8px">权限矩阵（GET /permission-matrix · 功能×角色×权限码×数据范围 BR-M1-04c）</span>
+      <button v-if="auth.has('settings.manage')" class="btn txt" @click="exportMatrix">导出 CSV</button>
+    </div>
+    <table>
+      <thead>
+        <tr><th>功能/模块</th><th style="width:80px">角色</th><th>权限码</th><th>数据范围</th></tr>
+      </thead>
+      <tbody>
+        <tr v-for="(row, i) in matrix" :key="i">
+          <td>{{ row.feature }}</td>
+          <td :title="row.role">{{ roleTemplateLabel(row.role) }}</td>
+          <td :title="row.permission">{{ permLabel(row.permission) }}</td>
+          <td :title="row.dataScope">{{ dataScopeLabel(row.dataScope) }}</td>
+        </tr>
+        <tr v-if="!matrix.length"><td colspan="4" class="note" style="text-align:center">暂无权限矩阵</td></tr>
+      </tbody>
+    </table>
 
-    <el-dialog v-model="aiDlg" title="编辑 AI 配置（PUT /ai-config · ai.config）" width="460px">
+    <div class="sec-title" style="justify-content:space-between">
+      <span style="display:flex;align-items:center;gap:8px">AI 配置（GET/PUT /ai-config · 话术飞轮 LLM/ASR）</span>
+      <button v-if="auth.has('ai.config')" class="btn txt" @click="openAiEdit">编辑</button>
+    </div>
+    <div v-if="aiConfig" class="desc">
+      <div class="r"><div class="k">LLM</div><div class="v"><code>{{ fmt(aiConfig.llm) }}</code></div></div>
+      <div class="r"><div class="k">ASR</div><div class="v"><code>{{ fmt(aiConfig.asr) }}</code></div></div>
+      <div class="r"><div class="k">Prompts</div><div class="v"><code style="font-size:11px">{{ fmt(aiConfig.prompts) }}</code></div></div>
+      <div class="r"><div class="k">飞轮</div><div class="v"><code>{{ fmt(aiConfig.flywheel) }}</code></div></div>
+    </div>
+    <div v-else class="note">暂无 AI 配置</div>
+
+    <div class="sec-title" style="justify-content:space-between">
+      <span style="display:flex;align-items:center;gap:8px">话术库（GET /script-lib · 飞轮护城河）</span>
+      <button v-if="auth.has('ai.config')" class="btn txt" @click="scDlg=true">+ 新建话术</button>
+    </div>
+    <table>
+      <thead>
+        <tr><th>场景</th><th>意图</th><th style="width:90px">来源</th><th>效果</th><th style="width:100px">状态</th><th style="width:90px">操作</th></tr>
+      </thead>
+      <tbody>
+        <tr v-for="row in scripts" :key="row.id">
+          <td>{{ row.scene }}</td>
+          <td>{{ row.intent }}</td>
+          <td>{{ scriptSourceLabel(row.source) }}</td>
+          <td class="num">承诺 {{ ((row.promiseRate??0)*100).toFixed(0) }}% / 回款 {{ ((row.repayRate??0)*100).toFixed(0) }}%</td>
+          <td><span class="tag" :class="row.status==='EFFECTIVE'?'suc':row.status==='RETIRED'?'inf':'war'">{{ scriptStatusLabel(row.status) }}</span></td>
+          <td><button v-if="auth.has('ai.config') && row.variant" class="btn txt" @click="promote(row)">变体晋升</button></td>
+        </tr>
+        <tr v-if="!scripts.length"><td colspan="6" class="note" style="text-align:center">暂无话术</td></tr>
+      </tbody>
+    </table>
+
+    <DsDrawer v-model="aiDlg" title="编辑 AI 配置" :width="460">
       <el-form label-width="110px">
         <el-form-item label="LLM provider"><el-input v-model="aiForm.llm.provider" /></el-form-item>
         <el-form-item label="LLM model"><el-input v-model="aiForm.llm.model" /></el-form-item>
@@ -254,9 +310,9 @@ onMounted(() => { load(); loadMore() })
         <el-form-item label="ASR provider"><el-input v-model="aiForm.asr.provider" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="aiDlg=false">取消</el-button><el-button type="primary" @click="saveAi">保存</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="scDlg" title="新建话术（POST /script-lib · ai.config）" width="440px">
+    <DsDrawer v-model="scDlg" title="新建话术" :width="440">
       <el-form label-width="80px">
         <el-form-item label="场景"><el-input v-model="scForm.scene" /></el-form-item>
         <el-form-item label="意图"><el-input v-model="scForm.intent" /></el-form-item>
@@ -264,17 +320,20 @@ onMounted(() => { load(); loadMore() })
         <el-form-item label="话术"><el-input v-model="scForm.text" type="textarea" :rows="3" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="scDlg=false">取消</el-button><el-button type="primary" @click="createScript">新建</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="rotDlg" title="编辑轮转配置 ROTATION（PUT /settings·写新版本）" width="400px">
+    <DsDrawer v-model="rotDlg" title="编辑轮转配置" :width="400">
       <el-form label-width="120px">
         <el-form-item label="持有上限 holdCap"><el-input-number v-model="rotForm.holdCap" :min="1" /></el-form-item>
         <el-form-item label="最大轮转 maxRotations"><el-input-number v-model="rotForm.maxRotations" :min="0" /></el-form-item>
+        <el-form-item label="生效时间">
+          <el-date-picker v-model="rotForm.effectiveAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="留空=立即生效" style="width:100%" />
+        </el-form-item>
       </el-form>
       <template #footer><el-button @click="rotDlg=false">取消</el-button><el-button type="primary" @click="saveRotation">保存新版本</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="timerDlg" title="编辑时效参数 TIMERS（PUT /settings·只对新计时案件生效 BR-M3-19）" width="460px">
+    <DsDrawer v-model="timerDlg" title="编辑时效参数" :width="460">
       <el-alert type="info" :closable="false" style="margin-bottom:10px"
         title="建议值：T1=48h(派单时限) / T2=168h(服务商处置) / TC=168h(无跟进释放) / MAXCYCLE=90天。变更仅对新计时案件生效。" />
       <el-form label-width="180px">
@@ -282,11 +341,18 @@ onMounted(() => { load(); loadMore() })
         <el-form-item label="T2 服务商处置(小时)"><el-input-number v-model="timerForm.t2Hours" :min="0" /></el-form-item>
         <el-form-item label="TC 无跟进释放(小时)"><el-input-number v-model="timerForm.tCollectorHours" :min="0" /></el-form-item>
         <el-form-item label="最长周期(天)"><el-input-number v-model="timerForm.maxCycleDays" :min="0" /></el-form-item>
+        <el-form-item label="生效时间">
+          <el-date-picker v-model="timerForm.effectiveAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="留空=立即生效" style="width:100%" />
+        </el-form-item>
       </el-form>
       <template #footer><el-button @click="timerDlg=false">取消</el-button><el-button type="primary" @click="saveTimers">保存新版本</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="markDlg" title="编辑标记码 MARK_CODES（connected/effectiveFollowUp 影响 T_collector 重置 BR-M4-12）" width="720px">
+    <DsDrawer v-model="markDlg" title="编辑标记码" :width="720">
+      <div style="margin-bottom:10px;display:flex;align-items:center;gap:8px">
+        <span style="color:#606266;font-size:13px">生效时间</span>
+        <el-date-picker v-model="markEffectiveAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="留空=立即生效" style="width:240px" />
+      </div>
       <el-button size="small" type="primary" plain style="margin-bottom:10px" @click="addMarkRow">+ 新增标记码</el-button>
       <el-table :data="markRows" border size="small">
         <el-table-column label="code" width="140"><template #default="{row}"><el-input v-model="row.code" size="small" /></template></el-table-column>
@@ -297,9 +363,13 @@ onMounted(() => { load(); loadMore() })
         <el-table-column label="操作" width="70"><template #default="{$index}"><el-button size="small" text type="danger" @click="delMarkRow($index)">删除</el-button></template></el-table-column>
       </el-table>
       <template #footer><el-button @click="markDlg=false">取消</el-button><el-button type="primary" @click="saveMarkCodes">保存新版本</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="closeDlg" title="编辑结案原因 CLOSE_REASONS（PUT /settings·写新版本）" width="640px">
+    <DsDrawer v-model="closeDlg" title="编辑结案原因" :width="640">
+      <div style="margin-bottom:10px;display:flex;align-items:center;gap:8px">
+        <span style="color:#606266;font-size:13px">生效时间</span>
+        <el-date-picker v-model="closeEffectiveAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="留空=立即生效" style="width:240px" />
+      </div>
       <el-button size="small" type="primary" plain style="margin-bottom:10px" @click="addCloseRow">+ 新增结案原因</el-button>
       <el-table :data="closeRows" border size="small">
         <el-table-column label="类型 kind" width="170"><template #default="{row}">
@@ -312,13 +382,16 @@ onMounted(() => { load(); loadMore() })
         <el-table-column label="操作" width="70"><template #default="{$index}"><el-button size="small" text type="danger" @click="delCloseRow($index)">删除</el-button></template></el-table-column>
       </el-table>
       <template #footer><el-button @click="closeDlg=false">取消</el-button><el-button type="primary" @click="saveCloseReasons">保存新版本</el-button></template>
-    </el-dialog>
+    </DsDrawer>
 
-    <el-dialog v-model="smsDlg" title="编辑短信配置 SMS（签名/模板由平台统一配置 BR-M9-09，物业不创建）" width="600px">
+    <DsDrawer v-model="smsDlg" title="编辑短信配置" :width="600">
       <el-form label-width="160px">
         <el-form-item label="同案冷却(分钟)"><el-input-number v-model="smsForm.cooldownMinutes" :min="0" /></el-form-item>
         <el-form-item label="条数预警阈值"><el-input-number v-model="smsForm.warnThreshold" :min="0" /></el-form-item>
         <el-form-item label="短信签名"><el-input v-model="smsForm.signature" placeholder="平台统一配置 BR-M9-09" /></el-form-item>
+        <el-form-item label="生效时间">
+          <el-date-picker v-model="smsForm.effectiveAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="留空=立即生效" style="width:100%" />
+        </el-form-item>
       </el-form>
       <el-divider content-position="left">短信模板（平台统一配置 BR-M9-09）<el-button size="small" type="primary" plain @click="addSmsTpl">+ 新增模板</el-button></el-divider>
       <el-table :data="smsForm.templates" border size="small">
@@ -328,6 +401,6 @@ onMounted(() => { load(); loadMore() })
         <el-table-column label="操作" width="70"><template #default="{$index}"><el-button size="small" text type="danger" @click="delSmsTpl($index)">删除</el-button></template></el-table-column>
       </el-table>
       <template #footer><el-button @click="smsDlg=false">取消</el-button><el-button type="primary" @click="saveSms">保存新版本</el-button></template>
-    </el-dialog>
-  </el-card>
+    </DsDrawer>
+  </div>
 </template>

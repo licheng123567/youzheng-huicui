@@ -83,6 +83,35 @@ public class CaseStateService {
 
     // ── ① 行级锁加载 ─────────────────────────────────────────────────────────
 
+    /**
+     * 非锁定快读（SELECT 不带 FOR UPDATE）。仅用于幂等预检（不存在→404），不保证读后一致性。
+     * claimCase controller 用此做"本人已持有→200"快检，避免在获取 collector 锁前先持有 case 行锁
+     * （否则会违反 collector→case 全局锁序，引入潜在死锁）。
+     */
+    public CaseSnapshot peekCase(long caseId) {
+        try {
+            return jdbc.queryForObject(
+                    "SELECT c.id, c.batch_id, c.status, c.pool, c.holder_id, c.source, c.origin_pool,"
+                            + " c.provider_id AS provider_id, b.pay_out_rate, b.open_rate"
+                            + " FROM \"case\" c JOIN batch b ON b.id = c.batch_id"
+                            + " WHERE c.id = ?",
+                    (rs, i) -> new CaseSnapshot(
+                            rs.getLong("id"),
+                            rs.getLong("batch_id"),
+                            rs.getString("status"),
+                            rs.getString("pool"),
+                            (Long) rs.getObject("holder_id"),
+                            rs.getString("source"),
+                            rs.getString("origin_pool"),
+                            (Long) rs.getObject("provider_id"),
+                            rs.getBigDecimal("pay_out_rate"),
+                            rs.getBigDecimal("open_rate")),
+                    caseId);
+        } catch (EmptyResultDataAccessException e) {
+            throw new ApiException(BizError.NOT_FOUND_404, "案件不存在: " + caseId);
+        }
+    }
+
     /** SELECT ... FOR UPDATE 行级锁加载（须在 @Transactional 内调用）。不存在→404。 */
     public CaseSnapshot lockCase(long caseId) {
         try {
@@ -169,6 +198,19 @@ public class CaseStateService {
 
     // ── ④ 持有上限 ───────────────────────────────────────────────────────────
 
+    /**
+     * 对目标 CO 的 account 行取 FOR UPDATE 行锁，序列化同一 CO 的并发持有变更。
+     * 须在 @Transactional 内调用；锁持有至事务提交，关闭 holdCount→transition 之间的并发窗口。
+     *
+     * <b>全局锁序约定（避免死锁）：始终先 lockCollector(coId) 再 lockCase(caseId)。</b>
+     * 单案路径（assignCase / claimCase）和批量端点（assignCasesBatch）均遵守此顺序，
+     * 不存在反方向路径，不会产生环路死锁。
+     */
+    public void lockCollector(long collectorId) {
+        jdbc.query("SELECT id FROM account WHERE id = ? FOR UPDATE",
+                rs -> { /* 仅占锁，不读值 */ }, collectorId);
+    }
+
     /** 私海持有数 ≥ CFG-HOLDCAP → BIZ_HOLD_CAP。 */
     public void checkHoldCap(long collectorId) {
         if (holdCount(collectorId) >= holdCap()) {
@@ -209,6 +251,10 @@ public class CaseStateService {
         long coId = Long.parseLong(co.accountId());
         long coOrg = Long.parseLong(co.orgId());
 
+        // 全局锁序：先 lockCollector 再 lockCase（与 assignCase / assignCasesBatch 一致，collector→case，无环）。
+        lockCollector(coId);
+        checkHoldCap(coId);
+
         CaseSnapshot snap = lockCase(caseId);
 
         // 锁内复核：必须仍 holder 为空且处 S2/S4。
@@ -221,8 +267,6 @@ public class CaseStateService {
         if (isOwnSea && (snap.providerId() == null || snap.providerId() != coOrg)) {
             throw new ApiException(BizError.PERM_403, "非本服务商公海案件，不可抢: " + caseId);
         }
-
-        checkHoldCap(coId);
 
         String originPool = isOpen ? POOL_OPEN_POOL : POOL_PROVIDER_SEA;
         Transition t = new Transition(
