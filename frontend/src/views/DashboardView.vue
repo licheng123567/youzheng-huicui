@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useAuth } from '../stores/auth'
 import { api } from '../api/client'
-import { permLabel } from '../constants/permissions'
-import { orgTypeLabel, caseStatusLabel, activityTypeLabel, todoCategoryLabel } from '../constants/enums'
+import { caseStatusLabel, todoCategoryLabel } from '../constants/enums'
+import CaseThreeColumn from '../components/CaseThreeColumn.vue'
 
 // 角色工作台(GET /workbench · BR-M4-20/20a)：CO/PC=今日驾驶舱(待办列表+KPI可点筛)；管理角色=仪表盘。
 const auth = useAuth()
@@ -35,20 +36,12 @@ async function load() {
 function openTodo(t: any) { if (t.caseId) router.push(`/cases/${t.caseId}`) }
 onMounted(load)
 
-// ===== cockpit master-detail（仅新增「读取/选中」型逻辑，不改写操作）=====
-// 选中态：本地 ref；与 KPI 筛选(filterKey)、tab 解耦
+// ===== cockpit master-detail（选中案件→内嵌 CaseThreeColumn，对标原型 <case-three-col> 复用）=====
+// 选中态：本地 ref；与 KPI 筛选(filterKey)、tab 解耦。案件详情本身由 CaseThreeColumn 内部拉取，
+// 这里只留头部条需要的极简信息（姓名/房号/状态），经 @loaded 事件从子组件拿，避免重复请求。
 const cockpitId = ref<string>('')
-const cpDetail = ref<any>(null)         // GET /cases/{id} → { case, timeline, ... }
-const cpLoading = ref(false)
-
-// 时间线类型 → 颜色（与案件页一致；缺省 inf）
-const tlTag = (t?: string) => {
-  const k = String(t || '').toUpperCase()
-  if (k === 'CALL') return 'pri'
-  if (k === 'PROMISE' || k === 'REPAY') return 'suc'
-  if (k === 'TICKET' || k === 'LEGAL') return 'war'
-  return 'inf'
-}
+const cpHeaderCase = ref<any>(null)
+function onCaseLoaded(detail: any) { cpHeaderCase.value = detail?.case ?? null }
 const caseStatusTag = (s?: string) => {
   const m: Record<string, string> = {
     SETTLED: 'suc', IN_PROGRESS: 'pri', PROMISED: 'war',
@@ -57,7 +50,6 @@ const caseStatusTag = (s?: string) => {
   }
   return m[s ?? ''] ?? 'inf'
 }
-const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
 
 // 左 worklist：复用 filterKey 过滤后的 todos（todo 字段不足时优雅降级）
 const worklist = computed<any[]>(() => todos.value)
@@ -65,13 +57,25 @@ const worklist = computed<any[]>(() => todos.value)
 const allTodos = computed<any[]>(() => wb.value?.todos ?? [])
 const worklistUrgent = computed<any[]>(() => allTodos.value.filter((t: any) => t.urgency === 'HIGH').slice(0, 6))
 
-// wl-tabs：由 todos 的 category 分布派生（全部 + 各分类计数），点击复用 filterKey
+// wl-tabs：由 todos 的 category 分布派生 + 按角色预置全部分类（即使计数为 0 也展示）
+const CO_TODO_CATS = ['PROMISE_DUE', 'RELEASE_WARN', 'TICKET_RECEIPT']
+const PC_TODO_CATS = ['TICKET_RECEIPT', 'LEGAL_DELIVERY', 'REPAY_MARK', 'PAYLINK_SEND']
+const roleTodoCats = computed<string[]>(() => {
+  const r = auth.me?.role
+  if (r === 'CO') return CO_TODO_CATS
+  if (r === 'PC') return PC_TODO_CATS
+  return []
+})
 const wlTabs = computed<Array<{ k: string; l: string; n: number }>>(() => {
   const list = allTodos.value
   const counts: Record<string, number> = {}
   for (const t of list) counts[t.category] = (counts[t.category] || 0) + 1
   const tabs: Array<{ k: string; l: string; n: number }> = [{ k: '', l: '全部', n: list.length }]
-  for (const cat of Object.keys(counts)) tabs.push({ k: cat, l: CAT_LABEL[cat] || cat, n: counts[cat] })
+  // 先展示预设分类（即使计数为 0），再补真实数据中出现的额外分类
+  for (const cat of roleTodoCats.value) tabs.push({ k: cat, l: CAT_LABEL[cat] || cat, n: counts[cat] || 0 })
+  for (const cat of Object.keys(counts)) {
+    if (!roleTodoCats.value.includes(cat)) tabs.push({ k: cat, l: CAT_LABEL[cat] || cat, n: counts[cat] })
+  }
   return tabs
 })
 
@@ -80,31 +84,31 @@ const ovTotal = computed<number>(() => allTodos.value.length || 0)
 const ovRemain = computed<number>(() => allTodos.value.length)
 const ovPct = computed<number>(() => 0) // 无「已处理」数据来源，进度条以剩余件数为主语义（保守置 0）
 
-const cpCase = computed<any>(() => cpDetail.value?.case ?? null)
-const cpTimeline = computed<any[]>(() => (cpDetail.value?.timeline ?? []).slice(0, 6))
-const cpInitial = computed<string>(() => {
-  const n = cpCase.value?.ownerName
-  return n ? String(n).charAt(0) : '案'
-})
-// 选中 todo 标题（无 case 字段时降级展示）
+// 选中 todo 标题（案件详情未加载完成前的降级展示）
 const cpTitle = computed<string>(() => {
   const t = (allTodos.value.find((x: any) => x.caseId === cockpitId.value))
   return t?.title || cockpitId.value
 })
 
-async function selectWl(caseId?: string) {
+function selectWl(caseId?: string) {
   if (!caseId) return
+  if (cockpitId.value !== caseId) cpHeaderCase.value = null
   cockpitId.value = caseId
-  cpDetail.value = null
-  cpLoading.value = true
-  try {
-    const { data } = await api.GET('/cases/{id}', { params: { path: { id: caseId } } })
-    cpDetail.value = data
-  } finally {
-    cpLoading.value = false
-  }
 }
 function fullScreen() { if (cockpitId.value) router.push(`/cases/${cockpitId.value}`) }
+// 完成→下一条：按当前筛选后的 worklist 顺序推进到下一个待办案件；处理完最后一件则清空选中并提示（对标原型 doneNext）
+function doneNext() {
+  const list = worklist.value.filter((t: any) => t.caseId)
+  const i = list.findIndex((t: any) => t.caseId === cockpitId.value)
+  const next = list[i + 1] || list.find((t: any) => t.caseId !== cockpitId.value)
+  if (next && next.caseId !== cockpitId.value) {
+    selectWl(next.caseId)
+  } else {
+    cockpitId.value = ''
+    cpHeaderCase.value = null
+    ElMessage.success('本批今日必办已处理完 🎉')
+  }
+}
 
 // ========================================================================
 //  Dashboard（管理角色 PL/SA/SE/VL）：经营仪表盘
@@ -281,6 +285,69 @@ function todoJump(td: any) {
     router.push(`/${td.jump}`).catch(() => {})
   }
 }
+
+// ===== CO cockpit KPI 渲染辅助 =====
+// 金额类 KPI 格式化（分→元）
+function chipValue(k: any): string {
+  const label = String(k.label || '')
+  if (label.includes('回款')) {
+    const yuan = (k.value || 0) / 100
+    return '¥' + yuan.toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
+  }
+  return String(k.value ?? '—')
+}
+// KPI 颜色/状态映射（原型 cockpitChips 配色）
+function chipClass(k: any): string {
+  const label = String(k.label || '')
+  if (label.includes('待跟进') || label.includes('待办合计')) return 'war'
+  if (label.includes('今日通话') || label.includes('本月回款')) return 'suc'
+  if (label.includes('持有案件')) return 'pri'
+  if (label.includes('承诺到期')) return 'dan'
+  if (label.includes('临近释放')) return 'dan'
+  if (label.includes('临近退回')) return 'dan'
+  if (label.includes('工单回执')) return 'inf'
+  if (label.includes('待派超时')) return 'dan'
+  return 'inf'
+}
+
+// ===== 驾驶舱 KPI 可点筛选条（对标原型 COCKPIT_CHIPS：按角色固定 6 项，含 0 计数亦展示）=====
+// 可点项(key=category / '')点击即过滤 worklist；只读项(ro)展示统计值（值取自后端 wb.kpis）。
+type ChipDef = { key: string; label: string; cls: string; ro?: boolean; kpiLabel?: string }
+const COCKPIT_CHIP_TPL: Record<string, ChipDef[]> = {
+  CO: [
+    { key: '', label: '全部待办', cls: 'pri' },
+    { key: 'PROMISE_DUE', label: '承诺到期', cls: 'dan' },
+    { key: 'RELEASE_WARN', label: '临近释放', cls: 'dan' },
+    { key: 'TICKET_RECEIPT', label: '工单待回', cls: 'war' },
+    { key: '_call', label: '今日通话', cls: 'inf', ro: true, kpiLabel: '今日通话' },
+    { key: '_repay', label: '本月回款', cls: 'suc', ro: true, kpiLabel: '本月回款' },
+  ],
+  PC: [
+    { key: '', label: '全部待办', cls: 'pri' },
+    { key: 'LEGAL_DELIVERY', label: '法务待送达', cls: 'dan' },
+    { key: 'TICKET_RECEIPT', label: '工单待回', cls: 'war' },
+    { key: 'REDUCE_APPROVE', label: '减免·线下', cls: 'war' },
+    { key: 'REPAY_MARK', label: '回款待标', cls: 'pri' },
+    { key: '_repay', label: '本月回款', cls: 'suc', ro: true, kpiLabel: '本月回款' },
+  ],
+}
+const cockpitChips = computed<Array<ChipDef & { n: string | number }>>(() => {
+  const tpl = COCKPIT_CHIP_TPL[auth.me?.role ?? ''] ?? []
+  const counts: Record<string, number> = {}
+  for (const t of allTodos.value) counts[t.category] = (counts[t.category] || 0) + 1
+  const kpiByLabel: Record<string, any> = {}
+  for (const k of (wb.value?.kpis ?? [])) kpiByLabel[k.label] = k
+  return tpl.map((c) => {
+    if (c.ro) {
+      const kpi = kpiByLabel[c.kpiLabel ?? '']
+      const n = kpi == null ? '—'
+        : String(c.kpiLabel).includes('回款') ? '¥' + ((kpi.value || 0) / 100).toLocaleString('zh-CN')
+          : String(kpi.value)
+      return { ...c, n }
+    }
+    return { ...c, n: c.key === '' ? allTodos.value.length : (counts[c.key] || 0) }
+  })
+})
 </script>
 
 <template>
@@ -289,17 +356,17 @@ function todoJump(td: any) {
     <!--  Cockpit：一线办案角色（CO/PC）· 今日驾驶舱                          -->
     <!-- ================================================================ -->
     <template v-if="wb?.layout === 'cockpit'">
-      <!-- ① KPI 可点即筛选条（BR-M4-20a · 驾驶舱 ck-chip） -->
-      <div v-if="wb?.kpis?.length" class="cockpit-kpis">
+      <!-- ① KPI 可点即筛选条（BR-M4-20a · 驾驶舱 ck-chip · 对标原型 COCKPIT_CHIPS 固定 6 项） -->
+      <div v-if="cockpitChips.length" class="cockpit-kpis">
         <div
-          v-for="k in wb.kpis"
-          :key="k.label"
+          v-for="c in cockpitChips"
+          :key="c.label"
           class="ck-chip"
-          :class="{ on: filterKey === k.filterKey, ro: !k.filterKey }"
-          @click="k.filterKey && (filterKey = filterKey === k.filterKey ? '' : k.filterKey)"
+          :class="[c.cls, { on: !c.ro && filterKey === c.key, ro: c.ro }]"
+          @click="!c.ro && (filterKey = filterKey === c.key ? '' : c.key)"
         >
-          <div class="n">{{ k.value }}</div>
-          <div class="l">{{ k.label }}</div>
+          <div class="n">{{ c.n }}</div>
+          <div class="l">{{ c.label }}</div>
         </div>
       </div>
 
@@ -344,53 +411,22 @@ function todoJump(td: any) {
           </div>
         </div>
 
-        <!-- 右：选中→案件预览（一键进三栏）；未选→今日概览 -->
+        <!-- 右：选中→内嵌完整三栏案件详情（缩小版，对标原型 <case-three-col>）；未选→今日概览 -->
         <div class="cp-detail" :class="{ embed: cockpitId }">
-          <!-- 已选：轻量案件预览 -->
+          <!-- 已选：内嵌三栏，与 /cases/:id 整页同一组件，仅头部条 + 完成下一条/全屏 是工作台专属外壳 -->
           <div v-if="cockpitId" class="cp-embed">
             <div class="cp-embed-h">
               <div class="t">
-                {{ cpCase?.ownerName || cpTitle }}
-                <template v-if="cpCase?.room"> · {{ cpCase.room }}</template>
-                <span v-if="cpCase?.status" class="tag" :class="caseStatusTag(cpCase.status)" :title="cpCase.status">{{ caseStatusLabel(cpCase.status) }}</span>
+                {{ cpHeaderCase?.ownerName || cpTitle }}
+                <template v-if="cpHeaderCase?.room"> · {{ cpHeaderCase.room }}</template>
+                <span v-if="cpHeaderCase?.status" class="tag" :class="caseStatusTag(cpHeaderCase.status)" :title="cpHeaderCase.status">{{ caseStatusLabel(cpHeaderCase.status) }}</span>
               </div>
               <div class="ops">
+                <button class="btn df sm" @click="doneNext()">完成 · 下一条 ↓</button>
                 <button class="btn pl sm" @click="fullScreen()">全屏 ⤢</button>
               </div>
             </div>
-
-            <div v-if="cpLoading" class="note" style="padding:24px 0;text-align:center">加载案件预览中…</div>
-            <template v-else-if="cpDetail">
-              <div class="portrait-top" style="margin-bottom:14px">
-                <div class="portrait-av" style="background:var(--primary);width:46px;height:46px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:600;flex:none">{{ cpInitial }}</div>
-                <div class="portrait-id" style="flex:1">
-                  <div class="nm">{{ cpCase?.ownerName || '—' }}</div>
-                  <div class="sub">{{ cpCase?.room || '—' }} · 户号 {{ cpCase?.acctNo || '—' }}</div>
-                </div>
-                <div style="text-align:right">
-                  <div class="num" style="font-size:20px;font-weight:700;color:var(--danger)">{{ yuan(cpCase?.dueCents) }}</div>
-                  <div class="note" style="margin:0">应收欠费</div>
-                </div>
-              </div>
-              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
-                <span v-if="cpCase?.pool" class="tag inf">{{ cpCase.pool }}</span>
-                <span v-if="cpCase?.redacted" class="tag inf">已脱敏</span>
-                <span v-if="cpCase?.reduceAfterCents != null && cpCase.reduceAfterCents !== cpCase.dueCents" class="tag war">减免后 {{ yuan(cpCase.reduceAfterCents) }}</span>
-              </div>
-
-              <div class="sec-title">最近动态</div>
-              <div class="tl" v-if="cpTimeline.length">
-                <div class="e" v-for="ev in cpTimeline" :key="ev.id">
-                  <span class="tag" :class="tlTag(ev.type)" :title="ev.type">{{ activityTypeLabel(ev.type) }}</span>
-                  {{ ev.content }}
-                  <b style="float:right;color:var(--ph);font-weight:400">{{ String(ev.createdAt || '').slice(0, 16).replace('T', ' ') }}</b>
-                </div>
-              </div>
-              <div v-else class="note">暂无事件。</div>
-
-              <button class="btn pl cp-enter" style="width:100%;margin-top:18px" @click="fullScreen()">进案件作业 →</button>
-            </template>
-            <div v-else class="note" style="padding:24px 0;text-align:center">案件预览加载失败，可点「全屏 ⤢」进入。</div>
+            <CaseThreeColumn :case-id="cockpitId" @loaded="onCaseLoaded" />
           </div>
 
           <!-- 未选：今日概览 -->
@@ -562,33 +598,6 @@ function todoJump(td: any) {
 
     <!-- 加载中占位（wb 尚未返回） -->
     <div v-else class="note" style="text-align:center;padding:48px 0">加载工作台数据中…</div>
-
-    <!-- ③ 当前主体（契约 GET /me）— 所有角色共用 -->
-    <div v-if="wb" class="card">
-      <div class="card-h">
-        <div class="t"><span class="bar"></span>当前主体</div>
-        <div class="ops"><span class="note" style="margin:0">契约 GET /me</span></div>
-      </div>
-      <div class="desc">
-        <div class="r"><span class="k">账号 ID</span><span class="v">{{ me.accountId }}</span></div>
-        <div class="r"><span class="k">姓名</span><span class="v">{{ me.name }}</span></div>
-        <div class="r">
-          <span class="k">角色</span>
-          <span class="v">{{ me.role }}（工作台 {{ wb?.layout === 'cockpit' ? '今日驾驶舱' : '仪表盘' }}）</span>
-        </div>
-        <div class="r"><span class="k">组织</span><span class="v">{{ me.org?.name }}（<span :title="me.org?.type">{{ orgTypeLabel(me.org?.type) }}</span>）</span></div>
-        <div class="r">
-          <span class="k">数据范围</span>
-          <span class="v">{{ me.dataScope ? JSON.stringify(me.dataScope) : 'platform 全量（dataScope=null）' }}</span>
-        </div>
-        <div class="r" style="border-bottom:none">
-          <span class="k">权限点</span>
-          <span class="v" style="display:flex;flex-wrap:wrap;gap:6px">
-            <span v-for="p in me.permissions" :key="p" class="tag inf" :title="p">{{ permLabel(p) }}</span>
-          </span>
-        </div>
-      </div>
-    </div>
   </div>
   <div v-else class="note" style="text-align:center;padding:48px 0">加载主体中…</div>
 </template>

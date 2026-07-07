@@ -68,11 +68,20 @@ select.inp{min-width:120px;cursor:pointer;}
 .toolbar{display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;}
 
 /* ===== 表格 ===== */
-table{width:100%;border-collapse:collapse;font-size:14px;background:#fff;}
+/* 列宽自适应：table-layout:auto 按内容分配；短语义单元格(数字/标签/操作)禁止折行，
+   长文本列自然换行但中文按词断(keep-all)，避免"三两个字一行"的挤压怪相。 */
+table{width:100%;border-collapse:collapse;font-size:14px;background:#fff;table-layout:auto;}
 th{background:#fafafa;color:#515a6e;font-weight:600;text-align:left;padding:12px 14px;border-bottom:1px solid var(--bd);white-space:nowrap;}
-td{padding:12px 14px;border-bottom:1px solid var(--bd);color:var(--reg);}
+td{padding:12px 14px;border-bottom:1px solid var(--bd);color:var(--reg);word-break:keep-all;overflow-wrap:break-word;}
 tr:hover td{background:#f5f9ff;}
-td .btn.txt{margin-right:4px;}
+td.num,th.num{white-space:nowrap;}
+td .tag{white-space:nowrap;}
+/* 操作列：含文字按钮的单元格不折行，按钮逐个成胶囊 */
+td:has(> .btn.txt){white-space:nowrap;}
+/* 操作按钮底色胶囊（仅表格内）：底色随按钮字色自动配浅色——主色→浅蓝、危险→浅红，几个操作一目了然 */
+td .btn.txt{background:color-mix(in srgb, currentColor 9%, transparent);border-radius:4px;padding:4px 10px;margin:1px 6px 1px 0;white-space:nowrap;display:inline-block;line-height:1.5;}
+td .btn.txt:last-child{margin-right:0;}
+td .btn.txt:hover{background:color-mix(in srgb, currentColor 16%, transparent);}
 .num{font-variant-numeric:tabular-nums;}
 .row-click{cursor:pointer;}
 
@@ -133,11 +142,16 @@ td .btn.txt{margin-right:4px;}
 .hint-inf{font-size:12px;color:#7e8896;margin-top:6px;line-height:1.7;}
 
 /* ===== 聊天气泡（转写） ===== */
-/* 微信式：自己(催收/协调员)在右·绿色；业主在左·白色 */
+/* 微信式自适应：气泡宽度随文本内容，上限=容器 72%（约每行 28~30 汉字），短句一行、长句到上限换行。
+   宽度上限设在中间包裹层（flex item），气泡本身 fit-content——避免「% max-width 挂在收缩容器上」
+   造成的 min-content 塌缩（气泡被压到三五个字一行）。 */
 .chat .row{display:flex;margin:6px 0;}
 .chat .row.me{justify-content:flex-end;}
 .chat .row.them{justify-content:flex-start;}
-.chat .bub{max-width:72%;padding:8px 12px;border-radius:8px;font-size:13px;line-height:1.6;}
+.chat .row>div{max-width:72%;min-width:0;display:flex;flex-direction:column;}
+.chat .row.me>div{align-items:flex-end;}
+.chat .row.them>div{align-items:flex-start;}
+.chat .bub{width:fit-content;max-width:100%;padding:8px 12px;border-radius:8px;font-size:13px;line-height:1.6;word-break:break-word;overflow-wrap:anywhere;text-align:left;}
 .chat .me .bub{background:#95ec69;}
 .chat .them .bub{background:#fff;border:1px solid var(--bd);}
 .chat .meta{font-size:11px;color:var(--ph);margin-top:2px;}

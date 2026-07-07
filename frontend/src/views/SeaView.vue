@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
@@ -7,6 +7,7 @@ import DsDrawer from '../components/DsDrawer.vue'
 
 // M3 公海：GET /sea(SeaCase 含竞争态/来源徽标/正在查看N人)。动作按 /me 权限点门控(FE authz)。
 const auth = useAuth()
+const isCO = computed(() => auth.me?.role === 'CO')
 const items = ref<any[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -175,16 +176,16 @@ const evTag = (ev: string) => EV_TAG[ev] ?? 'inf'
   <!-- 公海列表 -->
   <div class="card">
     <div class="card-h">
-      <div class="t"><span class="bar"></span>公海</div>
+      <div class="t"><span class="bar"></span>案件公海</div>
       <div class="ops"><span class="note" style="margin:0">GET /sea · 共 {{ total }} · 动作按 /me 权限门控</span></div>
     </div>
 
-    <!-- 池筛选分段（/sea 必填 pool） -->
+    <!-- 池筛选分段（/sea 必填 pool · CO 仅见服务商公海+开放抢单池） -->
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
       <span class="segctrl">
-        <span :class="{ on: pool === 'platform' }" @click="pool = 'platform'; load()">平台公海</span>
         <span :class="{ on: pool === 'provider' }" @click="pool = 'provider'; load()">服务商公海</span>
         <span :class="{ on: pool === 'open' }" @click="pool = 'open'; load()">开放抢单池</span>
+        <span v-if="!isCO" :class="{ on: pool === 'platform' }" @click="pool = 'platform'; load()">平台公海</span>
       </span>
     </div>
 

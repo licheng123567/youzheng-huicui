@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { callRecStatusLabel } from '../constants/enums'
+import AiReviewPanel from '../components/AiReviewPanel.vue'
 
 // US-M4-12 / BR-M4-22 通话记录查询：GET /recordings 全过滤+分页，点开行进 CallRecordView(AI 复盘/详情)。
 // 可见范围由后端 range 裁剪；结案后 phone 由后端脱敏为 '***'，前端直显。
@@ -58,10 +59,13 @@ function reset() {
   page.value = 1
   load()
 }
-// 点开通话 → 复用 CallRecordView 详情/AI 复盘（BR-M5-04a）。无 caseId 不可跳。
+// AI 复盘：统一走右侧复盘面板（AiReviewPanel·对标原型 .reviewpanel），不再整页跳转（BR-M5-04a）。
+const reviewOpen = ref(false)
+const reviewRow = ref<any>(null)
 function openDetail(row: any) {
-  if (!row?.caseId) { ElMessage.warning('该记录无关联案件'); return }
-  router.push(`/cases/${row.caseId}/call/${row.id}`)
+  if (row?.status !== 'READY') { ElMessage.info('录音尚未解析完成（' + callRecStatusLabel(row?.status) + '），暂无复盘'); return }
+  reviewRow.value = row
+  reviewOpen.value = true
 }
 
 onMounted(load)
@@ -74,73 +78,51 @@ onMounted(load)
       <div class="ops"><span class="note" style="margin:0">GET /recordings · 共 {{ total }} · 点行进 AI 复盘/详情</span></div>
     </div>
 
-    <!-- 筛选栏：对齐后端 8 参数（结案后号码由后端脱敏为 ***，前端直显） -->
-    <div class="search" style="margin-bottom:14px">
-      <div class="fi">
-        <span>电话</span>
-        <input class="inp" v-model="filters.phone" placeholder="号码" style="min-width:140px" @keyup.enter="search" />
-      </div>
-      <div class="fi">
-        <span>房号</span>
-        <input class="inp" v-model="filters.room" placeholder="房号" style="min-width:120px" @keyup.enter="search" />
-      </div>
-      <div class="fi">
-        <span>案件</span>
-        <input class="inp" v-model="filters.caseId" placeholder="案件 ID" style="min-width:120px" @keyup.enter="search" />
-      </div>
-      <div class="fi">
-        <span>项目</span>
-        <input class="inp" v-model="filters.projectId" placeholder="项目 ID" style="min-width:120px" @keyup.enter="search" />
-      </div>
-      <div class="fi">
-        <span>批次</span>
-        <input class="inp" v-model="filters.batchId" placeholder="批次 ID" style="min-width:120px" @keyup.enter="search" />
-      </div>
-      <div class="fi">
-        <span>催收员</span>
-        <input class="inp" v-model="filters.collectorId" placeholder="催收员 ID" style="min-width:120px" @keyup.enter="search" />
-      </div>
-      <!-- 日期选择器保留 EL（已全局主题桥接） -->
-      <div class="fi">
-        <span>起</span>
-        <el-date-picker v-model="filters.from" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss[Z]" style="width:190px" placeholder="开始时间" />
-      </div>
-      <div class="fi">
-        <span>止</span>
-        <el-date-picker v-model="filters.to" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss[Z]" style="width:190px" placeholder="结束时间" />
-      </div>
-      <div class="fi">
-        <button class="btn" @click="search">查询</button>
-        <button class="btn df" @click="reset">重置</button>
-      </div>
+    <!-- 筛选栏：对齐高保真原型 -->
+    <div class="toolbar" style="margin-bottom:10px">
+      <input class="inp" v-model="filters.phone" placeholder="搜索 业主 / 房号 / 电话" aria-label="搜索" style="min-width:180px" @keyup.enter="search">
+      <input class="inp" v-model="filters.projectId" placeholder="项目 ID" aria-label="项目" style="min-width:120px">
+      <input class="inp" v-model="filters.batchId" placeholder="批次 ID" aria-label="批次" style="min-width:120px">
+      <el-date-picker v-model="filters.from" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss[Z]" style="width:190px" placeholder="开始时间" />
+      <span class="note" style="margin:0">~</span>
+      <el-date-picker v-model="filters.to" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss[Z]" style="width:190px" placeholder="结束时间" />
+      <button class="btn df sm" @click="reset">重置</button>
     </div>
 
     <table v-loading="loading">
       <thead>
         <tr>
-          <th style="width:120px">录音 ID</th>
-          <th style="width:120px">案件</th>
-          <th style="width:90px">来源</th>
-          <th style="width:120px">状态</th>
-          <th style="width:180px">录制时间</th>
-          <th style="width:90px">时长</th>
-          <th style="min-width:120px">号码</th>
-          <th style="width:130px">操作</th>
+          <th style="width:170px">通话时间</th>
+          <th style="min-width:80px">业主</th>
+          <th style="width:80px">房号</th>
+          <th style="min-width:100px">项目</th>
+          <th style="min-width:100px">批次</th>
+          <th style="min-width:110px">号码</th>
+          <th style="width:70px">时长</th>
+          <th style="width:80px">结果</th>
+          <th style="width:150px">操作</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="row in items" :key="row.id" class="row-click" @click="openDetail(row)">
-          <td>{{ row.id }}</td>
-          <td>{{ row.caseId ?? '—' }}</td>
-          <td>{{ sourceName(row.source) }}</td>
-          <td><span class="tag" :class="statusTag(row.status)" :title="row.status">{{ callRecStatusLabel(row.status) }}</span></td>
-          <td>{{ row.recordedAt ?? '—' }}</td>
-          <td class="num">{{ fmtDur(row.durationSec) }}</td>
+          <td class="num">{{ row.recordedAt ? String(row.recordedAt).slice(0, 16).replace('T', ' ') : '—' }}</td>
+          <td>{{ row.ownerName ?? '—' }}</td>
+          <td>{{ row.room ?? '—' }}</td>
+          <td>{{ row.projectName ?? '—' }}</td>
+          <td>{{ row.batchCode ?? '—' }}</td>
           <td>{{ row.phone ?? '—' }}</td>
-          <td><button class="btn txt" @click.stop="openDetail(row)">AI 复盘/详情</button></td>
+          <td class="num">{{ fmtDur(row.durationSec) }}</td>
+          <td><span class="tag" :class="statusTag(row.status)" :title="row.status">{{ callRecStatusLabel(row.status) }}</span></td>
+          <td @click.stop>
+            <button class="btn txt" @click="openDetail(row)">AI 复盘</button>
+            <button v-if="row.caseId" class="btn txt" @click="router.push('/cases/' + row.caseId)">进案件</button>
+          </td>
         </tr>
         <tr v-if="!loading && !items.length">
-          <td colspan="8" style="text-align:center;color:var(--sec);padding:32px 0">暂无数据</td>
+          <td colspan="9" style="text-align:center;color:var(--ph);padding:40px 0">
+            <div style="font-size:36px">📞</div>
+            <div class="note" style="margin-top:8px">无匹配的通话记录。</div>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -152,4 +134,13 @@ onMounted(load)
       <div class="pg" @click="page * size < total && (page++, load())">›</div>
     </div>
   </div>
+
+  <!-- AI 复盘面板（统一布局：左对话记录 / 右小结+结果标记+风险+建议） -->
+  <AiReviewPanel
+    v-model:open="reviewOpen"
+    :recording-id="String(reviewRow?.id ?? '')"
+    :case-id="reviewRow?.caseId ? String(reviewRow.caseId) : undefined"
+    :owner-name="reviewRow?.ownerName"
+    :room="reviewRow?.room"
+  />
 </template>

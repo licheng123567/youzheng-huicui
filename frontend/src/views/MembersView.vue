@@ -8,10 +8,9 @@ import { permLabel } from '../constants/permissions'
 import { orgTypeLabel, statusLabel } from '../constants/enums'
 import DsDrawer from '../components/DsDrawer.vue'
 
-// 成员管理/督导(M1/M10·member.manage)：本组织成员 CRUD/停用启用/重置密码 + 督导记录。
+// 成员管理(M1·member.manage)：本组织成员 CRUD/停用启用/重置密码。督导为平台功能，PL/PC/VL 不涉及。
 const auth = useAuth()
 const members = ref<any[]>([])
-const sup = ref<any[]>([])
 const orgs = ref<any[]>([])
 const isPlatform = () => auth.has('org.manage')
 
@@ -32,8 +31,6 @@ const myPermissions = computed<string[]>(() => (auth.me as any)?.permissions ?? 
 async function load() {
   const m = await api.GET('/members', { params: { query: { page: 1, size: 50 } } as any })
   members.value = (m.data as any)?.items ?? []
-  const s = await api.GET('/members/supervision', { params: { query: { page: 1, size: 30 } } as any })
-  sup.value = (s.data as any)?.items ?? []
   if (isPlatform()) orgs.value = ((await api.GET('/orgs', { params: { query: { page: 1, size: 50 } } as any })).data as any)?.items ?? []
 }
 
@@ -163,22 +160,13 @@ async function submitReset() {
     ElMessage.success('已重置凭据')
   }
 }
-// 督导
-const sDlg = ref(false)
-const sForm = ref<any>({ id: '', name: '', action: 'REMIND', note: '' })
-function openSup(row: any) { sForm.value = { id: row.id, name: row.name, action: 'REMIND', note: '' }; sDlg.value = true }
-async function submitSup() {
-  const { error } = await api.POST('/members/{id}/supervision-actions', { params: { path: { id: sForm.value.id } }, body: { action: sForm.value.action, note: sForm.value.note } as any })
-  if (error) { ElMessage.error('督导记录失败：' + ((error as any)?.message ?? '')); return }
-  ElMessage.success('督导已记录'); sDlg.value = false; load()
-}
 onMounted(load)
 </script>
 
 <template>
   <div class="card">
     <div class="card-h">
-      <div class="t"><span class="bar"></span>成员管理 / 督导</div>
+      <div class="t"><span class="bar"></span>成员管理</div>
       <div class="ops">
         <span class="note" style="margin:0">member.manage · 仅本组织成员，平台不可跨组织 BR-M1-04a</span>
         <button v-if="auth.has('member.manage')" class="btn sm" @click="openCreate">+ 新增成员</button>
@@ -210,34 +198,10 @@ onMounted(load)
             <button class="btn txt" :disabled="!row.manageable" @click="openEdit(row)">编辑</button>
             <button class="btn txt" :disabled="row.isOwner || !row.manageable" @click="toggle(row)">{{ row.status==='ACTIVE'?'停用':'启用' }}</button>
             <button class="btn txt" :disabled="!row.manageable" @click="openReset(row)">重置密码</button>
-            <button class="btn txt" :disabled="!row.manageable" @click="openSup(row)">督导</button>
           </td>
         </tr>
         <tr v-if="!members.length">
           <td :colspan="auth.has('member.manage') ? 6 : 5" style="text-align:center;color:var(--sec);padding:32px 0">暂无成员</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <div class="sec-title">督导记录（GET /members/supervision · 写审计 BR-M10-10）</div>
-    <table>
-      <thead>
-        <tr>
-          <th>成员</th>
-          <th style="width:110px">动作</th>
-          <th>说明</th>
-          <th style="width:180px">时间</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="(row, i) in sup" :key="i">
-          <td>{{ row.memberName || '—' }}</td>
-          <td><span class="tag inf">{{ row.action }}</span></td>
-          <td>{{ row.note || '—' }}</td>
-          <td>{{ row.tm || '—' }}</td>
-        </tr>
-        <tr v-if="!sup.length">
-          <td colspan="4" style="text-align:center;color:var(--sec);padding:32px 0">暂无督导记录</td>
         </tr>
       </tbody>
     </table>
@@ -327,7 +291,7 @@ onMounted(load)
             <el-checkbox v-for="p in myPermissions" :key="p" :label="p" style="margin-right:0" :title="p">{{ permLabel(p) }}</el-checkbox>
           </el-checkbox-group>
         </el-form-item>
-        <el-form-item label="数据范围">
+        <el-form-item v-if="isPlatform()" label="数据范围">
           <div style="font-size:12px;color:#999;margin-bottom:4px">dataScope（PATCH，ID 逗号分隔，留空表示不限制）</div>
           <el-form-item label="小区 areas" label-width="100px"><el-input v-model="eForm.dataScopeAreas" placeholder="area-id,... 留空=全部" /></el-form-item>
           <el-form-item label="物业 properties" label-width="110px"><el-input v-model="eForm.dataScopeProperties" placeholder="org-id,... 留空=全部" /></el-form-item>
@@ -352,12 +316,5 @@ onMounted(load)
       <template #footer><el-button @click="pDlg=false">取消</el-button><el-button type="primary" @click="submitReset">重置并获取 Token</el-button></template>
     </DsDrawer>
 
-    <DsDrawer v-model="sDlg" :title="`督导 · ${sForm.name}`" :width="420">
-      <el-form label-width="80px">
-        <el-form-item label="动作"><el-select v-model="sForm.action"><el-option label="提醒 REMIND" value="REMIND" /><el-option label="谈话 TALK" value="TALK" /><el-option label="培训 TRAINING" value="TRAINING" /><el-option label="记录 NOTE" value="NOTE" /></el-select></el-form-item>
-        <el-form-item label="说明"><el-input v-model="sForm.note" type="textarea" :rows="2" /></el-form-item>
-      </el-form>
-      <template #footer><el-button @click="sDlg=false">取消</el-button><el-button type="primary" @click="submitSup">记录</el-button></template>
-    </DsDrawer>
   </div>
 </template>

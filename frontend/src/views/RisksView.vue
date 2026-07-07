@@ -11,6 +11,9 @@ import DsDrawer from '../components/DsDrawer.vue'
 const auth = useAuth()
 const router = useRouter()
 const isPlatform = computed(() => ['SA', 'SE'].includes(auth.me?.role ?? ''))
+// 物业角色(PL/PC)：风险看板只「上报」不「处置」——对标原型 §质检 role==='PL'||'PC' 仅 escalate。
+// 处置(标记/转质检/通知)是服务商(VL)对本商催收员风险的动作；物业对催收员风险只上报平台。
+const isProperty = computed(() => ['PL', 'PC'].includes(auth.me?.role ?? ''))
 const risks = ref<any[]>([])
 const tasks = ref<any[]>([])
 const loading = ref(false)
@@ -100,7 +103,7 @@ onMounted(load)
             </template>
           </td>
           <td>
-            <button v-if="auth.has('qc.dispose')" class="btn txt" @click="openDispose(row)">处置</button>
+            <button v-if="auth.has('qc.dispose') && !isProperty" class="btn txt" @click="openDispose(row)">处置</button>
             <button v-if="auth.has('qc.escalate')" class="btn txt" @click="escalate(row)">上报</button>
             <button v-if="auth.has('qc.review')" class="btn txt" @click="openReview(row)">复核</button>
             <span v-if="row.reviewed" class="tag suc" style="margin-left:4px;font-size:11px" :title="row.reviewed">{{ riskVerdictLabel(row.reviewed) }}</span>

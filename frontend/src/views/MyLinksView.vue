@@ -1,57 +1,73 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
+import PayLinkCard from '../components/PayLinkCard.vue'
 
-// 我的缴费链接（PC/CO）。后端无 pay-links 列表端点，做成「缴费链接管理入口」：
-//  GET /cases（本范围分页）列表，每行可「发缴费链接」(POST /cases/{id}/pay-links {channel:'SMS'}) + 「进案件」。
+// 我的已发缴费链接跟踪（CO/PC），对标原型 §已发缴费链接 index.html:736-763。
+// 数据源：GET /me/pay-links（仅本人 created_by，服务端筛选+分页）。
 const router = useRouter()
 const items = ref<any[]>([])
 const total = ref(0)
 const loading = ref(false)
-const sending = ref<Record<string, boolean>>({}) // 行级发送中态，初始即初始化
+const sending = ref<Record<string, boolean>>({})
 const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
 
-const STATUS_NAME: Record<string, string> = {
-  PENDING_DISPATCH: '待派单', PROVIDER_SEA: '服务商公海', IN_PROGRESS: '催收中',
-  PROMISED: '已承诺', SETTLED: '已结清', WITHDRAWN: '已撤回', BAD_DEBT: '坏账', VOIDED: '已作废',
+const STATUS_LABEL: Record<string, string> = {
+  PENDING_VIEW: '待查看', VIEWED_UNPAID: '已读未缴', PAID: '已缴费', EXPIRED: '已过期',
 }
-const statusName = (s?: string) => STATUS_NAME[s ?? ''] ?? s ?? '—'
 const STATUS_TAG: Record<string, string> = {
-  SETTLED: 'suc', IN_PROGRESS: 'pri', PROMISED: 'war',
-  PENDING_DISPATCH: 'inf', PROVIDER_SEA: 'inf', WITHDRAWN: 'inf', BAD_DEBT: 'dan', VOIDED: 'dan',
+  PAID: 'suc', EXPIRED: 'dan', VIEWED_UNPAID: 'war', PENDING_VIEW: 'inf',
 }
+const statusLabel = (s?: string) => STATUS_LABEL[s ?? ''] ?? s ?? '—'
 const statusTag = (s?: string) => STATUS_TAG[s ?? ''] ?? 'inf'
 
+const filter = reactive({ q: '', project: '', batch: '', status: '', from: '', to: '' })
 const page = ref(1)
 const size = ref(20)
+
+// 项目/批次筛选项：由已加载数据去重派生（无独立项目/批次清单端点权限假设）。
+const projectOptions = computed(() => Array.from(new Set(items.value.map((r) => r.project).filter(Boolean))))
+const batchOptions = computed(() => Array.from(new Set(items.value.map((r) => r.batch).filter(Boolean))))
 
 async function load() {
   loading.value = true
   const query: Record<string, any> = { page: page.value, size: size.value }
-  const { data, error } = await api.GET('/cases', { params: { query } as any })
+  if (filter.q.trim()) query.q = filter.q.trim()
+  if (filter.project) query.project = filter.project
+  if (filter.batch) query.batch = filter.batch
+  if (filter.status) query.status = filter.status
+  if (filter.from) query.from = filter.from
+  if (filter.to) query.to = filter.to
+  const { data, error } = await api.GET('/me/pay-links', { params: { query } as any })
   loading.value = false
   if (error) { ElMessage.error('加载失败'); return }
   items.value = (data as any)?.items ?? []
   total.value = (data as any)?.meta?.total ?? 0
 }
 
-// 发缴费链接（短信渠道）。行级防重入。
-async function sendLink(row: any) {
-  const id = String(row.id)
-  if (sending.value[id]) return
-  sending.value[id] = true
-  const { error } = await api.POST('/cases/{id}/pay-links', {
-    params: { path: { id } },
-    body: { channel: 'SMS' } as any,
-  } as any)
-  sending.value[id] = false
-  if (error) { ElMessage.error('发送失败'); return }
-  ElMessage.success('缴费链接已发起（短信）')
+function applyFilter() { page.value = 1; load() }
+function resetFilter() {
+  filter.q = ''; filter.project = ''; filter.batch = ''; filter.status = ''; filter.from = ''; filter.to = ''
+  applyFilter()
 }
 
 function goCase(id: string) { router.push('/cases/' + id) }
+
+async function resend(row: any) {
+  const id = String(row.id)
+  if (sending.value[id]) return
+  sending.value[id] = true
+  const { error } = await api.POST('/pay-links/{id}/resend', { params: { path: { id } } } as any)
+  sending.value[id] = false
+  if (error) { ElMessage.error('重发失败：' + ((error as any)?.message ?? '')); return }
+  ElMessage.success('已重发缴费链接')
+}
+
+// 行内展开：链接文本 + 二维码（可下载）+ 短信发送，交给经办人转交业主（H5 页 GET /pay/{token}）
+const expanded = ref<Record<string, boolean>>({})
+function toggleExpand(row: any) { const id = String(row.id); expanded.value[id] = !expanded.value[id] }
 
 function onPage(p: number) {
   if (p < 1 || p > pageCount.value || p === page.value) return
@@ -72,37 +88,62 @@ onMounted(load)
 <template>
   <div class="card">
     <div class="card-h">
-      <div class="t"><span class="bar"></span>我的缴费链接</div>
-      <div class="ops"><span class="note" style="margin:0">GET /cases · 按案件发起缴费链接</span></div>
+      <div class="t"><span class="bar"></span>已发缴费链接</div>
+      <div class="ops"><span class="note" style="margin:0">{{ items.length }}/{{ total }} 条</span></div>
     </div>
 
-    <div class="alert info">缴费链接按案件发起；集中列表（已发/状态/重发）待后端 GET /pay-links。</div>
+    <div class="toolbar" style="margin-bottom:10px">
+      <input class="inp" v-model="filter.q" placeholder="搜索 业主 / 房号" aria-label="搜索" @keyup.enter="applyFilter">
+      <select class="inp" v-model="filter.project" aria-label="项目筛选" @change="applyFilter">
+        <option value="">项目：全部</option>
+        <option v-for="p in projectOptions" :key="p" :value="p">{{ p }}</option>
+      </select>
+      <select class="inp" v-model="filter.batch" aria-label="批次筛选" @change="applyFilter">
+        <option value="">批次：全部</option>
+        <option v-for="b in batchOptions" :key="b" :value="b">{{ b }}</option>
+      </select>
+      <select class="inp" v-model="filter.status" aria-label="状态筛选" @change="applyFilter">
+        <option value="">状态：全部</option>
+        <option value="PENDING_VIEW">待查看</option>
+        <option value="VIEWED_UNPAID">已读未缴</option>
+        <option value="PAID">已缴费</option>
+        <option value="EXPIRED">已过期</option>
+      </select>
+      <input class="inp" type="date" v-model="filter.from" aria-label="发送起始" style="min-width:150px" @change="applyFilter">
+      <span class="note" style="margin:0">~</span>
+      <input class="inp" type="date" v-model="filter.to" aria-label="发送结束" style="min-width:150px" @change="applyFilter">
+      <button class="btn df sm" @click="resetFilter">重置</button>
+    </div>
 
-    <table v-loading="loading" style="margin-top:12px">
+    <table v-loading="loading">
       <thead>
         <tr>
-          <th style="width:100px">户号</th>
-          <th style="width:100px">业主</th>
-          <th style="width:90px">房号</th>
-          <th style="width:120px">欠费</th>
-          <th style="width:120px">状态</th>
-          <th style="width:200px">操作</th>
+          <th>发送时间</th><th>业主</th><th>房号</th><th>项目</th><th>批次</th><th>金额</th><th>渠道</th><th>状态</th><th style="width:170px">操作</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in items" :key="row.id">
-          <td>{{ row.acctNo || '—' }}</td>
-          <td>{{ row.ownerName || '—' }}</td>
-          <td>{{ row.room || '—' }}</td>
-          <td class="num">{{ yuan(row.dueCents) }}</td>
-          <td><span class="tag" :class="statusTag(row.status)">{{ statusName(row.status) }}</span></td>
-          <td>
-            <button class="btn" :disabled="sending[String(row.id)]" @click="sendLink(row)">发缴费链接</button>
-            <button class="btn df" style="margin-left:6px" @click="goCase(String(row.id))">进案件</button>
-          </td>
-        </tr>
+        <template v-for="row in items" :key="row.id">
+          <tr>
+            <td>{{ (row.sentAt || '').slice(0, 16).replace('T', ' ') }}</td>
+            <td>{{ row.ownerName || '—' }}</td>
+            <td>{{ row.room || '—' }}</td>
+            <td>{{ row.project || '—' }}</td>
+            <td>{{ row.batch || '—' }}</td>
+            <td class="num">{{ yuan(row.amountCents) }}</td>
+            <td>{{ row.channel === 'SMS' ? '短信' : '微信转发' }}</td>
+            <td><span class="tag" :class="statusTag(row.status)">{{ statusLabel(row.status) }}</span></td>
+            <td>
+              <a class="btn txt" @click="goCase(String(row.caseId))">进入案件</a>
+              <a v-if="row.status !== 'PAID'" class="btn txt" :class="{ df: sending[String(row.id)] }" @click="resend(row)">重发</a>
+              <a class="btn txt" @click="toggleExpand(row)">{{ expanded[String(row.id)] ? '收起' : '链接/二维码' }}</a>
+            </td>
+          </tr>
+          <tr v-if="expanded[String(row.id)]">
+            <td colspan="9" style="background:var(--bg)"><PayLinkCard :token="row.token" @send-sms="resend(row)" /></td>
+          </tr>
+        </template>
         <tr v-if="!loading && !items.length">
-          <td colspan="6" style="text-align:center;color:var(--sec);padding:32px 0">暂无案件</td>
+          <td colspan="9" style="text-align:center;color:var(--sec);padding:32px 0">暂无已发送的缴费链接</td>
         </tr>
       </tbody>
     </table>

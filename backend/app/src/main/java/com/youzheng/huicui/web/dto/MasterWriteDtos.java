@@ -21,10 +21,10 @@ public final class MasterWriteDtos {
     /** 契约 BatchImport：projectId/commInRate(Rate 0-1)/rows[]。 */
     public record BatchImportInput(String projectId, BigDecimal commInRate, List<CaseImportRow> rows) {}
 
-    /** 契约 CaseImportRow：必填户号/姓名/手机/房号/应收/欠费周期；诉讼要素可后补。 */
+    /** 契约 CaseImportRow：必填户号/姓名/手机/房号/应收/欠费周期；滞纳金拆分与诉讼要素可选。 */
     public record CaseImportRow(
             String acctNo, String ownerName, String phone, String room,
-            Long dueCents, String arrearPeriod, ImportLitigation litigation) {}
+            Long dueCents, Long penaltyCents, String arrearPeriod, ImportLitigation litigation) {}
 
     /** 契约 CaseImportRow.litigation（{idCard,addr}）。 */
     public record ImportLitigation(String idCard, String addr) {}
@@ -37,10 +37,10 @@ public final class MasterWriteDtos {
     public record ImportError(int row, String field, String code, String message) {}
 
     // ── 手工逐条入案 createCase ───────────────────────────────────────────
-    /** 契约 ManualCaseInput：复用导入字段 + arrearagePeriods[] + 可选 LitigationFields。 */
+    /** 契约 ManualCaseInput：复用导入字段 + arrearagePeriods[] + 可选滞纳金拆分/LitigationFields。 */
     public record ManualCaseInput(
             String acctNo, String ownerName, String phone, String room,
-            Long dueCents, List<String> arrearagePeriods, LitigationFields litigationFields) {}
+            Long dueCents, Long penaltyCents, List<String> arrearagePeriods, LitigationFields litigationFields) {}
 
     /** 契约 LitigationFields：{idCard,buildingArea,mailingAddr,contractNo}。 */
     public record LitigationFields(String idCard, String buildingArea, String mailingAddr, String contractNo) {}

@@ -25,7 +25,7 @@ const KEY2PATH: Record<string, string | null> = {
   projects: '/projects', cases: '/cases', myCases: '/cases', callLog: '/call-records',
   qc: '/risks', evidence: '/evidence',
   // 结算三线已拆独立页（收佣对账/付佣对账/内催佣金）
-  reconIn: '/settlement', reconOut: '/settlement-out', coCommission: '/co-commission', mySettle: '/my-settle',
+  reconIn: '/settlement', reconOut: '/settlement-out', coCommission: '/co-commission',
   // 计费三项已拆（用量/充值/短信）
   billing: '/billing', recharge: '/recharge', sms: '/sms',
   members: '/members', orgMgmt: '/org-mgmt', settings: '/settings', playbookLib: '/script-lib',
@@ -34,10 +34,10 @@ const KEY2PATH: Record<string, string | null> = {
   legal: '/legal', myStats: '/my-stats', myLinks: '/my-links',
 }
 const PATH2LABEL: Record<string, string> = {
-  '/dashboard': '工作台', '/batches': '撮合派单', '/sea': '公海', '/projects': '项目管理',
+  '/dashboard': '工作台', '/batches': '撮合派单', '/sea': '案件公海', '/projects': '项目管理',
   '/cases': '案件管理', '/call-records': '通话记录', '/risks': '质检/风控', '/evidence': '存证管理',
   '/settlement': '收佣对账', '/settlement-out': '付佣对账', '/co-commission': '催收员佣金',
-  '/billing': '计费明细', '/recharge': '充值中心', '/sms': '短信通道', '/my-settle': '我的结算',
+  '/billing': '计费明细', '/recharge': '充值中心', '/sms': '短信通道',
   '/members': '成员管理', '/org-mgmt': '组织管理', '/settings': '参数配置', '/script-lib': '平台话术库',
   '/reports': '经营报表', '/audit-log': '操作日志', '/notifications': '消息中心',
   '/legal': '送达管理', '/my-stats': '我的业绩', '/my-links': '缴费链接',
@@ -49,7 +49,15 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
   PL: [{ group: '业务' }, 'workbench', 'projects', 'cases', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'billing', 'recharge', 'sms', { group: '管理' }, 'reports', 'members', 'audit', { group: '消息' }, 'inbox'],
   PC: [{ group: '业务' }, 'workbench', 'cases', 'callLog', 'myLinks', { group: '项目' }, 'projects', { group: '能力' }, 'qc', 'legal', 'evidence', { group: '财务' }, 'reconIn', { group: '我的' }, 'myStats', { group: '消息' }, 'inbox'],
   VL: [{ group: '业务' }, 'workbench', 'providerSea', 'projects', 'qc', 'cases', { group: '财务' }, 'reconOut', 'coCommission', 'recharge', 'billing', { group: '管理' }, 'reports', 'members', 'audit', { group: '消息' }, 'inbox'],
-  CO: [{ group: '业务' }, 'workbench', 'myCases', 'providerSea', 'callLog', 'myLinks', { group: '我的' }, 'myStats', 'mySettle', { group: '消息' }, 'inbox'],
+  CO: [{ group: '业务' }, 'workbench', 'myCases', 'providerSea', 'callLog', 'myLinks', { group: '我的' }, 'myStats', { group: '消息' }, 'inbox'],
+}
+// 对账菜单标题按角色视角相对命名（对标原型 navLabel，index.html §navLabel）：
+// 物业(PL/PC)=付佣(物业付平台)、服务商(VL)的 reconOut=收佣(服务商收平台)、平台用收/付佣本名。
+function navLabel(path: string, role: string): string {
+  const base = PATH2LABEL[path]
+  if (path === '/settlement' && (role === 'PL' || role === 'PC')) return '付佣对账'
+  if (path === '/settlement-out' && role === 'VL') return '收佣对账'
+  return base
 }
 // 解析角色 nav → 分组菜单（按路由去重，保序）。未知角色兜底显示全部路由。
 const groups = computed(() => {
@@ -64,7 +72,7 @@ const groups = computed(() => {
     const path = KEY2PATH[it]
     if (!path || seen.has(path) || !cur) continue
     seen.add(path)
-    cur.items.push({ path, label: PATH2LABEL[path] })
+    cur.items.push({ path, label: navLabel(path, role) })
   }
   return out.filter((g) => g.items.length)
 })
@@ -89,7 +97,6 @@ const ICONS: Record<string, string> = {
   '/members': 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M23 21v-2a4 4 0 0 0-3-3.9 M16 3.1a4 4 0 0 1 0 7.8',
   '/settlement-out': 'M12 1v22 M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6',
   '/co-commission': 'M12 1v22 M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6',
-  '/my-settle': 'M12 1v22 M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6',
   '/recharge': 'M2 7h20v12H2z M2 11h20 M16 15h3',
   '/sms': 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
   '/org-mgmt': 'M3 21h18 M5 21V7l8-4v18 M19 21V11l-6-4 M9 9h.01 M9 13h.01 M9 17h.01',

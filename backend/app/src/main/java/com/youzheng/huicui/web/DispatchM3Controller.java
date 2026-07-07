@@ -62,6 +62,9 @@ public class DispatchM3Controller {
 
     public record OpenRateInput(BigDecimal openRate) {}
 
+    // 平台撮合定双佣入参：收佣(平台↔物业) + 付佣(平台↔服务商)，一处同设。
+    public record CommissionRatesInput(BigDecimal commInRate, BigDecimal payOutRate) {}
+
     // 单案再派入参（契约 /cases/{id}/redispatch requestBody：{providerId}）。
     public record RedispatchInput(String providerId) {}
 
@@ -310,6 +313,38 @@ public class DispatchM3Controller {
             throw new ApiException(BizError.NOT_FOUND_404, "批次不存在: " + id);
         }
         caseState.audit(s, "batch.open-rate", batchId, "openRate=" + in.openRate(), null, null);
+        return ok();
+    }
+
+    // ── [3'] PUT /batches/{id}/commission-rates ──────────────────────────────
+    // 平台撮合层「一处同定双方佣金」：收佣(平台↔物业) + 付佣(平台↔服务商)，平台最终决定权。
+    // 置 comm_in_confirmed=true（物业提案→平台确认）。防倒挂 BR-M9-18：付佣≤收佣（平台毛利≥0）。
+    @PutMapping("/batches/{id}/commission-rates")
+    @RequirePermission("case.dispatch")
+    @Transactional
+    public Map<String, Object> setBatchCommissionRates(@PathVariable String id, @RequestBody(required = false) CommissionRatesInput in) {
+        CurrentSubject s = requirePlatform();
+        long batchId = parseId(id, "批次");
+        if (in == null || in.commInRate() == null || in.payOutRate() == null) {
+            throw new ApiException(BizError.VALIDATION_422, "commInRate 与 payOutRate 必填");
+        }
+        BigDecimal comm = in.commInRate(), pay = in.payOutRate();
+        if (comm.signum() < 0 || comm.compareTo(BigDecimal.ONE) > 0
+                || pay.signum() < 0 || pay.compareTo(BigDecimal.ONE) > 0) {
+            throw new ApiException(BizError.VALIDATION_422, "比例须为 0-1 分数");
+        }
+        // 防倒挂 BR-M9-18：付佣比例 > 收佣比例 → 平台亏损，拒绝。
+        if (pay.compareTo(comm) > 0) {
+            throw new ApiException(BizError.BIZ_PAYOUT_INVERT, "付佣比例不得大于收佣比例");
+        }
+        int n = jdbc.update(
+                "UPDATE batch SET comm_in_rate = ?, pay_out_rate = ?, comm_in_inherited = false,"
+                        + " comm_in_confirmed = true, updated_at = now() WHERE id = ?",
+                comm, pay, batchId);
+        if (n == 0) {
+            throw new ApiException(BizError.NOT_FOUND_404, "批次不存在: " + id);
+        }
+        caseState.audit(s, "batch.commission-rates", batchId, "commIn=" + comm + " payOut=" + pay, null, null);
         return ok();
     }
 

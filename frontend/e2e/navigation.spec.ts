@@ -5,7 +5,7 @@ import { loginAs } from './helpers'
 const SCREENS: { label: string; url: RegExp }[] = [
   { label: '项目', url: /\/projects/ },
   { label: '批次', url: /\/batches/ },
-  { label: '公海', url: /\/sea/ },
+  { label: '案件公海', url: /\/sea/ },
   { label: '案件', url: /\/cases/ },
   { label: '结算', url: /\/settlement/ },
   { label: '质检', url: /\/risks/ },

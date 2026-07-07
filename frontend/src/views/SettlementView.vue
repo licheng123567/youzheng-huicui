@@ -12,7 +12,7 @@ const auth = useAuth()
 const role = computed(() => auth.me?.role)
 // CO(催收员)不看组织级对账/支付申请单(US-M9-09 仅本人佣金只读)，只看「我的佣金」面板。
 const canViewPayReq = computed(() => role.value !== 'CO')
-const sides = computed(() => (role.value === 'PL' || role.value === 'PC') ? ['IN'] : (role.value === 'VL') ? ['OUT'] : ['IN', 'OUT'])
+const sides = computed<Array<'IN' | 'OUT'>>(() => (role.value === 'PL' || role.value === 'PC') ? ['IN'] : (role.value === 'VL') ? ['OUT'] : ['IN', 'OUT'])
 // 平台角色：SA/SE；服务商角色：VL/CO
 const isPlatform = computed(() => role.value === 'SA' || role.value === 'SE')
 const isProvider = computed(() => role.value === 'VL' || role.value === 'CO')
@@ -184,12 +184,13 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
 
    <template v-if="canViewPayReq">
     <div v-if="isReadonlyProperty" class="alert info" style="margin-top:0;margin-bottom:14px">
-      <b>只读视图：</b>物业仅可查看本物业收佣线(IN)对账与支付申请单，不可生成/确认/撤销。
+      <b>只读视图：</b>物业仅可查看本物业<b>付佣对账</b>（IN 线：物业 → 平台）与支付申请单，不可生成/确认/撤销。
     </div>
 
     <div class="toolbar">
       <span class="segctrl">
-        <span v-for="s in sides" :key="s" :class="{ on: side === s }" @click="side = s; load()">{{ s==='IN'?'收佣线(IN)':'付佣线(OUT)' }}</span>
+        <!-- 物业(PL/PC)视角 IN 线即付佣（物业付平台），对标原型 navLabel/§对账 relabel -->
+        <span v-for="s in sides" :key="s" :class="{ on: side === s }" @click="side = s; load()">{{ s==='IN'?(isReadonlyProperty?'付佣对账(IN)':'收佣线(IN)'):'付佣线(OUT)' }}</span>
       </span>
       <button v-if="canGenerate" class="btn sm" @click="openGenerate">勾选明细生成支付申请单</button>
     </div>

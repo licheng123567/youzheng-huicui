@@ -110,6 +110,9 @@ public class RecordingsM4Controller {
         // 地基期不跑 ASR：直接置 PARSING（BR-M4-01c 同链路），返 202。
         long recId = rec.insertRecording(caseId, collectorId, src, RecordingService.ST_PARSING, recAt, dur, phone);
 
+        // BR-M4-01b：存音频原始字节供回听（协调员/催收员）。存储失败不阻断上传主流程。
+        try { rec.storeAudio(recId, file.getBytes(), file.getContentType()); } catch (Exception ignore) { }
+
         // 同步写一条 activity(type=CALL, ref→录音)。
         rec.writeActivity(collectorId, caseId, "CALL", "通话录音上传", "call_recording", recId, "CALL");
 
@@ -161,6 +164,32 @@ public class RecordingsM4Controller {
         }
         boolean redact = redactPhoneForCase(s, snap.caseId());
         return rec.getDto(recId, redact);
+    }
+
+    // ── [3'] GET /recordings/{id}/audio  streamRecordingAudio ────────────────────
+    // 回听录音音频（BR-M4-01b）。二进制流，非 JSON 契约端点。
+    // 访问级别与 getRecording([3]) 一致：仅 case-actor 行级裁剪(caseVisible)，不额外要求 case.call——
+    // 凡能读该录音元数据/转写/AI 复盘的角色即能听音频（含 SA/SE/VL；跨租户不可见案件仍 403）。
+    // 无音频→404（种子/历史录音无字节；App 自动/手动上传后可回听）。
+    @GetMapping("/recordings/{id}/audio")
+    public ResponseEntity<byte[]> streamRecordingAudio(@PathVariable("id") String id) {
+        CurrentSubject s = SubjectContext.get();
+        long recId = parseId(id, "录音");
+        Long caseId = rec.caseIdOfRecording(recId);
+        if (caseId == null) {
+            throw new ApiException(BizError.NOT_FOUND_404, "录音不存在: " + id);
+        }
+        if (!rec.caseVisible(s, caseId)) {
+            throw new ApiException(BizError.PERM_403, "无权查看该录音");
+        }
+        Object[] audio = rec.loadAudio(recId);
+        if (audio == null) {
+            throw new ApiException(BizError.NOT_FOUND_404, "该录音暂无音频文件");
+        }
+        return ResponseEntity.ok()
+                .header("Content-Type", (String) audio[1])
+                .header("Cache-Control", "private, max-age=60")
+                .body((byte[]) audio[0]);
     }
 
     // ── [4] POST /recordings/{id}/reprocess  reprocessRecording ──────────────────
@@ -254,10 +283,11 @@ public class RecordingsM4Controller {
         List<Object> pageArgs = new ArrayList<>(args);
         pageArgs.add(pg.size);
         pageArgs.add(pg.offset);
-        // 选 cr.* + c.status（脱敏判定）；用带结案判定的 mapper 逐行脱敏。
+        // 选 cr.* + c 上下文（对齐高保真§通话记录表头：业主/房号/项目/批次）+ c.status（脱敏判定）
         boolean nonPlatformProperty = !(s.isPlatform() || "PROPERTY".equals(s.orgType()));
         List<CallRecordingDto> items = jdbc.query(
-                "SELECT cr.*, c.status AS case_status " + base + " ORDER BY cr.created_at DESC, cr.id DESC LIMIT ? OFFSET ?",
+                "SELECT cr.*, c.owner_name, c.room, p.name AS project_name, b.no AS batch_code, c.status AS case_status "
+                        + base + " ORDER BY cr.created_at DESC, cr.id DESC LIMIT ? OFFSET ?",
                 (rs, i) -> {
                     boolean redact = nonPlatformProperty && isClosed(rs.getString("case_status"));
                     return new CallRecordingDto(
@@ -272,7 +302,11 @@ public class RecordingsM4Controller {
                             redact ? "***" : rs.getString("phone"),
                             rs.getString("transcript"),
                             rs.getString("failure_code"),
-                            rs.getString("failure_message"));
+                            rs.getString("failure_message"),
+                            redact ? "***" : rs.getString("owner_name"),
+                            rs.getString("room"),
+                            rs.getString("project_name"),
+                            rs.getString("batch_code"));
                 },
                 pageArgs.toArray());
 

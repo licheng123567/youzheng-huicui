@@ -70,6 +70,17 @@ public class WorkbenchDispatchController {
                         + " ORDER BY t.handled_at DESC", (rs, i) -> new Todo("TICKET_RECEIPT", "LOW",
                             String.valueOf(rs.getLong("case_id")), "工单回执：" + rs.getString("owner_name"),
                             null, "ticket", String.valueOf(rs.getLong("id"))), me));
+
+                // ── CO 运营指标 KPI（BR-M4-20a，置于待办分类之前）──
+                // 持有案件
+                kpis.add(new Kpi("持有案件", safeInt(jdbc, "SELECT count(*) FROM \"case\" WHERE holder_id = ? AND closed_at IS NULL", me), null));
+                // 今日通话
+                kpis.add(new Kpi("今日通话", safeInt(jdbc, "SELECT count(*) FROM recording r JOIN \"case\" c ON c.id = r.case_id WHERE c.holder_id = ? AND r.created_at >= CURRENT_DATE", me), null));
+                // 本月回款(分)
+                kpis.add(new Kpi("本月回款", safeInt(jdbc, "SELECT coalesce(sum(rl.amount_cents),0) FROM repay_line rl JOIN \"case\" c ON c.id = rl.case_id WHERE c.holder_id = ? AND rl.paid_at >= date_trunc('month', CURRENT_DATE) AND rl.reversed = FALSE", me), null));
+                // 待跟进 = 有活跃待办的案件数（去重）
+                int pendingCount = (int) todos.stream().map(Todo::caseId).filter(java.util.Objects::nonNull).distinct().count();
+                kpis.add(new Kpi("待跟进", pendingCount, null));
             }
         } else if ("PC".equals(role)) {
             Long org = parseLong(s.orgId());
@@ -82,6 +93,11 @@ public class WorkbenchDispatchController {
                         + " ORDER BY t.created_at", (rs, i) -> new Todo("TICKET_RECEIPT", "MED",
                             String.valueOf(rs.getLong("case_id")), "待处理工单：" + rs.getString("type"),
                             null, "ticket", String.valueOf(rs.getLong("id"))), org));
+                // 本月回款（物业口径·只读 KPI，对标原型 PC cockpit「本月回款」）：本物业案件本月未冲正线下回款合计
+                kpis.add(new Kpi("本月回款", safeInt(jdbc,
+                    "SELECT coalesce(sum(rl.amount_cents),0) FROM repay_line rl JOIN \"case\" c ON c.id = rl.case_id"
+                        + " JOIN project p ON p.id = c.project_id WHERE p.org_id = ?"
+                        + " AND rl.paid_at >= date_trunc('month', CURRENT_DATE) AND rl.reversed = FALSE", org), null));
             }
         } else if ("VL".equals(role)) {
             Long org = parseLong(s.orgId());
@@ -203,5 +219,16 @@ public class WorkbenchDispatchController {
 
     private static Long parseLong(String v) {
         try { return v == null ? null : Long.valueOf(v.trim()); } catch (RuntimeException e) { return null; }
+    }
+
+    /** queryForObject 返回 int，空结果/异常兜底 0（不致 5xx）。 */
+    private static int safeInt(JdbcTemplate jdbc, String sql, Long param) {
+        try {
+            List<java.util.Map<String, Object>> rows = jdbc.queryForList(sql, param);
+            if (rows.isEmpty()) return 0;
+            Object v = rows.get(0).values().iterator().next();
+            if (v == null) return 0;
+            return v instanceof Number ? ((Number) v).intValue() : Integer.parseInt(String.valueOf(v));
+        } catch (RuntimeException e) { return 0; }
     }
 }

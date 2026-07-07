@@ -15,6 +15,7 @@ import com.youzheng.huicui.web.dto.CoCommissionPersonM9Dto;
 import com.youzheng.huicui.web.dto.CoPayDocLineM9Dto;
 import com.youzheng.huicui.web.dto.CoPayDocM9Dto;
 import com.youzheng.huicui.web.dto.MySettlementM9Dto;
+import com.youzheng.huicui.web.dto.MyStatsM9Dto;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -462,6 +463,8 @@ public class CoCommissionM9Controller {
 
     // ── [7] GET /me/settlement ───────────────────────────────────────────────
     // 催收员只读自查（本人）。比例/已支付由服务商设，催收员只读。
+    // rows 按（结算周期=回款到账月, 批次, 是否已结）聚合（对标原型§我的结算表）；金额口径不变——
+    // 仍逐笔 Commission.lineCommissionCents 舍入后 SUM（绝不汇总后再舍入）。
     @GetMapping("/me/settlement")
     @RequirePermission("cocomm.self.view")
     public MySettlementM9Dto getMySettlement() {
@@ -475,18 +478,187 @@ public class CoCommissionM9Controller {
 
         List<RateBatch> rbs = loadRateBatchesSelf(me);
         long total = 0L, settled = 0L;
-        List<MySettlementM9Dto.Row> rows = new ArrayList<>();
+        // (period|batchId|settled) → 聚合桶（LinkedHashMap 保序：批次序 + 月份序由查询顺序决定）
+        Map<String, long[]> buckets = new LinkedHashMap<>();   // val: [repayCents, commCents]
+        Map<String, RateBatch> bucketRate = new LinkedHashMap<>();
         for (RateBatch rb : rbs) {
-            for (LineRow ln : loadActiveLinesForCollectorBatch(me, rb.batchId(), providerOrgId)) {
+            for (LineMonthRow ln : loadActiveLinesWithMonth(me, rb.batchId(), providerOrgId)) {
                 long comm = Commission.lineCommissionCents(ln.amountCents(), rb.rate());
                 boolean lineSettled = isLineInternallySettled(ln.id());
                 total += comm;
                 if (lineSettled) settled += comm;
-                rows.add(new MySettlementM9Dto.Row(
-                        String.valueOf(rb.batchId()), ln.amountCents(), rb.rate(), comm, lineSettled));
+                String key = ln.month() + "|" + rb.batchId() + "|" + lineSettled;
+                buckets.computeIfAbsent(key, k -> new long[2]);
+                buckets.get(key)[0] += ln.amountCents();
+                buckets.get(key)[1] += comm;
+                bucketRate.put(key, rb);
             }
         }
+        // 批次号/项目名映射（一次查全）
+        Map<Long, String[]> batchInfo = loadBatchInfo();
+        List<MySettlementM9Dto.Row> rows = new ArrayList<>();
+        for (Map.Entry<String, long[]> e : buckets.entrySet()) {
+            String[] parts = e.getKey().split("\\|");
+            long batchId = Long.parseLong(parts[1]);
+            String[] info = batchInfo.getOrDefault(batchId, new String[] { String.valueOf(batchId), "—" });
+            rows.add(new MySettlementM9Dto.Row(
+                    parts[0], info[1], info[0],
+                    e.getValue()[0], bucketRate.get(e.getKey()).rate(), e.getValue()[1],
+                    Boolean.parseBoolean(parts[2])));
+        }
+        rows.sort((a, b) -> b.period().compareTo(a.period()));   // 近期在前
         return new MySettlementM9Dto(total, settled, total - settled, rows);
+    }
+
+    // ── [8] GET /me/stats ────────────────────────────────────────────────────
+    // 催收员"我的业绩"（服务商内部考核口径·仅本人）。全部真实数据实时聚合：
+    //   回款/户数/提成=repay_line×co_commission（到账快照 B-03，按月过滤）；
+    //   接通率=activity「通话结果标记」统计（已标注通话中非无人接听占比；无标注→null）；
+    //   承诺兑现率=已到期承诺 FULFILLED/(FULFILLED+PARTIAL_FULFILLED+BROKEN)（无→null）；
+    //   rows=按批次（持有数/回款/回款率/提成）；settledCases=已结清且本人有回款的案件（脱敏 BR-M8-09）。
+    @GetMapping("/me/stats")
+    @RequirePermission("cocomm.self.view")
+    public MyStatsM9Dto getMyStats(@RequestParam(required = false) String month) {
+        CurrentSubject s = SubjectContext.get();
+        if (!"PROVIDER".equals(s.orgType())) {
+            throw new ApiException(BizError.PERM_403, "催收员业绩仅服务商内部可见");
+        }
+        long me = actorId();
+        long providerOrgId = Long.parseLong(s.orgId());
+        String m = (month != null && month.matches("\\d{4}-\\d{2}"))
+                ? month
+                : jdbc.queryForObject("SELECT to_char(now(), 'YYYY-MM')", String.class);
+
+        // 当月回款/户数（到账快照口径：本人 + 本商 + 未冲正 + 到账月命中）
+        Map<String, Object> repay = jdbc.queryForMap(
+                "SELECT COALESCE(sum(amount_cents), 0) AS amt, count(DISTINCT case_id) AS cases"
+                        + " FROM repay_line WHERE collector_id_at_repay = ? AND provider_id_at_repay = ?"
+                        + " AND reversed = false AND to_char(paid_at, 'YYYY-MM') = ?",
+                me, providerOrgId, m);
+        long repayCents = ((Number) repay.get("amt")).longValue();
+        int repayCases = ((Number) repay.get("cases")).intValue();
+
+        // 当月提成：逐笔 × 批次比例（无比例批次不计提）
+        long commissionCents = 0L;
+        Map<Long, BigDecimal> rateByBatch = new LinkedHashMap<>();
+        for (RateBatch rb : loadRateBatchesSelf(me)) rateByBatch.put(rb.batchId(), rb.rate());
+        List<Map<String, Object>> monthLines = jdbc.queryForList(
+                "SELECT batch_id, amount_cents FROM repay_line"
+                        + " WHERE collector_id_at_repay = ? AND provider_id_at_repay = ? AND reversed = false"
+                        + " AND to_char(paid_at, 'YYYY-MM') = ?",
+                me, providerOrgId, m);
+        for (Map<String, Object> ln : monthLines) {
+            BigDecimal rate = rateByBatch.get(((Number) ln.get("batch_id")).longValue());
+            if (rate != null) commissionCents += Commission.lineCommissionCents(((Number) ln.get("amount_cents")).longValue(), rate);
+        }
+
+        // 接通率：本人已标注通话中，标记内容非「无人接听/NO_ANSWER」占比（activity『通话结果标记: X』真实标注）
+        BigDecimal connectRate = jdbc.query(
+                "SELECT count(*) AS total,"
+                        + " count(*) FILTER (WHERE content NOT LIKE '%无人接听%' AND content NOT LIKE '%NO_ANSWER%') AS ok"
+                        + " FROM activity WHERE actor_id = ? AND content LIKE '通话结果标记:%'",
+                rs -> {
+                    if (!rs.next()) return null;
+                    long t = rs.getLong("total");
+                    if (t == 0) return null;
+                    return BigDecimal.valueOf(rs.getLong("ok")).divide(BigDecimal.valueOf(t), 4, java.math.RoundingMode.HALF_UP);
+                }, me);
+
+        // 承诺兑现率：本人登记的已到期承诺（FULFILLED/PARTIAL/BROKEN）中 FULFILLED 占比
+        BigDecimal promiseRate = jdbc.query(
+                "SELECT count(*) AS total, count(*) FILTER (WHERE state = 'FULFILLED') AS ok"
+                        + " FROM promise WHERE created_by = ? AND state IN ('FULFILLED','PARTIAL_FULFILLED','BROKEN')",
+                rs -> {
+                    if (!rs.next()) return null;
+                    long t = rs.getLong("total");
+                    if (t == 0) return null;
+                    return BigDecimal.valueOf(rs.getLong("ok")).divide(BigDecimal.valueOf(t), 4, java.math.RoundingMode.HALF_UP);
+                }, me);
+
+        // 批次为主线的回款/结算列表：一次查全本人有回款的案件级明细（含到账月/是否内部已结/结清日/脱敏姓名），
+        //   按批次分桶聚合出批次行 + lines[]（前端行内钻取分"已结算/未结算清单"）。累计口径：全时段（非仅当月）。
+        Map<Long, String[]> batchInfo = loadBatchInfo();
+        // 每批次持有案件数（当前值·未结案）
+        Map<Long, Integer> holdByBatch = new LinkedHashMap<>();
+        for (Map<String, Object> r : jdbc.queryForList("SELECT batch_id, count(*) AS cnt FROM \"case\""
+                + " WHERE holder_id = ? AND closed_at IS NULL GROUP BY batch_id", me)) {
+            holdByBatch.put(((Number) r.get("batch_id")).longValue(), ((Number) r.get("cnt")).intValue());
+        }
+        // 每批次本人持有案件应收合计（回款率分母）
+        Map<Long, Long> dueByBatch = new LinkedHashMap<>();
+        for (Map<String, Object> r : jdbc.queryForList("SELECT batch_id, COALESCE(sum(due_cents), 0) AS due FROM \"case\""
+                + " WHERE holder_id = ? GROUP BY batch_id", me)) {
+            dueByBatch.put(((Number) r.get("batch_id")).longValue(), ((Number) r.get("due")).longValue());
+        }
+
+        // 案件级明细行（按批次、到账日排序），逐笔判内部已结 + 算提成
+        List<Map<String, Object>> lineRows = jdbc.queryForList(
+                "SELECT rl.id AS line_id, rl.batch_id, rl.case_id, rl.amount_cents, to_char(rl.paid_at, 'YYYY-MM-DD') AS paid_at,"
+                        + " c.owner_name, c.room, to_char(c.closed_at, 'YYYY-MM-DD') AS closed_at,"
+                        + " EXISTS (SELECT 1 FROM co_pay_doc_line cpl JOIN co_pay_doc d ON d.id = cpl.co_pay_doc_id"
+                        + "   WHERE cpl.repay_line_id = rl.id AND d.status = 'SETTLED') AS settled"
+                        + " FROM repay_line rl JOIN \"case\" c ON c.id = rl.case_id"
+                        + " WHERE rl.collector_id_at_repay = ? AND rl.provider_id_at_repay = ? AND rl.reversed = false"
+                        + " ORDER BY rl.batch_id, rl.paid_at DESC, rl.id DESC",
+                me, providerOrgId);
+
+        // 批次分桶（保序：批次 id 升序由查询保证）
+        java.util.LinkedHashMap<Long, List<MyStatsM9Dto.Line>> linesByBatch = new java.util.LinkedHashMap<>();
+        Map<Long, long[]> batchAgg = new LinkedHashMap<>();   // [repay, comm, settledComm, unsettledComm, settledCnt, totalCnt]
+        long totalComm = 0L, settledCommAll = 0L;
+        for (Map<String, Object> lr : lineRows) {
+            long batchId = ((Number) lr.get("batch_id")).longValue();
+            long amt = ((Number) lr.get("amount_cents")).longValue();
+            boolean settled = Boolean.TRUE.equals(lr.get("settled"));
+            BigDecimal rate = rateByBatch.get(batchId);
+            long comm = rate == null ? 0L : Commission.lineCommissionCents(amt, rate);
+            totalComm += comm;
+            if (settled) settledCommAll += comm;
+
+            String nm = (String) lr.get("owner_name");
+            linesByBatch.computeIfAbsent(batchId, k -> new ArrayList<>()).add(new MyStatsM9Dto.Line(
+                    String.valueOf(((Number) lr.get("case_id")).longValue()),
+                    (nm == null || nm.isBlank()) ? "—" : nm.substring(0, 1) + "**",
+                    (String) lr.get("room"), amt, comm, (String) lr.get("paid_at"),
+                    settled, (String) lr.get("closed_at")));
+
+            long[] agg = batchAgg.computeIfAbsent(batchId, k -> new long[6]);
+            agg[0] += amt; agg[1] += comm;
+            if (settled) { agg[2] += comm; agg[4] += 1; } else { agg[3] += comm; }
+            agg[5] += 1;
+        }
+        // 持有但无回款的批次也要出现（持有数>0）
+        for (Long bId : holdByBatch.keySet()) {
+            if (!linesByBatch.containsKey(bId)) { linesByBatch.put(bId, new ArrayList<>()); batchAgg.putIfAbsent(bId, new long[6]); }
+        }
+
+        List<MyStatsM9Dto.Row> rows = new ArrayList<>();
+        for (Map.Entry<Long, List<MyStatsM9Dto.Line>> e : linesByBatch.entrySet()) {
+            long batchId = e.getKey();
+            long[] agg = batchAgg.getOrDefault(batchId, new long[6]);
+            String[] info = batchInfo.getOrDefault(batchId, new String[] { String.valueOf(batchId), "—" });
+            long due = dueByBatch.getOrDefault(batchId, 0L);
+            rows.add(new MyStatsM9Dto.Row(
+                    String.valueOf(batchId), info[0], info[1],
+                    holdByBatch.getOrDefault(batchId, 0),
+                    agg[0],
+                    due > 0 ? BigDecimal.valueOf(agg[0]).divide(BigDecimal.valueOf(due), 4, java.math.RoundingMode.HALF_UP) : null,
+                    rateByBatch.get(batchId),
+                    agg[1], agg[2], agg[3],
+                    (int) agg[4], (int) agg[5],
+                    e.getValue()));
+        }
+
+        return new MyStatsM9Dto(m, repayCents, repayCases, commissionCents, connectRate, promiseRate,
+                totalComm, settledCommAll, totalComm - settledCommAll, rows);
+    }
+
+    /** 批次 id → [批次号, 项目名]（一次查全，避免 N+1）。 */
+    private Map<Long, String[]> loadBatchInfo() {
+        Map<Long, String[]> map = new LinkedHashMap<>();
+        jdbc.query("SELECT b.id, b.no, p.name AS project FROM batch b JOIN project p ON p.id = b.project_id",
+                rs -> { map.put(rs.getLong("id"), new String[] { rs.getString("no"), rs.getString("project") }); });
+        return map;
     }
 
     // ── PROVIDER-only / own-org 守卫 ─────────────────────────────────────────
@@ -576,7 +748,7 @@ public class CoCommissionM9Controller {
     // ── 汇总数据访问 ──────────────────────────────────────────────────────────
 
     private record RateBatch(long batchId, BigDecimal rate) {}
-    private record LineRow(long id, long amountCents) {}
+    private record LineMonthRow(long id, long amountCents, String month) {}
 
     /** 本人（me/settlement）：本人设过比例且在本商快照内有可计提回款的（批次,比率）。 */
     private List<RateBatch> loadRateBatchesSelf(long collectorId) {
@@ -595,18 +767,20 @@ public class CoCommissionM9Controller {
     }
 
     /**
-     * 催收员某批次的「可计提」回款明细：该批次下、到账时点由本催收员持有的、属本商快照的、未冲正的回款。
+     * 催收员某批次的「可计提」回款明细（带到账月，供 me/settlement 按周期聚合）：
+     * 该批次下、到账时点由本催收员持有的、属本商快照的、未冲正的回款。
      * BLOCKER-1·按到账快照归属：用 repay_line.collector_id_at_repay（登记回款时固化），
      *   不再 join 当前 case.holder_id——换持有人后历史佣金不漂移（哪个催收员到账时点持有就算谁的）。
      * B-02：同时按 rl.provider_id_at_repay=providerOrgId 过滤，与 loadRateBatchesSelf 同口径。
      * 基数=减免后实收·不含税（repay_line.amount_cents）。
      */
-    private List<LineRow> loadActiveLinesForCollectorBatch(long collectorId, long batchId, long providerOrgId) {
+    private List<LineMonthRow> loadActiveLinesWithMonth(long collectorId, long batchId, long providerOrgId) {
         return jdbc.query(
-                "SELECT rl.id, rl.amount_cents FROM repay_line rl"
+                "SELECT rl.id, rl.amount_cents, to_char(rl.paid_at, 'YYYY-MM') AS month FROM repay_line rl"
                         + " WHERE rl.batch_id = ? AND rl.collector_id_at_repay = ?"
-                        + "   AND rl.provider_id_at_repay = ? AND rl.reversed = false",
-                (rs, i) -> new LineRow(rs.getLong("id"), rs.getLong("amount_cents")),
+                        + "   AND rl.provider_id_at_repay = ? AND rl.reversed = false"
+                        + " ORDER BY rl.paid_at DESC, rl.id DESC",
+                (rs, i) -> new LineMonthRow(rs.getLong("id"), rs.getLong("amount_cents"), rs.getString("month")),
                 batchId, collectorId, providerOrgId);
     }
 

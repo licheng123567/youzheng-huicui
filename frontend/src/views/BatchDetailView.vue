@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
@@ -15,6 +15,8 @@ const route = useRoute(); const router = useRouter()
 const auth = useAuth()
 const { showCommInRate, showPayOutRate, ratePct } = useRoleFields()
 const bid = String(route.params.id)
+// 物业协调员(PC)：批次属性只读（由物业负责人维护），不可编辑/添加/手动录入案件——对标原型 PC 无 proj.edit 写权。
+const isCoordinator = computed(() => auth.me?.role === 'PC')
 const b = ref<any>(null); const cases = ref<any[]>([]); const tiers = ref<any[]>([])
 const tiersSource = ref<string | null>(null) // INHERITED | CUSTOM | null(无权限)
 const tiersPermDenied = ref(false)
@@ -59,8 +61,47 @@ async function loadAll() {
   cases.value = ((await api.GET('/cases', { params: { query: { batchId: bid, page: 1, size: 100 } } as any })).data as any)?.items ?? []
   await loadReduceTiers()
   await loadPlaybook()
+  await loadCommStatus()
 }
 function openCase(c: any) { router.push(`/cases/${c.id}`) }
+
+// ── 佣金比例（撮合定）：物业提案 → 平台确认（防倒挂+毛利），资金双线按角色 ──
+const role = computed(() => auth.me?.role ?? '')
+const isPlatform = computed(() => role.value === 'SA' || role.value === 'SE')
+const isPL = computed(() => role.value === 'PL')
+// comm = 双线裁剪后的 {commInRate, payOutRate, commInConfirmed}（分数），非契约端点取
+const comm = ref<any>({})
+async function loadCommStatus() {
+  try {
+    const res = await fetch(`/v1/batches/${bid}/comm-status`, { headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` } })
+    comm.value = res.ok ? await res.json() : {}
+  } catch { comm.value = {} }
+}
+const toPct = (frac?: number | null) => frac == null ? null : Math.round(frac * 10000) / 100
+// 物业提案（PL）建议收佣比例（%）
+const proposeRate = ref<number | null>(null)
+async function proposeCommIn() {
+  if (proposeRate.value == null || proposeRate.value < 0 || proposeRate.value > 100) { ElMessage.warning('请输入 0-100 的收佣比例'); return }
+  const res = await fetch(`/v1/batches/${bid}/comm-in-rate`, { method: 'PUT', headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ commInRate: proposeRate.value / 100 }) })
+  if (!res.ok) { const e = await res.json().catch(() => ({} as any)); ElMessage.error('提交失败：' + (e.message ?? res.status)); return }
+  ElMessage.success('已提交建议收佣比例，待平台确认'); await loadCommStatus()
+}
+// 平台定双佣（SA/SE）：收佣%/付佣%，防倒挂（付佣≤收佣）
+const platIn = ref<number | null>(null)
+const platOut = ref<number | null>(null)
+const platMargin = computed(() => (platIn.value != null && platOut.value != null) ? Math.round((platIn.value - platOut.value) * 100) / 100 : null)
+const platInvalid = computed(() => platIn.value == null || platOut.value == null || platIn.value < 0 || platIn.value > 100 || platOut.value < 0 || platOut.value > platIn.value)
+async function saveCommissionRates() {
+  if (platInvalid.value) return
+  const res = await fetch(`/v1/batches/${bid}/commission-rates`, { method: 'PUT', headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ commInRate: platIn.value! / 100, payOutRate: platOut.value! / 100 }) })
+  if (!res.ok) { const e = await res.json().catch(() => ({} as any)); ElMessage.error('保存失败：' + (e.message ?? res.status)); return }
+  ElMessage.success('已确认双方佣金比例'); await loadCommStatus(); await loadBatch()
+}
+// comm 到手后预填输入
+watch(comm, (c) => {
+  if (c.commInRate != null) { if (proposeRate.value == null) proposeRate.value = toPct(c.commInRate); if (platIn.value == null) platIn.value = toPct(c.commInRate) }
+  if (c.payOutRate != null && platOut.value == null) platOut.value = toPct(c.payOutRate)
+})
 
 // ── BC-01 批次协调员维护(PUT /batches/{id}/coordinators · batch.import) ──
 const coordDlg = ref(false)
@@ -150,7 +191,7 @@ async function syncPlaybook() {
 
 // ── 手动添加案件 ──
 const manualDlg = ref(false)
-const mForm = ref({ acctNo: '', ownerName: '', phone: '', dueYuan: 0, periodFrom: '', periodTo: '', idCard: '', addr: '' })
+const mForm = ref({ acctNo: '', ownerName: '', phone: '', room: '', dueYuan: 0, penaltyYuan: null as number | null, periodFrom: '', periodTo: '', idCard: '', addr: '' })
 const mSaving = ref(false)
 const mPhoneErr = ref(''); const mIdCardErr = ref('')
 
@@ -169,20 +210,32 @@ function validatePhone(v: string) { mPhoneErr.value = v && !/^1\d{10}$/.test(v) 
 function validateIdCard(v: string) { mIdCardErr.value = v && !/^\d{17}[\dXx]$/.test(v) ? '身份证号须为 18 位' : '' }
 
 function openManualAdd() {
-  mForm.value = { acctNo: '', ownerName: '', phone: '', dueYuan: 0, periodFrom: '', periodTo: '', idCard: '', addr: '' }
+  mForm.value = { acctNo: '', ownerName: '', phone: '', room: '', dueYuan: 0, penaltyYuan: null, periodFrom: '', periodTo: '', idCard: '', addr: '' }
   mPhoneErr.value = ''; mIdCardErr.value = ''
   manualDlg.value = true
 }
 
 async function submitManual() {
   const f = mForm.value
-  if (!f.acctNo || !f.ownerName || !f.phone) { ElMessage.warning('户号/姓名/手机为必填'); return }
+  if (!f.acctNo || !f.ownerName || !f.phone || !f.room) { ElMessage.warning('户号/姓名/手机/房号为必填'); return }
   if (mPhoneErr.value) { ElMessage.warning('手机号格式不正确'); return }
   if (mIdCardErr.value) { ElMessage.warning('身份证号格式不正确'); return }
   if (f.dueYuan <= 0) { ElMessage.warning('应收金额须 > 0'); return }
-  const period = f.periodFrom && f.periodTo ? `${f.periodFrom}~${f.periodTo}` : ''
-  const body: any = { acctNo: f.acctNo, ownerName: f.ownerName, phone: f.phone, dueCents: Math.round(f.dueYuan * 100), arrearPeriod: period }
-  if (f.idCard || f.addr) body.litigation = { ...(f.idCard ? { idCard: f.idCard } : {}), ...(f.addr ? { addr: f.addr } : {}) }
+  if (f.penaltyYuan != null && (f.penaltyYuan < 0 || f.penaltyYuan > f.dueYuan)) { ElMessage.warning('滞纳金须在 0~应收金额 之间'); return }
+  // ManualCaseInput 要求 arrearagePeriods 数组（逐月展开）
+  const periods: string[] = []
+  if (f.periodFrom && f.periodTo) {
+    let [y, m] = f.periodFrom.split('-').map(Number)
+    const [ey, em] = f.periodTo.split('-').map(Number)
+    while (y < ey || (y === ey && m <= em)) {
+      periods.push(`${y}-${String(m).padStart(2, '0')}`)
+      m++; if (m > 12) { m = 1; y++ }
+      if (periods.length > 240) break
+    }
+  }
+  const body: any = { acctNo: f.acctNo, ownerName: f.ownerName, phone: f.phone, room: f.room, dueCents: Math.round(f.dueYuan * 100), arrearagePeriods: periods }
+  if (f.penaltyYuan != null && f.penaltyYuan > 0) body.penaltyCents = Math.round(f.penaltyYuan * 100)
+  if (f.idCard || f.addr) body.litigationFields = { ...(f.idCard ? { idCard: f.idCard } : {}), ...(f.addr ? { mailingAddr: f.addr } : {}) }
   mSaving.value = true
   const { error } = await api.POST('/batches/{id}/cases', { params: { path: { id: bid } }, body } as any)
   mSaving.value = false
@@ -218,10 +271,11 @@ onMounted(loadAll)
         <div class="kpi"><div class="n">{{ b.progress ?? '—' }}</div><div class="l">催收进度</div></div>
       </div>
 
-      <!-- 佣金比例标签 -->
+      <!-- 佣金比例标签（按视角：物业=付佣[物业付平台] / 服务商=收佣[平台付服务商] / 平台=收佣+付佣本名） -->
       <div style="margin:10px 0 4px">
-        <span v-if="showCommInRate" class="tag war" style="margin-right:8px">收佣比例 {{ ratePct(b.commInRate) }}</span>
-        <span v-if="showPayOutRate" class="tag suc">付佣比例 {{ ratePct(b.payOutRate) }}</span>
+        <span v-if="showCommInRate && b.commInRate != null" class="tag war" style="margin-right:8px">{{ isPlatform ? '收佣比例' : '付佣比例' }} {{ ratePct(b.commInRate) }}</span>
+        <span v-if="showCommInRate && comm.commInConfirmed != null" class="tag" :class="comm.commInConfirmed ? 'suc' : 'inf'" style="margin-right:8px">{{ comm.commInConfirmed ? '平台已确认' : '待平台确认' }}</span>
+        <span v-if="showPayOutRate && b.payOutRate != null" class="tag suc">{{ isPlatform ? '付佣比例' : '收佣比例' }} {{ ratePct(b.payOutRate) }}</span>
       </div>
 
       <!-- Tab 切换 -->
@@ -233,10 +287,44 @@ onMounted(loadAll)
 
     <!-- 批次属性 Tab -->
     <template v-if="batchTab === 'props'">
+      <!-- 佣金比例：平台撮合定双佣（最终决定权）/ 物业负责人提案收佣比例 -->
+      <div v-if="isPlatform" class="card">
+        <div class="sec-title">佣金比例（撮合设定 · 平台最终决定权） <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">一处同定双方佣金；防倒挂：付佣 ≤ 收佣</span></div>
+        <div class="alert info" style="margin-top:0;margin-bottom:10px">收佣比例=向物业收（IN，物业提案后平台确认）；付佣比例=付给服务商（OUT）。平台毛利 = 收佣 − 付佣。</div>
+        <div style="display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap">
+          <div><div class="lbl" style="margin-bottom:4px">收佣比例（%）</div><input class="inp" type="number" min="0" max="100" step="0.5" style="width:130px" v-model.number="platIn"></div>
+          <div><div class="lbl" style="margin-bottom:4px">付佣比例（%）</div><input class="inp" type="number" min="0" max="100" step="0.5" style="width:130px" v-model.number="platOut"></div>
+          <div><div class="lbl" style="margin-bottom:4px">平台毛利</div><span class="tag" :class="(platMargin != null && platMargin < 0) ? 'dan' : 'pri'" style="font-size:14px">{{ platMargin != null ? platMargin + '%' : '—' }}</span></div>
+          <button class="btn sm" :class="platInvalid ? 'df' : ''" :disabled="platInvalid" @click="saveCommissionRates">确认双佣</button>
+        </div>
+        <div v-if="platIn != null && platOut != null && platOut > platIn" class="alert err" style="margin-top:8px;margin-bottom:0">⚠ 付佣比例（{{ platOut }}%）不得大于收佣比例（{{ platIn }}%）——平台会亏损（倒挂），无法保存。</div>
+        <div class="note" style="margin-top:8px">当前：{{ comm.commInConfirmed ? '平台已确认' : '待平台确认' }}{{ comm.commInRate != null ? ' · 物业建议收佣 ' + ratePct(comm.commInRate) : '' }}</div>
+      </div>
+
+      <!-- 物业负责人提案收佣比例（提案-确认态）；已确认后只读，PC 全程只读 -->
+      <div v-if="(isPL || isCoordinator) && showCommInRate" class="card">
+        <div class="sec-title">付佣比例（付给平台的佣金） <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">物业提案 → 平台最终确认</span></div>
+        <template v-if="isPL && !comm.commInConfirmed">
+          <div class="alert info" style="margin-top:0;margin-bottom:10px">填写本批次<b>建议付给平台的佣金比例</b>，提交后进入「待平台确认」；平台在撮合处最终确认/调整。</div>
+          <div style="display:flex;align-items:flex-end;gap:12px">
+            <div><div class="lbl" style="margin-bottom:4px">建议付佣比例（%）</div><input class="inp" type="number" min="0" max="100" step="0.5" style="width:150px" v-model.number="proposeRate"></div>
+            <button class="btn sm" @click="proposeCommIn">提交建议</button>
+            <span class="tag inf">待平台确认</span>
+          </div>
+        </template>
+        <template v-else>
+          <div class="desc">
+            <div class="r"><div class="k">付佣比例</div><div class="v"><span class="tag war">{{ ratePct(b.commInRate) }}</span></div></div>
+            <div class="r"><div class="k">确认状态</div><div class="v"><span class="tag" :class="comm.commInConfirmed ? 'suc' : 'inf'">{{ comm.commInConfirmed ? '平台已确认' : '待平台确认' }}</span></div></div>
+          </div>
+          <div class="note" style="margin-top:6px">{{ comm.commInConfirmed ? '平台已最终确认，如需调整请联系平台。' : (isCoordinator ? '由物业负责人提交、平台确认（协调员只读）。' : '') }}</div>
+        </template>
+      </div>
+
       <!-- 作战手册 -->
       <div class="card">
         <div class="sec-title">作战手册（批次级） <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">继承项目 或 自定义覆盖（手册随批次走）</span></div>
-        <template v-if="auth.has('playbook.adopt')">
+        <template v-if="auth.has('playbook.adopt') && !isCoordinator">
           <div style="display:flex;gap:16px;margin-bottom:8px;font-size:13px">
             <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" value="inherit" :checked="playbookSource !== 'CUSTOM'" @change="playbookSource === 'CUSTOM' && restorePlaybook()"> 继承项目</label>
             <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" value="custom" :checked="playbookSource === 'CUSTOM'" @change="playbookSource !== 'CUSTOM' && openPlaybook()"> 自定义覆盖</label>
@@ -248,13 +336,17 @@ onMounted(loadAll)
           </template>
           <div v-else class="note">继承项目级作战手册（项目修改后自动跟随）。</div>
         </template>
-        <div v-else class="note">只读调阅。当前：{{ playbookSource === 'CUSTOM' ? '本批次自定义覆盖' : '继承项目级' }}</div>
+        <!-- 协调员/无编辑权：只读调阅（自定义覆盖时展示手册内容） -->
+        <template v-else>
+          <div v-if="playbookSource === 'CUSTOM' && playbook" class="pb-content" style="margin-bottom:8px;white-space:pre-wrap;max-height:160px;overflow:auto;background:#f9fafb;border:1px solid var(--bd);padding:10px;border-radius:4px;font-size:13px">{{ playbook.content || '（尚无内容）' }}</div>
+          <div class="note">只读调阅（批次手册由物业负责人维护）。当前：{{ playbookSource === 'CUSTOM' ? '本批次自定义覆盖' : '继承项目级' }}</div>
+        </template>
       </div>
 
       <!-- 减免政策 -->
       <div class="card">
         <div class="sec-title">减免政策（批次级） <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">继承项目 或 自定义覆盖阶梯（批次级优先）</span></div>
-        <template v-if="!tiersPermDenied && auth.has('reduce.policy.edit')">
+        <template v-if="!tiersPermDenied && auth.has('reduce.policy.edit') && !isCoordinator">
           <div style="display:flex;gap:16px;margin-bottom:8px;font-size:13px">
             <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" value="inherit" :checked="tiersSource !== 'CUSTOM'" @change="tiersSource === 'CUSTOM' && clearReduce()"> 继承项目</label>
             <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" value="custom" :checked="tiersSource === 'CUSTOM'" @change="tiersSource !== 'CUSTOM' && openReduce()"> 自定义覆盖</label>
@@ -277,6 +369,21 @@ onMounted(loadAll)
           </div>
           <div v-if="b.reduceDrift" class="alert warn" style="margin-top:8px">⚠ 项目级减免已更新，当前批次自定义有差异。<button class="btn sm" style="margin-left:8px" @click="syncReduce">同步为项目最新</button></div>
         </template>
+        <!-- 协调员：只读展示减免阶梯（由物业负责人维护，不可编辑） -->
+        <template v-else-if="!tiersPermDenied && isCoordinator">
+          <table v-if="tiersSource === 'CUSTOM'">
+            <thead><tr><th>折扣</th><th>封顶</th><th style="text-align:center">免违约金</th><th>决定权</th></tr></thead>
+            <tbody>
+              <tr v-for="(t,ti) in tiers" :key="ti">
+                <td>{{ t.discount }}</td><td class="num">{{ yuan(t.capCents) }}</td>
+                <td style="text-align:center">{{ t.waivePenalty ? '✓' : '—' }}</td>
+                <td :title="t.decide">{{ reduceDecideLabel(t.decide) }}</td>
+              </tr>
+              <tr v-if="!tiers.length"><td colspan="4" class="empty-cell">暂无阶梯</td></tr>
+            </tbody>
+          </table>
+          <div class="note" style="margin-top:6px">只读（减免政策由物业负责人维护）。当前：{{ tiersSource === 'CUSTOM' ? '本批次自定义覆盖' : '继承项目级减免政策' }}</div>
+        </template>
         <div v-else class="note">{{ tiersPermDenied ? '无减免策略查看权限' : (tiersSource === 'CUSTOM' ? '本批次自定义减免阶梯' : '继承项目级减免政策') }}</div>
       </div>
 
@@ -293,7 +400,7 @@ onMounted(loadAll)
       <div class="card">
         <div class="sec-title" style="display:flex;align-items:center">
           协调员（本批次）
-          <button v-if="auth.has('proj.edit')" class="btn sm" style="margin-left:auto" @click="openCoord">+ 添加协调员</button>
+          <button v-if="auth.has('proj.edit') && !isCoordinator" class="btn sm" style="margin-left:auto" @click="openCoord">+ 添加协调员</button>
         </div>
         <div v-if="b.coordinators && b.coordinators.length" class="coord-tags">
           <span v-for="c in b.coordinators" :key="c.id" class="tag pri" style="margin-right:6px;display:inline-flex;align-items:center;gap:4px">{{ c.name || c.id }}</span>
@@ -308,7 +415,8 @@ onMounted(loadAll)
         <div class="t"><span class="bar"></span>案件明细 — {{ b.code }}</div>
         <div class="ops">
           <span class="note" style="margin:0">{{ filteredCases.length }}/{{ cases.length }} 条</span>
-          <button v-if="auth.has('batch.import') || auth.has('proj.edit')" class="btn sm" style="margin-left:8px" @click="openManualAdd">+ 手动添加案件</button>
+          <!-- 协调员不可手动添加案件（案件由物业负责人/平台导入，对标原型 PC 无导入/录入权） -->
+          <button v-if="(auth.has('batch.import') || auth.has('proj.edit')) && !isCoordinator" class="btn sm" style="margin-left:8px" @click="openManualAdd">+ 手动添加案件</button>
         </div>
       </div>
       <!-- 筛选栏 -->
@@ -354,8 +462,13 @@ onMounted(loadAll)
         <el-form-item label="手机号" required :error="mPhoneErr">
           <el-input v-model="mForm.phone" placeholder="11 位手机号" @blur="validatePhone(mForm.phone)" />
         </el-form-item>
+        <el-form-item label="房号" required><el-input v-model="mForm.room" placeholder="如 3-201" /></el-form-item>
         <el-form-item label="应收金额(元)" required>
           <el-input-number v-model="mForm.dueYuan" :min="0" :step="100" :controls="false" style="width:180px" />
+        </el-form-item>
+        <el-form-item label="含滞纳金(元)">
+          <el-input-number v-model="mForm.penaltyYuan" :min="0" :step="10" :controls="false" style="width:180px" placeholder="选填·应收中滞纳金部分" />
+          <span style="margin-left:8px;font-size:12px;color:var(--sec)">选填；本金=应收−滞纳金</span>
         </el-form-item>
 
         <el-divider content-position="left">欠费期间（自动计算月数）</el-divider>

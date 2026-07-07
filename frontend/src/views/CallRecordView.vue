@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { callRecStatusLabel } from '../constants/enums'
+import RecordingAudioPlayer from '../components/RecordingAudioPlayer.vue'
 
 // US-M4-12 独立通话记录页：GET /recordings/{callId}(CallRecording) + ai-review。
 const route = useRoute(); const router = useRouter()
@@ -27,13 +28,9 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- 录音条 -->
-    <div class="player">
-      <span>{{ rec.status==='READY' ? '▶' : '·' }}</span>
-      <div style="flex:1;height:4px;background:#e4e7ed;border-radius:2px;position:relative"><div style="width:0;height:100%;background:var(--primary);border-radius:2px"></div></div>
-      <span>{{ rec.durationSec ?? 0 }}s</span>
-      <span class="tag" :class="rec.status==='READY'?'suc':rec.status==='FAILED'?'dan':'war'" :title="rec.status">{{ callRecStatusLabel(rec.status) }}</span>
-    </div>
+    <!-- 录音回放（全角色可听 · BR-M4-01b） -->
+    <div class="sec-title">录音回放 <span class="tag" :class="rec.status==='READY'?'suc':rec.status==='FAILED'?'dan':'war'" style="margin-left:6px" :title="rec.status">{{ callRecStatusLabel(rec.status) }}</span><span class="note" style="margin-left:8px;font-weight:400">时长 {{ rec.durationSec ?? 0 }}s</span></div>
+    <RecordingAudioPlayer :recording-id="callId" style="margin-bottom:6px" />
 
     <!-- 键值信息 -->
     <div class="sec-title">通话信息</div>
