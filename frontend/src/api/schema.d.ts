@@ -2333,7 +2333,7 @@ export interface components {
         Error: {
             /**
              * @description 错误码字典(前端按 code 差异化提示)：
-             *     通用 AUTH_401(未登录/Token失效) / PERM_403(无权限/越数据范围) / NOT_FOUND_404(资源不存在) / STATE_409(状态机非法流转) / VALIDATION_422(入参校验失败)；
+             *     通用 AUTH_401(未登录/Token失效) / PERM_403(无权限/越数据范围) / NOT_FOUND_404(资源不存在) / STATE_409(状态机非法流转) / VALIDATION_422(入参校验失败) / MUST_CHANGE_PASSWORD(首登须先改密 B-04·受保护端点拦截返 403)；
              *     业务 BIZ_PAYOUT_INVERT(防倒挂：催收员比例>付佣比例) / BIZ_CAP_EXCEEDED(派单超持有余量 CFG-HOLDCAP) / BIZ_LINE_LOCKED(明细已结算/已纳入其他支付申请单) /
              *     BIZ_PR_PAID(支付申请单已完成PAID，不可撤销) / BIZ_WRONG_SETTLE_SIDE(错线访问结算资源：收佣线非平台/物业，或付佣线非平台/服务商) /
              *     BIZ_NO_VOUCHER(完成支付申请单必须上传收款/支付凭证 BR-M9-12d) /
@@ -2346,7 +2346,7 @@ export interface components {
              *     BIZ_REDISPATCH_GUARD(单案再派护栏①:目标=原退回服务商/已停用 US-M3-02) /
              * @enum {string}
              */
-            code: "AUTH_401" | "PERM_403" | "NOT_FOUND_404" | "STATE_409" | "VALIDATION_422" | "BIZ_PAYOUT_INVERT" | "BIZ_CAP_EXCEEDED" | "BIZ_LINE_LOCKED" | "BIZ_PR_PAID" | "BIZ_WRONG_SETTLE_SIDE" | "BIZ_NO_VOUCHER" | "BIZ_CASE_CLOSED" | "BIZ_REDUCE_OVER_SELF" | "BIZ_NO_RECORDING" | "BIZ_TOKEN_EXPIRED" | "BIZ_OPEN_RATE_REQUIRED" | "BIZ_NOT_PENDING_DISPATCH" | "BIZ_DUP_ACCT" | "BIZ_SMS_COOLDOWN" | "BIZ_QUOTA_EXHAUSTED" | "BIZ_ALREADY_CLAIMED" | "BIZ_HOLD_CAP" | "BIZ_REDISPATCH_GUARD";
+            code: "AUTH_401" | "PERM_403" | "NOT_FOUND_404" | "STATE_409" | "VALIDATION_422" | "MUST_CHANGE_PASSWORD" | "BIZ_PAYOUT_INVERT" | "BIZ_CAP_EXCEEDED" | "BIZ_LINE_LOCKED" | "BIZ_PR_PAID" | "BIZ_WRONG_SETTLE_SIDE" | "BIZ_NO_VOUCHER" | "BIZ_CASE_CLOSED" | "BIZ_REDUCE_OVER_SELF" | "BIZ_NO_RECORDING" | "BIZ_TOKEN_EXPIRED" | "BIZ_OPEN_RATE_REQUIRED" | "BIZ_NOT_PENDING_DISPATCH" | "BIZ_DUP_ACCT" | "BIZ_SMS_COOLDOWN" | "BIZ_QUOTA_EXHAUSTED" | "BIZ_ALREADY_CLAIMED" | "BIZ_HOLD_CAP" | "BIZ_REDISPATCH_GUARD" | "BIZ_EVIDENCE_FAILED" | "BIZ_SMS_FAILED";
             message: string;
             traceId?: string;
             details?: {
