@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import { evidenceSceneLabel, evidenceStatusLabel } from '../constants/enums'
+import { downloadAuthedFile } from '../utils/download'
 
 // M6 存证：GET /evidence(三方隔离·物业可见/服务商空) + 验真(GET /evidence/{id}/verify·public 防篡改校验)。
 // H-02: 本页为只读列表/验真/证书下载入口；存证「创建」入口分离在案件作业台(发起存证)，仅 evidence.create 可见。
@@ -34,6 +35,10 @@ async function doRetry(row: any) {
   const { error } = await api.POST('/evidence/{id}/retry', { params: { path: { id: row.id } } } as any)
   if (error) { ElMessage.error('重试失败：' + ((error as any)?.message ?? '')); return }
   ElMessage.success('已重新出证（ISSUING）'); load()
+}
+// 下载易保全备案证书（代理 downPreservationCert；未就绪→409 提示）
+function downloadCert(row: any) {
+  downloadAuthedFile(`/v1/evidence/${row.id}/certificate`, `存证证书_${row.id}.zip`)
 }
 onMounted(load)
 </script>
@@ -74,18 +79,21 @@ onMounted(load)
           <td>{{ row.batchCode || '—' }}</td>
           <td>{{ row.phone || '—' }}</td>
           <td :title="row.scene">{{ evidenceSceneLabel(row.scene) }}</td>
-          <td>{{ row.object || row.fileName || row.certNo || '—' }}</td>
+          <td>
+            <span v-if="row.preservationId" :title="'保全备案号 ' + row.preservationId">备案号 {{ row.preservationId }}</span>
+            <span v-else>{{ row.object || row.fileName || row.certNo || '—' }}</span>
+          </td>
           <td>{{ row.issuedAt || row.createdAt || '—' }}</td>
           <td>
-            <code v-if="row.hash" style="font-size:11px;word-break:break-all" :title="row.hash">{{ row.hash.slice(0, 14) }}…</code>
-            <span v-else style="color:var(--sec);font-size:11px">—</span>
+            <code v-if="row.chainTxHash || row.hash" style="font-size:11px;word-break:break-all" :title="(row.chainTxHash || row.hash) + (row.gznetId ? '\n广州互联网法院证据id: ' + row.gznetId : '') + (row.antId ? '\n杭州互联网法院证据id: ' + row.antId : '')">{{ (row.chainTxHash || row.hash).slice(0, 14) }}…</code>
+            <span v-else style="color:var(--sec);font-size:11px">备案中…</span>
           </td>
           <td><span class="tag" :class="statusTag(row.status)" :title="row.status">{{ evidenceStatusLabel(row.status) }}</span></td>
           <td>
-            <a v-if="row.objectUrl || row.fileUrl || row.certUrl" class="btn txt" :href="row.objectUrl || row.fileUrl || row.certUrl" target="_blank" download title="下载存证文件/证书">下载文件</a>
+            <a v-if="row.status==='ISSUED'" class="btn txt" @click="downloadCert(row)" title="下载易保全备案证书(zip)">下载证书</a>
             <a class="btn txt" @click="doVerify(row)" title="核验存证真伪">验真</a>
             <a v-if="row.status==='FAILED' && canCreate" class="btn txt wn" @click="doRetry(row)">重试</a>
-            <span v-if="!row.objectUrl && !row.fileUrl && !row.certUrl && row.status!=='FAILED'" style="color:var(--sec);font-size:12px">—</span>
+            <span v-if="row.status!=='ISSUED' && row.status!=='FAILED'" style="color:var(--sec);font-size:12px">备案中…</span>
           </td>
         </tr>
         <tr v-if="!loading && !items.length">

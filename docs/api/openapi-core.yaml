@@ -821,10 +821,18 @@ paths:
     post:
       operationId: resendPayLink
       tags: [collection]
-      summary: 重发缴费链接(受短信冷却约束 BR-M4-15)
+      summary: 重发缴费链接(可指定渠道覆盖创建渠道；SMS 受短信冷却约束 BR-M4-15)
       x-permission: case.paylink
       x-data-scope: case-actor
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                channel: { type: string, enum: [SMS, WECHAT_COPY], description: '指定本次发送渠道，缺省沿用链接当前渠道' }
       responses: { '200': { description: ok }, '409': { $ref: '#/components/responses/Conflict' } }
 
   /pay-links/{id}/void:
@@ -1310,6 +1318,35 @@ paths:
       x-permission: cocomm.self.view
       x-data-scope: own-org
       responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/MySettlement' } } } } }
+
+  /me/stats:
+    get:
+      operationId: getMyStats
+      tags: [commission]
+      summary: 催收员"我的业绩"自查(只读·服务商内部考核口径·平台只考核到服务商 BR-M9-19a)
+      x-permission: cocomm.self.view
+      x-data-scope: own-org
+      parameters:
+        - { name: month, in: query, schema: { type: string }, description: '统计月 YYYY-MM，缺省当月' }
+      responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/MyStats' } } } } }
+
+  /me/pay-links:
+    get:
+      operationId: listMyPayLinks
+      tags: [collection]
+      summary: 我的已发缴费链接跟踪(发送时间/业主/房号/项目/批次/金额/渠道/状态·仅本人发出 BR-M4-14/15)
+      x-permission: case.paylink
+      x-data-scope: own-org
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: 搜索 业主/房号 }
+        - { name: project, in: query, schema: { type: string } }
+        - { name: batch, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/PayLinkDisplayStatusEnum' } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Size' }
+      responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/MyPayLinkPage' } } } } }
 
   /risks:
     get:
@@ -2021,10 +2058,15 @@ components:
         district: { type: string }
         propCompany: { type: string }
         contractType: { type: string }
+        contractName: { type: string, description: '物业合同名称（高保真§项目档案）' }
+        servicePeriod: { type: string, description: '服务期限（高保真§项目档案）' }
         feeRows: { type: array, items: { type: object, properties: { biz: { type: string }, std: { type: string } } } }
         feeCycle: { type: string }
         penalty: { type: string }
         payInfo: { type: string }
+        corpAccount: { type: string, description: '对公账户（高保真§收款信息）' }
+        wxQrUrl: { type: string, description: '微信收款码URL（高保真§收款信息）' }
+        reducePolicy: { type: string, description: '减免政策描述（高保真§减免规则）' }
         commInRate: { $ref: '#/components/schemas/Rate', description: '收佣比例(平台↔物业)·必填 BR-M9-01a' }
         coordinatorIds: { type: array, items: { type: string }, description: '关联协调员(PC↔项目 多对多·决定其可见案件范围 BR-M2-13/US-M2-02)' }
         litigation: { type: [object, 'null'], properties: { creditCode: { type: string }, legal: { type: string }, addr: { type: string } } }
@@ -2055,10 +2097,15 @@ components:
         area: { type: string }
         propCompany: { type: string }
         contractType: { type: string }
+        contractName: { type: string }
+        servicePeriod: { type: string }
         feeStd: { type: string }
         feeCycle: { type: string }
         penalty: { type: string }
         payInfo: { type: string }
+        corpAccount: { type: string }
+        wxQrUrl: { type: string }
+        reducePolicy: { type: string }
         reduceTiers: { type: array, items: { $ref: '#/components/schemas/ReduceTier' } }
         litigation: { type: [object, 'null'], properties: { creditCode: { type: string }, legal: { type: string }, addr: { type: string } } }
         status: { type: string }
@@ -2079,6 +2126,7 @@ components:
         phone: { type: string }
         room: { type: string }
         dueCents: { $ref: '#/components/schemas/Money' }
+        penaltyCents: { description: '应收合计中滞纳金部分(≤dueCents，可不填=未拆分)', oneOf: [ { $ref: '#/components/schemas/Money' }, { type: 'null' } ] }
         arrearPeriod: { type: string, description: '欠费周期，如 2025-01~2025-12' }
         litigation: { type: [object, 'null'], description: '诉讼要素(可后补)', properties: { idCard: { type: string }, addr: { type: string } } }
     ManualCaseInput:
@@ -2091,6 +2139,7 @@ components:
         phone: { type: string }
         room: { type: string }
         dueCents: { $ref: '#/components/schemas/Money' }
+        penaltyCents: { description: '应收合计中滞纳金部分(≤dueCents，可不填=未拆分)', oneOf: [ { $ref: '#/components/schemas/Money' }, { type: 'null' } ] }
         arrearagePeriods: { type: array, items: { type: string }, description: '欠费周期(必填)' }
         litigationFields: { description: '诉讼要素(可后补)', oneOf: [ { $ref: '#/components/schemas/LitigationFields' }, { type: 'null' } ] }
     ImportResult:
@@ -2161,6 +2210,7 @@ components:
         ownerName: { type: string, description: 'redacted=true 时为脱敏占位 BR-M8-09' }
         room: { type: string }
         dueCents: { $ref: '#/components/schemas/Money' }
+        penaltyCents: { description: '应收合计中滞纳金拆分(本金=dueCents-penaltyCents；null=导入未拆分)', oneOf: [ { $ref: '#/components/schemas/Money' }, { type: 'null' } ] }
         reduceAfterCents: { $ref: '#/components/schemas/Money' }
         arrearagePeriods: { type: array, items: { type: string }, description: '欠费周期(必填·要素化诉状数据源 ERD CASE/BR-M2-15)' }
         litigationFields: { description: '诉讼要素(可后补·要素化诉状 BR-M4-18a)', oneOf: [ { $ref: '#/components/schemas/LitigationFields' }, { type: 'null' } ] }
@@ -2210,7 +2260,24 @@ components:
         case: { $ref: '#/components/schemas/Case' }
         contacts: { type: array, items: { $ref: '#/components/schemas/Contact' } }
         timeline: { type: array, items: { $ref: '#/components/schemas/Activity' } }
-        projectRef: { type: object, properties: { contractType: { type: string }, feeStd: { type: string }, payInfo: { type: string }, reduceTiers: { type: array, items: { $ref: '#/components/schemas/ReduceTier' } } } }
+        projectRef:
+          type: object
+          properties:
+            contractType: { type: string }
+            contractName: { type: string, description: '物业合同名称（高保真§项目档案）' }
+            servicePeriod: { type: string, description: '服务期限（高保真§项目档案）' }
+            feeCycle: { type: string, description: '缴费周期（高保真§收费标准）' }
+            feeStd: { type: string, description: '物业费标准（高保真§收费标准）' }
+            feeItems: { type: string, description: '费项构成（高保真§收费标准）' }
+            corpAccount: { type: string, description: '对公账户（高保真§收款信息）' }
+            wxQrUrl: { type: string, description: '微信收款码URL（高保真§收款信息）' }
+            payInfo: { type: string }
+            reducePolicy: { type: string, description: '减免政策描述（高保真§减免规则）' }
+            reduceTiers: { type: array, items: { $ref: '#/components/schemas/ReduceTier' } }
+            batchNo: { type: string, description: '批次号（高保真§批次信息）' }
+            commInRate: { type: string, description: '收佣比例%（平台↔物业·物业付佣视角）。资金双线：服务商视角字段级省略 BR-M9-11' }
+            payOutRate: { type: string, description: '付佣比例%（平台↔服务商·服务商收佣视角）。资金双线：物业视角字段级省略 BR-M9-11' }
+            commInConfirmed: { type: boolean, description: '收佣比例是否经平台最终确认（物业提案 false→平台确认 true）；服务商视角省略' }
         playbook: { type: [object, 'null'], properties: { version: { type: string }, content: { type: string } } }
         preCallStrategy: { oneOf: [ { $ref: '#/components/schemas/PreCallStrategy' }, { type: 'null' } ], description: '通话前策略(AI 动态生成·来自作战手册 BR-M5-04)；通话前话术辅助入口展示' }
         availableActions: { type: array, items: { type: string }, description: '按当前主体权限可用的操作点(驱动前端操作区显隐)' }
@@ -2299,6 +2366,23 @@ components:
         note: { type: string }
     LegalDocPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/LegalDoc' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }
     PayLink: { type: object, properties: { id: { type: string }, token: { type: string }, amountCents: { $ref: '#/components/schemas/Money' }, expiresAt: { type: string, format: date-time }, status: { $ref: '#/components/schemas/PayLinkStatusEnum' } } }
+    PayLinkDisplayStatusEnum: { type: string, description: '"我的缴费链接"展示口径(区别于内部 PayLinkStatusEnum 的 ACTIVE/EXPIRED)：PENDING_VIEW=待查看 VIEWED_UNPAID=已读未缴 PAID=已缴费 EXPIRED=已过期', enum: [PENDING_VIEW, VIEWED_UNPAID, PAID, EXPIRED] }
+    MyPayLinkItem:
+      type: object
+      description: 我的已发缴费链接跟踪单条(BR-M4-14/15)
+      properties:
+        id: { type: string }
+        caseId: { type: string }
+        token: { type: string, description: '拼 /pay/{token} 复制链接用' }
+        sentAt: { type: string, format: date-time }
+        ownerName: { type: string }
+        room: { type: string }
+        project: { type: string }
+        batch: { type: string }
+        amountCents: { $ref: '#/components/schemas/Money' }
+        channel: { type: string }
+        status: { $ref: '#/components/schemas/PayLinkDisplayStatusEnum' }
+    MyPayLinkPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/MyPayLinkItem' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }
     ReasonInput: { type: object, required: [reason], properties: { reason: { type: string } } }
     CloseInput: { type: object, required: [kind, reason], properties: { kind: { $ref: '#/components/schemas/CloseKindEnum' }, reason: { type: string, description: '受控原因枚举 CFG-CLOSE-REASONS' } } }
     DispatchInput:
@@ -2517,7 +2601,22 @@ components:
         totalCents: { $ref: '#/components/schemas/Money' }
         settledCents: { $ref: '#/components/schemas/Money' }
         unsettledCents: { $ref: '#/components/schemas/Money' }
-        rows: { type: array, items: { type: object, properties: { batch: { type: string }, repayCents: { $ref: '#/components/schemas/Money' }, rate: { $ref: '#/components/schemas/Rate' }, commCents: { $ref: '#/components/schemas/Money' }, settled: { type: boolean } } } }
+        rows: { type: array, description: '按(结算周期,批次,是否已结)聚合行（对标原型§我的结算）', items: { type: object, properties: { period: { type: string, description: '结算周期 YYYY-MM(按回款到账月)' }, project: { type: string, description: '项目名' }, batch: { type: string }, repayCents: { $ref: '#/components/schemas/Money' }, rate: { $ref: '#/components/schemas/Rate' }, commCents: { $ref: '#/components/schemas/Money' }, settled: { type: boolean } } } }
+
+    MyStats:
+      type: object
+      description: '催收员"我的业绩·结算"（服务商内部考核口径·仅本人 BR-M9-19a）：KPI + 提成汇总 + 批次为主线的回款/结算钻取列表（每批含案件级明细与已结/待结分组）'
+      properties:
+        month: { type: string, description: '统计月 YYYY-MM' }
+        repayCents: { $ref: '#/components/schemas/Money', description: '当期本人回款(到账归属快照口径)' }
+        repayCases: { type: integer, description: '回款户数(distinct 案件)' }
+        commissionCents: { $ref: '#/components/schemas/Money', description: '当期提成(回款×批次比例累计)' }
+        connectRate: { description: '接通率=已标注通话中接通占比；无标注数据为 null', oneOf: [ { $ref: '#/components/schemas/Rate' }, { type: 'null' } ] }
+        promiseFulfillRate: { description: '承诺兑现率=已兑现/(已兑现+部分+爽约)；无到期承诺为 null', oneOf: [ { $ref: '#/components/schemas/Rate' }, { type: 'null' } ] }
+        totalCommissionCents: { $ref: '#/components/schemas/Money', description: '累计提成(全批次·全时段·非仅当月)' }
+        settledCommissionCents: { $ref: '#/components/schemas/Money', description: '已结提成(关联 SETTLED 内部结算单)' }
+        unsettledCommissionCents: { $ref: '#/components/schemas/Money', description: '待结提成=累计-已结' }
+        rows: { type: array, description: '批次为主线的回款/结算列表（对标原型§我的业绩·结算）', items: { type: object, properties: { batchId: { type: string }, batch: { type: string }, project: { type: string }, holdCount: { type: integer, description: '当前持有案件数' }, repayCents: { $ref: '#/components/schemas/Money' }, repayRate: { oneOf: [ { $ref: '#/components/schemas/Rate' }, { type: 'null' } ], description: '回款率=回款/应收(本人持有部分)' }, rate: { oneOf: [ { $ref: '#/components/schemas/Rate' }, { type: 'null' } ], description: '本批提成比例' }, commissionCents: { $ref: '#/components/schemas/Money', description: '本批提成合计' }, settledCommissionCents: { $ref: '#/components/schemas/Money', description: '本批已结提成' }, unsettledCommissionCents: { $ref: '#/components/schemas/Money', description: '本批待结提成' }, settledLineCount: { type: integer, description: '已结笔数' }, totalLineCount: { type: integer, description: '本批回款笔数' }, lines: { type: array, description: '案件级回款明细(脱敏 BR-M8-09：房号/脱敏姓名/回款额/提成/到账日/是否已结/结清日)', items: { type: object, properties: { caseId: { type: string }, ownerMasked: { type: string }, room: { type: string }, repayCents: { $ref: '#/components/schemas/Money' }, commissionCents: { $ref: '#/components/schemas/Money' }, paidAt: { type: string }, settled: { type: boolean }, closedAt: { type: [string, 'null'] } } } } } } }
 
     # ---------- qc ----------
     RiskRecord:
@@ -2530,10 +2629,15 @@ components:
     # ---------- owner h5 ----------
     OwnerBill:
       type: object
-      description: '隐私最小化：仅缴费必要信息，不含催收过程/他案/服务商 BR-M7-07'
+      description: '隐私最小化：仅缴费必要信息，不含催收过程/他案/服务商 BR-M7-07。姓名脱敏后展示；房号为账单归属确认+对公转账备注必要信息'
       properties:
         community: { type: string }
-        payableCents: { $ref: '#/components/schemas/Money', description: '减免后应收' }
+        ownerMasked: { type: string, description: '业主脱敏姓名(首字+**，如 李**)' }
+        room: { type: string, description: '房号(账单归属确认；对公转账备注填此)' }
+        payableCents: { $ref: '#/components/schemas/Money', description: '最终实缴=减免后应收' }
+        dueCents: { $ref: '#/components/schemas/Money', description: '减免前应收合计(物业费+滞纳金)' }
+        penaltyCents: { description: '应收合计中滞纳金拆分(物业费本金=dueCents-penaltyCents；null=未拆分)', oneOf: [ { $ref: '#/components/schemas/Money' }, { type: 'null' } ] }
+        penaltyPolicy: { type: [string, 'null'], description: '滞纳金政策文字(项目配置)；金额未拆分时的兜底展示' }
         reductionCents: { $ref: '#/components/schemas/Money' }
         feeStd: { type: string }
         arrearagePeriods: { type: array, items: { type: string }, description: '欠费周期(如 ["2025-01","2025-02"]) BR-M7-02' }
@@ -2577,7 +2681,7 @@ components:
 
     # ---------- 存证 M6 ----------
     EvidenceInput: { type: object, required: [scene], properties: { scene: { $ref: '#/components/schemas/EvidenceSceneEnum' }, refIds: { type: array, items: { type: string }, description: '关联录音/工单/材料 id' }, note: { type: string } } }
-    EvidenceItem: { type: object, properties: { id: { type: string }, caseId: { type: string }, scene: { $ref: '#/components/schemas/EvidenceSceneEnum' }, status: { $ref: '#/components/schemas/EvidenceStatusEnum' }, certNo: { type: [string, 'null'] }, certUrl: { type: [string, 'null'] }, issuedAt: { type: [string, 'null'], format: date-time } } }
+    EvidenceItem: { type: object, properties: { id: { type: string }, caseId: { type: string }, scene: { $ref: '#/components/schemas/EvidenceSceneEnum' }, status: { $ref: '#/components/schemas/EvidenceStatusEnum' }, certNo: { type: [string, 'null'] }, certUrl: { type: [string, 'null'] }, issuedAt: { type: [string, 'null'], format: date-time }, preservationId: { type: [string, 'null'], description: '易保全保全备案号（多文件逗号分隔）；占位/未对接为 null' }, chainTxHash: { type: [string, 'null'], description: '易保全保全链交易 hash（ebqChainTransHash）' }, gznetId: { type: [string, 'null'], description: '广州互联网法院证据 id' }, antId: { type: [string, 'null'], description: '杭州互联网法院证据 id' } } }
     EvidencePackage:
       type: object
       description: '案件存证打包下载(已出证存证聚合·占位)'

@@ -4,6 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '../../stores/auth'
 import { api } from '../../api/client'
 import { promiseStateLabel, ticketStatusLabel } from '../../constants/enums'
+import PayLinkCard from '../../components/PayLinkCard.vue'
+import RecordingAudioPlayer from '../../components/RecordingAudioPlayer.vue'
+import AttachmentUpload from '../../components/AttachmentUpload.vue'
 
 // 移动案件作业台:详情 + 角色化动作(拨号提示/取最新录音→AI复盘/登记承诺/转工单/标记回款/发缴费链接/建议法务)。
 // 动作请求体与 PC CaseDetailView 完全一致,复用同一批后端端点。
@@ -84,17 +87,41 @@ async function submitRepay() {
   if (error) return toast('标记失败：' + ((error as any)?.message ?? ''))
   panel.value = null; toast('已标注线下回款 → 触发结清判定'); load()
 }
+const payLink = ref<any>(null)
+// 点「发缴费链接」立即自动生成免费预览（WECHAT_COPY，不扣条数），看完账单内容再决定要不要短信发送。
 async function sendPayLink() {
   busy.value = true
-  const { error } = await api.POST('/cases/{id}/pay-links', { params: { path: { id } }, body: { channel: 'SMS' } as any })
+  const { data, error } = await api.POST('/cases/{id}/pay-links', { params: { path: { id } }, body: { channel: 'WECHAT_COPY' } as any })
   busy.value = false
-  toast(error ? '发送失败：' + ((error as any)?.message ?? '') : '已发送缴费链接（短信）')
+  if (error) return toast('生成失败：' + ((error as any)?.message ?? ''))
+  payLink.value = data
+  panel.value = 'paylink'
+}
+// 短信发送：同一 token 指定 channel=SMS 重发，受短信冷却约束（移动端单击直达，不加二次确认）。
+async function sendSmsForPayLink() {
+  if (!payLink.value) return
+  busy.value = true
+  const { error } = await api.POST('/pay-links/{id}/resend', { params: { path: { id: String(payLink.value.id) } }, body: { channel: 'SMS' } as any })
+  busy.value = false
+  toast(error ? '短信发送失败：' + ((error as any)?.message ?? '') : '已通过短信发送')
 }
 async function suggestLegal() {
   busy.value = true
   const { error } = await api.POST('/cases/{id}/follow-ups', { params: { path: { id } }, body: { content: '【建议走法务】催收员建议本案进入法务程序（轻标·待协调员审）', method: 'OTHER' } as any })
   busy.value = false
   toast(error ? '建议失败' : '已轻标"建议走法务"（记入跟进）')
+}
+// APP 端上传附件/送达凭证(直传)：上传后尝试记入跟进时间线（跟进仅本案持有人可写，无权则文件已存但不记跟进）。
+async function onMobileUploaded(items: Array<{ id: string; name: string; url: string }>) {
+  let recorded = 0, failed = 0
+  for (const it of items) {
+    const { error } = await api.POST('/cases/{id}/follow-ups', { params: { path: { id } }, body: { content: '上传附件：' + it.name, method: 'OTHER', attachments: [{ name: it.name, url: it.url }] } as any })
+    if (error) failed++; else recorded++
+  }
+  if (recorded && !failed) toast('附件已上传并记入跟进')
+  else if (recorded) toast(`附件已上传，${recorded} 条记入跟进、${failed} 条仅存文件`)
+  else toast('附件已上传（无跟进权限，未记入时间线）')
+  load()
 }
 async function handleFirstTicket() {
   const pend = tickets.value.find((x: any) => x.status === 'PENDING')
@@ -110,8 +137,10 @@ async function handleFirstTicket() {
 async function startFetch() {
   panel.value = 'fetch'; fetchState.value = 'loading'; rec.value = null; review.value = null
   const { data, error } = await api.GET('/cases/{id}/recordings/latest', { params: { path: { id } } as any })
-  if (error || !data) { fetchState.value = 'none'; return }
-  rec.value = data; fetchState.value = 'ready'
+  // latest 返回 { hasRecording, recording, message }；须取 .recording 才有 id/status/时长/号码（否则字段全空、播放器无 id）
+  const d: any = data
+  if (error || !d?.hasRecording || !d?.recording) { fetchState.value = 'none'; return }
+  rec.value = d.recording; fetchState.value = 'ready'
 }
 async function openReview() {
   if (!rec.value?.id) return
@@ -182,6 +211,15 @@ onMounted(load)
         </div>
         <div class="mini" v-else>暂无承诺/工单记录</div>
       </div>
+
+      <!-- APP 端上传附件/送达凭证（直传，记入跟进） -->
+      <template v-if="auth.has('case.follow')">
+        <div class="sec">上传附件 / 送达凭证</div>
+        <div class="mc">
+          <AttachmentUpload :case-id="id" :qr="false" @uploaded="onMobileUploaded" />
+          <div class="mini" style="margin-top:6px">拍照或选文件上传（记入跟进时间线）。</div>
+        </div>
+      </template>
     </template>
 
     <div v-else class="mini" style="text-align:center;padding:30px 0">案件不存在或无权访问</div>
@@ -218,6 +256,8 @@ onMounted(load)
               <div><div class="v" style="font-size:13px">{{ rec?.phone || phone }}</div><div class="k">号码</div></div>
             </div>
           </div>
+          <!-- 回听录音音频（BR-M4-01b） -->
+          <RecordingAudioPlayer v-if="rec?.id" :recording-id="String(rec.id)" style="margin-top:10px" />
           <button class="mbtn pri" style="margin-top:8px" :disabled="rec?.status !== 'READY'" @click="openReview">查看 AI 复盘</button>
         </template>
         <template v-else>
@@ -299,6 +339,16 @@ onMounted(load)
         </div>
         <button class="mbtn pri" style="margin-top:12px" :disabled="busy" @click="submitRepay">确认标注回款</button>
         <button class="mbtn gho" style="margin-top:8px" @click="panel = null">取消</button>
+      </div>
+    </div>
+
+    <!-- 发缴费链接：结果（H5 链接 + 二维码 + 短信发送） -->
+    <div class="m-ov" v-if="panel === 'paylink' && payLink">
+      <header class="m-ab"><span class="m-back" @click="panel = null">‹ 缴费链接已生成</span></header>
+      <div class="m-body">
+        <div class="mc"><div class="mini">业主凭该链接免登录进入账单页；确认内容后可复制链接转发微信、下载二维码给业主扫码，或点「短信发送」（扣1条短信）。</div></div>
+        <div class="mc" style="margin-top:10px"><PayLinkCard :token="payLink.token" preview @send-sms="sendSmsForPayLink" /></div>
+        <button class="mbtn pri" style="margin-top:12px" @click="panel = null">完成</button>
       </div>
     </div>
 

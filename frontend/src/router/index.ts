@@ -7,6 +7,8 @@ const router = createRouter({
     { path: '/login', name: 'login', component: () => import('../views/LoginView.vue'), meta: { public: true } },
     // M7 业主自助 H5：公开页(免登录·不进 AppLayout)，业主扫码/短信链接进入
     { path: '/pay/:token', name: 'owner-bill', component: () => import('../views/OwnerBillView.vue'), meta: { public: true } },
+    // 扫码上传 H5：公开页(免登录)，手机扫桌面二维码进入，上传送达凭证/跟进附件
+    { path: '/u/:token', name: 'upload-h5', component: () => import('../views/UploadH5View.vue'), meta: { public: true } },
     {
       path: '/',
       component: () => import('../layouts/AppLayout.vue'),
@@ -28,7 +30,7 @@ const router = createRouter({
         { path: 'sms', name: 'sms', component: () => import('../views/SmsView.vue') },
         { path: 'script-lib', name: 'script-lib', component: () => import('../views/ScriptLibView.vue') },
         { path: 'org-mgmt', name: 'org-mgmt', component: () => import('../views/OrgMgmtView.vue') },
-        { path: 'my-settle', name: 'my-settle', component: () => import('../views/MySettleView.vue') },
+        { path: 'my-settle', redirect: '/my-stats' },   // 我的结算已并入「我的业绩·结算」(/my-stats)；保留重定向兼容老书签
         { path: 'legal', name: 'legal', component: () => import('../views/LegalView.vue') },
         { path: 'my-stats', name: 'my-stats', component: () => import('../views/MyStatsView.vue') },
         { path: 'my-links', name: 'my-links', component: () => import('../views/MyLinksView.vue') },
