@@ -15,7 +15,7 @@ import { statusLabel, reduceDecideLabel } from '../constants/enums'
 const route = useRoute()
 const router = useRouter()
 const auth = useAuth()
-const { showCommInRate, ratePct } = useRoleFields()
+const { role, showCommInRate, ratePct } = useRoleFields()
 const pid = String(route.params.id)
 const p = ref<any>(null)
 const playbook = ref<any>(null)
@@ -138,8 +138,9 @@ onMounted(load)
       减免阶梯
       <span class="note" style="margin:0 0 0 4px;font-weight:400">BR-M2-18a 阶梯+决定权</span>
       <span style="margin-left:auto">
-        <button v-if="auth.has('reduce.policy.edit')" class="btn txt" @click="openReduce">维护减免规则</button>
-        <button v-if="auth.has('reduce.policy.edit') && p.reduceTiers && p.reduceTiers.length" class="btn txt dgc" @click="clearReduce">清空</button>
+        <!-- 协调员 PC 项目档案只读（仅作战手册可编辑），减免规则不对 PC 开放——与内联档案/批次口径一致 -->
+        <button v-if="auth.has('reduce.policy.edit') && role !== 'PC'" class="btn txt" @click="openReduce">维护减免规则</button>
+        <button v-if="auth.has('reduce.policy.edit') && role !== 'PC' && p.reduceTiers && p.reduceTiers.length" class="btn txt dgc" @click="clearReduce">清空</button>
       </span>
     </div>
     <table>
