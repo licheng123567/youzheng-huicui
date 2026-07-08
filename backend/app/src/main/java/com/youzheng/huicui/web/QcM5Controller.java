@@ -60,8 +60,28 @@ public class QcM5Controller {
     private static final Set<String> DISPOSE_ACTIONS = Set.of("mark", "to_qc", "notify");
     private static final Set<String> REVIEW_VERDICTS = Set.of("CONFIRMED", "FALSE_POSITIVE", "ESCALATED");
     private static final Set<String> RISK_LEVELS = Set.of("HIGH", "MID", "LOW");
+    // 平台处理决定分档（约谈/警告/限期整改/限制/停用）。仅 DEACTIVATE 真置账号停用；其余仅记录+通知+跟踪。
+    private static final Set<String> QC_DECISIONS = Set.of("INTERVIEW", "WARNING", "RECTIFY", "RESTRICT", "DEACTIVATE");
+    private static final Map<String, String> DECISION_LABEL = Map.of(
+            "INTERVIEW", "约谈", "WARNING", "警告", "RECTIFY", "限期整改", "RESTRICT", "限制", "DEACTIVATE", "停用账号");
 
     private static final String DEFAULT_TASK_TYPE = "整改培训";
+
+    /** 写一条站内信（复用 notification 表；FollowUpM4Controller 同范式）。recipient 为 null 时跳过。 */
+    private void notify(Long recipientId, String type, String title, String body, String refType, Long refId) {
+        if (recipientId == null) return;
+        jdbc.update(
+                "INSERT INTO notification(recipient_account_id, type, title, body, ref_type, ref_id)"
+                        + " VALUES (?, ?, ?, ?, ?, ?)",
+                recipientId, type, title, body, refType, refId);
+    }
+
+    /** 取某组织的负责人账号(PL/VL)用于通知归属方；无则 null。 */
+    private Long orgOwnerAccount(long orgId) {
+        return jdbc.query(
+                "SELECT id FROM account WHERE org_id = ? AND role_template IN ('PL','VL') AND status = 'ACTIVE' ORDER BY id LIMIT 1",
+                rs -> rs.next() ? rs.getLong("id") : null, orgId);
+    }
 
     // ── [1] GET /risks  listRisks ────────────────────────────────────────────────
     // scope=range（三方隔离 BR-M5-07）。无 x-permission：列表靠 scope 控可见，仅裁剪不抛 403。
@@ -98,15 +118,20 @@ public class QcM5Controller {
         pageArgs.add(pg.offset);
         List<RiskRecordDto> items = jdbc.query(
                 "SELECT r.id, r.case_id, acc.name AS collector_name, r.type, r.level,"
-                        + " r.segment_ts, r.reviewed " + base + " ORDER BY r.id DESC LIMIT ? OFFSET ?",
-                (rs, i) -> new RiskRecordDto(
-                        String.valueOf(rs.getLong("id")),
-                        String.valueOf(rs.getLong("case_id")),
-                        rs.getString("collector_name"),
-                        rs.getString("type"),
-                        rs.getString("level"),
-                        rs.getString("segment_ts"),
-                        rs.getString("reviewed")),     // NULL→null（契约 reviewed oneOf null）
+                        + " r.segment_ts, r.reviewed, r.call_id " + base + " ORDER BY r.id DESC LIMIT ? OFFSET ?",
+                (rs, i) -> {
+                    long callId = rs.getLong("call_id");
+                    boolean noCall = rs.wasNull();     // 必须紧跟 getLong 取 wasNull（后续读列会重置）
+                    return new RiskRecordDto(
+                            String.valueOf(rs.getLong("id")),
+                            String.valueOf(rs.getLong("case_id")),
+                            rs.getString("collector_name"),
+                            rs.getString("type"),
+                            rs.getString("level"),
+                            rs.getString("segment_ts"),
+                            rs.getString("reviewed"),           // NULL→null（契约 reviewed oneOf null）
+                            noCall ? null : String.valueOf(callId));   // call_id → recordingId（无录音→null）
+                },
                 pageArgs.toArray());
 
         return Page.of(items, pg, total == null ? 0 : total);
@@ -183,6 +208,11 @@ public class QcM5Controller {
         String verdict = requireEnum(body, "verdict", REVIEW_VERDICTS,
                 "verdict 非法（CONFIRMED/FALSE_POSITIVE/ESCALATED）");  // 缺/非枚举→422
         String note = optStr(body, "note");
+        String decision = optStr(body, "decision");                 // 可选处理决定（CONFIRMED 时）
+        if (decision != null && !QC_DECISIONS.contains(decision)) {
+            throw new ApiException(BizError.VALIDATION_422, "decision 非法（INTERVIEW/WARNING/RECTIFY/RESTRICT/DEACTIVATE）");
+        }
+        String decisionNote = optStr(body, "decisionNote");
 
         // SA 全量；SE 须该风险在 data_range 内（越范围→404，B-01 收口）。loadVisibleRisk 含存在性+可见性。
         RiskSnapshot before = riskQc.loadVisibleRisk(s, riskId);
@@ -198,16 +228,28 @@ public class QcM5Controller {
                 verdict, actorId, riskId);
 
         if ("CONFIRMED".equals(verdict) || "ESCALATED".equals(verdict)) {
-            // 建 dispose_task（责任 org = 违规人所属组织 actorOrgId）；先查后插表级幂等。
+            // 建 dispose_task（责任 org = 违规人所属组织 actorOrgId；带处理决定/当事人）；先查后插表级幂等。
             Long existing = jdbc.query(
                     "SELECT id FROM dispose_task WHERE risk_id = ? ORDER BY id LIMIT 1",
                     rs -> rs.next() ? rs.getLong("id") : null, riskId);
             if (existing == null) {
                 jdbc.update(
-                        "INSERT INTO dispose_task(risk_id, provider, task_type, status, tm)"
-                                + " VALUES (?, ?, ?, 'PENDING', now())",
-                        riskId, before.actorOrgId(), DEFAULT_TASK_TYPE);
+                        "INSERT INTO dispose_task(risk_id, provider, task_type, status, tm, decision, target_account_id, decision_note)"
+                                + " VALUES (?, ?, ?, 'PENDING', now(), ?, ?, ?)",
+                        riskId, before.actorOrgId(), DEFAULT_TASK_TYPE, decision, before.collectorId(), decisionNote);
+            } else if (decision != null) {   // 复核幂等：已建任务则补写处理决定
+                jdbc.update("UPDATE dispose_task SET decision = ?, target_account_id = ?, decision_note = ?, updated_at = now()"
+                        + " WHERE id = ?", decision, before.collectorId(), decisionNote, existing);
             }
+            // DEACTIVATE：真置违规人账号停用（account.status=DISABLED；login 已校验非 ACTIVE→拒登）。
+            if ("DEACTIVATE".equals(decision)) {
+                jdbc.update("UPDATE account SET status = 'DISABLED', updated_at = now() WHERE id = ?", before.collectorId());
+            }
+            // 站内信：通知归属方负责人 + 当事人（处理决定 + 沟通内容）。
+            String dLabel = decision == null ? "确认风险" : DECISION_LABEL.getOrDefault(decision, decision);
+            String bodyMsg = "质检风险已确认，处理决定：" + dLabel + (decisionNote == null ? "" : ("。说明：" + decisionNote));
+            notify(orgOwnerAccount(before.actorOrgId()), "QC_HANDLING", "质检处理决定", bodyMsg, "risk", riskId);
+            notify(before.collectorId(), "QC_HANDLING", "质检处理决定（本人）", bodyMsg, "risk", riskId);
         } else {  // FALSE_POSITIVE → 撤销：不建任务；已存 PENDING 任务置 DONE 留痕。
             jdbc.update(
                     "UPDATE dispose_task SET status = 'DONE', updated_at = now()"
@@ -223,33 +265,78 @@ public class QcM5Controller {
         return Map.of("ok", true, "verdict", verdict);
     }
 
-    // ── [5] GET /dispose-tasks  listDisposeTasks（BR-M5-07b 仅平台监管视图）────────
-    // scope=platform，无 x-permission。非平台（物业/服务商两侧）→403 Forbidden。
+    // ── [5] GET /dispose-tasks  listDisposeTasks（平台监管全量 + 归属方见本组织任务 BR-M5-07b）──
+    // scope=range：平台全量；归属方(VL/PL)按 d.provider=本组织裁剪；其余(CO 等无组织负责人语义)→空。
     @GetMapping("/dispose-tasks")
     public Page<QcDisposeTaskDto> listDisposeTasks(@RequestParam(required = false) Integer page,
                                                    @RequestParam(required = false) Integer size) {
         CurrentSubject s = SubjectContext.get();
-        if (!s.isPlatform()) {
-            throw new ApiException(BizError.PERM_403, "处置任务跟踪仅平台可见");
-        }
         Pageable pg = Pageable.of(page, size);
 
-        Long total = jdbc.queryForObject("SELECT count(*) FROM dispose_task", Long.class);
+        String where = " WHERE 1=1";
+        List<Object> args = new ArrayList<>();
+        if (!s.isPlatform()) {
+            Long orgId = parseOrgIdOrNull(s);
+            if (orgId == null || !s.has("qc.dispose")) { where += " AND 1=0"; }  // 非平台且非归属方(无 qc.dispose)→空
+            else { where += " AND d.provider = ?"; args.add(orgId); }
+        }
+        String base = " FROM dispose_task d"
+                + " LEFT JOIN org o ON o.id = d.provider"
+                + " LEFT JOIN account ta ON ta.id = d.target_account_id" + where;
+        Long total = jdbc.queryForObject("SELECT count(*)" + base, Long.class, args.toArray());
+        List<Object> pageArgs = new ArrayList<>(args);
+        pageArgs.add(pg.size); pageArgs.add(pg.offset);
         List<QcDisposeTaskDto> items = jdbc.query(
-                "SELECT d.id, d.risk_id, o.name AS provider_name, d.task_type, d.status, d.tm"
-                        + " FROM dispose_task d"
-                        + " LEFT JOIN org o ON o.id = d.provider"
-                        + " ORDER BY d.id DESC LIMIT ? OFFSET ?",
+                "SELECT d.id, d.risk_id, o.name AS provider_name, d.task_type, d.status, d.tm,"
+                        + " d.decision, d.decision_note, ta.name AS target_name, d.receipt_note, d.receipted_at"
+                        + base + " ORDER BY d.id DESC LIMIT ? OFFSET ?",
                 (rs, i) -> new QcDisposeTaskDto(
                         String.valueOf(rs.getLong("id")),
                         String.valueOf(rs.getLong("risk_id")),
                         rs.getString("provider_name"),
                         rs.getString("task_type"),
                         rs.getString("status"),
-                        ts(rs.getTimestamp("tm"))),
-                pg.size, pg.offset);
+                        ts(rs.getTimestamp("tm")),
+                        rs.getString("decision"),
+                        rs.getString("decision_note"),
+                        rs.getString("target_name"),
+                        rs.getString("receipt_note"),
+                        ts(rs.getTimestamp("receipted_at"))),
+                pageArgs.toArray());
 
         return Page.of(items, pg, total == null ? 0 : total);
+    }
+
+    // ── [5b] POST /dispose-tasks/{id}/rectify  归属方提交整改回执 → DONE + 通知平台 ──
+    @PostMapping("/dispose-tasks/{id}/rectify")
+    @RequirePermission("qc.dispose")
+    @Transactional
+    public Map<String, Object> rectifyDisposeTask(@PathVariable("id") String id,
+                                                  @RequestBody(required = false) Map<String, Object> body) {
+        CurrentSubject s = SubjectContext.get();
+        long taskId = parseId(id);
+        // 任务存在 + 归属方本组织（d.provider = 本组织）才可回执。
+        Map<String, Object> row;
+        try {
+            row = jdbc.queryForMap("SELECT provider, risk_id, status FROM dispose_task WHERE id = ?", taskId);
+        } catch (org.springframework.dao.EmptyResultDataAccessException e) {
+            throw new ApiException(BizError.NOT_FOUND_404, "处置任务不存在: " + id);
+        }
+        long providerOrg = ((Number) row.get("provider")).longValue();
+        Long myOrg = parseOrgIdOrNull(s);
+        if (!s.isPlatform() && (myOrg == null || myOrg != providerOrg)) {
+            throw new ApiException(BizError.PERM_403, "仅归属方可提交本组织整改回执");
+        }
+        String receiptNote = optStr(body, "receiptNote");
+        jdbc.update("UPDATE dispose_task SET status = 'DONE', receipt_note = ?, receipted_at = now(), updated_at = now() WHERE id = ?",
+                receiptNote, taskId);
+        // 通知平台复核人（该风险 reviewed_by）整改已回执。
+        long riskId = ((Number) row.get("risk_id")).longValue();
+        Long reviewer = jdbc.query("SELECT reviewed_by FROM risk_record WHERE id = ?",
+                rs -> rs.next() ? (Long) rs.getObject("reviewed_by") : null, riskId);
+        notify(reviewer, "QC_RECTIFIED", "整改回执已提交",
+                "归属方已提交整改回执" + (receiptNote == null ? "" : ("：" + receiptNote)), "risk", riskId);
+        return Map.of("ok", true);
     }
 
     // ── scope 助手（与 CasesM2Controller.appendRangeScope 同口径，落到 risk 所属案件）────

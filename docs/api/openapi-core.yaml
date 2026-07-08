@@ -1386,22 +1386,35 @@ paths:
     post:
       operationId: reviewRisk
       tags: [qc]
-      summary: 平台复核(确认/误报/升级 BR-M5-07c)。确认/升级→建处置任务；误报→撤销
+      summary: 平台复核(确认/误报/升级 BR-M5-07c)。确认→建处置任务(可带处理决定)；误报→撤销
       x-permission: qc.review
       x-data-scope: platform
-      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { verdict: { $ref: '#/components/schemas/RiskReviewVerdictEnum' }, note: { type: string } }, required: [verdict] } } } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { verdict: { $ref: '#/components/schemas/RiskReviewVerdictEnum' }, note: { type: string }, decision: { $ref: '#/components/schemas/QcDecisionEnum' }, decisionNote: { type: string, description: '沟通/处理说明；随通知发给归属方与当事人' } }, required: [verdict] } } } }
       responses: { '200': { description: ok } }
 
   /dispose-tasks:
     get:
       operationId: listDisposeTasks
       tags: [qc]
-      summary: 风险处置任务跟踪(**仅平台监管视图**·两侧不可见 BR-M5-07b)
-      x-data-scope: platform
+      summary: 风险处置任务跟踪(平台监管全量·归属方 VL/PL 见本组织任务 BR-M5-07b)
+      x-data-scope: range
       parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
       responses:
         '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/DisposeTaskPage' } } } }
+
+  /dispose-tasks/{id}/rectify:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    post:
+      operationId: rectifyDisposeTask
+      tags: [qc]
+      summary: 归属方(VL/PL)提交整改回执→任务 DONE，并通知平台复核人
+      x-permission: qc.dispose
+      x-data-scope: own-org
+      requestBody: { required: false, content: { application/json: { schema: { type: object, properties: { receiptNote: { type: string, description: '整改回执说明' } } } } } }
+      responses:
+        '200': { description: ok }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /pay/{token}:
     parameters: [ { name: token, in: path, required: true, schema: { type: string } } ]
@@ -2008,7 +2021,8 @@ components:
     PayLinkStatusEnum: { type: string, enum: [ACTIVE, EXPIRED] }
     RiskLevelEnum: { type: string, enum: [HIGH, MID, LOW] }
     RiskReviewVerdictEnum: { type: string, enum: [CONFIRMED, FALSE_POSITIVE, ESCALATED] }
-    DisposeTaskStatusEnum: { type: string, enum: [PENDING, DONE] }
+    DisposeTaskStatusEnum: { type: string, enum: [PENDING, IN_PROGRESS, DONE] }
+    QcDecisionEnum: { type: string, enum: [INTERVIEW, WARNING, RECTIFY, RESTRICT, DEACTIVATE], description: '平台处理决定：约谈/警告/限期整改/限制/停用(仅停用真置账号 DISABLED)' }
     SupervisionActionEnum: { type: string, enum: [REMIND, TALK, TRAINING, NOTE], description: '督导动作：REMIND=提醒 ｜ TALK=督导谈话 ｜ TRAINING=安排培训 ｜ NOTE=记录(BR-M10-10)' }
     SmsSendStatusEnum: { type: string, enum: [SENT, FAILED, DELIVERED], description: '短信发送状态：SENT=已发送 ｜ FAILED=发送失败 ｜ DELIVERED=已送达(依通道能力 BR-M9-08)' }
 
@@ -2621,10 +2635,10 @@ components:
     # ---------- qc ----------
     RiskRecord:
       type: object
-      properties: { id: { type: string }, caseId: { type: string }, collector: { type: string }, type: { type: string }, level: { $ref: '#/components/schemas/RiskLevelEnum' }, segmentTs: { type: string }, reviewed: { oneOf: [ { $ref: '#/components/schemas/RiskReviewVerdictEnum' }, { type: 'null' } ] } }
+      properties: { id: { type: string }, caseId: { type: string }, collector: { type: string }, type: { type: string }, level: { $ref: '#/components/schemas/RiskLevelEnum' }, segmentTs: { type: string }, reviewed: { oneOf: [ { $ref: '#/components/schemas/RiskReviewVerdictEnum' }, { type: 'null' } ] }, recordingId: { type: [string, 'null'], description: '关联录音 id（跳通话记录页+AI复盘；无录音为 null）' } }
     DisposeTask:
       type: object
-      properties: { id: { type: string }, riskId: { type: string }, provider: { type: string }, taskType: { type: string }, status: { $ref: '#/components/schemas/DisposeTaskStatusEnum' }, tm: { type: string } }
+      properties: { id: { type: string }, riskId: { type: string }, provider: { type: string }, taskType: { type: string }, status: { $ref: '#/components/schemas/DisposeTaskStatusEnum' }, tm: { type: string }, decision: { type: [string, 'null'], description: '平台处理决定 INTERVIEW/WARNING/RECTIFY/RESTRICT/DEACTIVATE' }, decisionNote: { type: [string, 'null'] }, targetAccount: { type: [string, 'null'], description: '当事人（违规人）展示名' }, receiptNote: { type: [string, 'null'], description: '归属方整改回执' }, receiptedAt: { type: [string, 'null'], format: date-time } }
 
     # ---------- owner h5 ----------
     OwnerBill:
