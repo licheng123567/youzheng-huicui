@@ -18,7 +18,7 @@ test.describe('存证菜单与可见性门控(H-02)', () => {
     await loginRole(page, 'PC')
     await expect(page.getByRole('menuitem', { name: '存证' })).toBeVisible()
     await page.goto('/evidence')
-    await expect(page.locator('.el-card').first()).toBeVisible()
+    await expect(page.locator('.card').first()).toBeVisible()
   })
 
   for (const role of ['VL', 'CO'] as const) {
@@ -26,7 +26,7 @@ test.describe('存证菜单与可见性门控(H-02)', () => {
       await loginRole(page, role)
       await page.goto('/evidence')
       // 服务商范围无存证：表格无数据行
-      await expect(page.locator('.el-table__row')).toHaveCount(0)
+      await expect(page.locator('tbody tr')).toHaveCount(0)
     })
   }
 
@@ -34,6 +34,6 @@ test.describe('存证菜单与可见性门控(H-02)', () => {
     await loginRole(page, 'SA')
     await expect(page.getByRole('menuitem', { name: '存证' })).toBeVisible()
     await page.goto('/evidence')
-    await expect(page.locator('.el-table__row').first()).toBeVisible()
+    await expect(page.locator('tbody tr').first()).toBeVisible()
   })
 })
