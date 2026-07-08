@@ -7,7 +7,7 @@ export async function loginAs(page: Page, username: string, password = DEV_PW) {
   await page.goto('/login')
   await page.getByPlaceholder(/用户名/).fill(username)
   await page.getByPlaceholder(/口令/).fill(password)
-  await page.getByRole('button', { name: '登录' }).click()
+  await page.getByRole('button', { name: /登\s*录/ }).click()
   await expect(page).not.toHaveURL(/\/login/, { timeout: 10_000 })
 }
 

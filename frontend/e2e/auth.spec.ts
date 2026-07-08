@@ -13,8 +13,8 @@ test.describe('US-M1 登录与多账号', () => {
     await page.goto('/login')
     await page.getByPlaceholder(/用户名/).fill('duo_pc')
     await page.getByPlaceholder(/口令/).fill(DEV_PW)
-    await page.getByRole('button', { name: '登录' }).click()
-    await expect(page.getByText(/该手机关联多个账号/)).toBeVisible()  // 多账号选择出现
+    await page.getByRole('button', { name: /登\s*录/ }).click()
+    await expect(page.getByText(/该手机号?关联多个账号/)).toBeVisible()  // 多账号选择出现
     const choices = page.getByRole('button', { name: /多账号·/ })
     await expect(choices.first()).toBeVisible()
     await choices.first().click()
@@ -24,12 +24,12 @@ test.describe('US-M1 登录与多账号', () => {
 
   test('短信登录(13900009000+000000)→多账号选择', async ({ page }) => {
     await page.goto('/login')
-    await page.getByText('短信登录', { exact: true }).click()  // el-radio-button(非 button role)
+    await page.getByText('手机验证码', { exact: true }).click()  // 登录模式 Tab(ds-admin 文案)
     await page.getByPlaceholder(/手机号/).fill('13900009000')
     await page.getByRole('button', { name: /获取验证码/ }).click()
     await page.getByPlaceholder(/验证码/).fill('000000')
-    await page.getByRole('button', { name: '登录' }).click()
-    await expect(page.getByText(/该手机关联多个账号/)).toBeVisible()
+    await page.getByRole('button', { name: /登\s*录/ }).click()
+    await expect(page.getByText(/该手机号?关联多个账号/)).toBeVisible()
   })
 
   test('未登录访问受保护页→重定向登录', async ({ page }) => {

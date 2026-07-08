@@ -134,6 +134,7 @@ function logout() {
             v-for="m in g.items"
             :key="m.path"
             class="mi"
+            role="menuitem"
             :class="{ on: route.path.startsWith(m.path) }"
             @click="router.push(m.path)"
           >

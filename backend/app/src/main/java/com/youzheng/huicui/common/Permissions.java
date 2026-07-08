@@ -23,8 +23,15 @@ public final class Permissions {
             case "SA", "SE" -> Set.of("proj.edit", "batch.import", "case.dispatch", "case.void", "case.close",
                     "payreq.create", "payreq.complete", "qc.review", "qc.escalate", "member.manage", "report.export",
                     "org.manage", "ai.config", "billing.recharge", "settings.manage");   // 平台：建组织/AI配置/充值/系统设置
-            // 物业负责人/协调员（+处置/上报质检 BR-M5-07a；+撤案/坏账 BR-M8；+管本组织成员；+采纳作战手册 BR-M5）
-            case "PL", "PC" -> Set.of("proj.edit", "reduce.policy.edit", "case.follow", "case.paylink",
+            // 物业负责人 PL（项目主数据 owner：+proj.edit 项目档案/协调员/背景/佣金提案 + 减免政策）
+            case "PL" -> Set.of("proj.edit", "reduce.policy.edit", "case.follow", "case.paylink",
+                    "case.repay.mark", "case.reduce", "reduce.approve", "evidence.create", "legal.create",
+                    "qc.dispose", "qc.escalate", "case.close", "member.manage", "playbook.adopt", "ticket.handle",
+                    "case.call");
+            // 物业协调员 PC（纯协调/作业：项目信息只读——无 proj.edit；作战手册可修正优化——保留 playbook.adopt）
+            //   与既定设计一致（BatchDetailView 注释「PC 无 proj.edit 写权」）：PC 不改项目档案/协调员/背景/佣金提案，
+            //   仅按 case-actor 做案件作业 + 采纳/优化作战手册。其余（减免政策 reduce.policy.edit 等）暂维持。
+            case "PC" -> Set.of("reduce.policy.edit", "case.follow", "case.paylink",
                     "case.repay.mark", "case.reduce", "reduce.approve", "evidence.create", "legal.create",
                     "qc.dispose", "qc.escalate", "case.close", "member.manage", "playbook.adopt", "ticket.handle",
                     "case.call");
