@@ -49,7 +49,7 @@ const NAV_BY_ROLE: Record<string, NavItem[]> = {
   PL: [{ group: '业务' }, 'workbench', 'projects', 'cases', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'billing', 'recharge', 'sms', { group: '管理' }, 'reports', 'members', 'audit', { group: '消息' }, 'inbox'],
   PC: [{ group: '业务' }, 'workbench', 'cases', 'callLog', 'myLinks', { group: '项目' }, 'projects', { group: '能力' }, 'qc', 'legal', 'evidence', { group: '财务' }, 'reconIn', { group: '我的' }, 'myStats', { group: '消息' }, 'inbox'],
   VL: [{ group: '业务' }, 'workbench', 'providerSea', 'projects', 'qc', 'cases', { group: '财务' }, 'reconOut', 'coCommission', 'recharge', 'billing', { group: '管理' }, 'reports', 'members', 'audit', { group: '消息' }, 'inbox'],
-  CO: [{ group: '业务' }, 'workbench', 'myCases', 'providerSea', 'callLog', 'myLinks', { group: '我的' }, 'myStats', { group: '消息' }, 'inbox'],
+  CO: [{ group: '业务' }, 'workbench', 'myCases', 'providerSea', 'callLog', 'myLinks', { group: '能力' }, 'qc', { group: '我的' }, 'myStats', { group: '消息' }, 'inbox'],
 }
 // 对账菜单标题按角色视角相对命名（对标原型 navLabel，index.html §navLabel）：
 // 物业(PL/PC)=付佣(物业付平台)、服务商(VL)的 reconOut=收佣(服务商收平台)、平台用收/付佣本名。

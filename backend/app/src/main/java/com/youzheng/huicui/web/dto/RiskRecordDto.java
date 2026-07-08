@@ -9,6 +9,7 @@ package com.youzheng.huicui.web.dto;
  *   level     = level（RiskLevelEnum HIGH|MID|LOW）
  *   segmentTs = segment_ts（"mm:ss"）
  *   reviewed  = reviewed（RiskReviewVerdictEnum；未复核 NULL→null，契约 oneOf null）
+ *   recordingId = call_id（关联录音；供前端跳「通话记录页 + AI 复盘」；无录音→null）
  */
 public record RiskRecordDto(
         String id,
@@ -17,5 +18,6 @@ public record RiskRecordDto(
         String type,
         String level,
         String segmentTs,
-        String reviewed
+        String reviewed,
+        String recordingId
 ) {}

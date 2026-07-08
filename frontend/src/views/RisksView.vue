@@ -14,9 +14,17 @@ const isPlatform = computed(() => ['SA', 'SE'].includes(auth.me?.role ?? ''))
 // 物业角色(PL/PC)：风险看板只「上报」不「处置」——对标原型 §质检 role==='PL'||'PC' 仅 escalate。
 // 处置(标记/转质检/通知)是服务商(VL)对本商催收员风险的动作；物业对催收员风险只上报平台。
 const isProperty = computed(() => ['PL', 'PC'].includes(auth.me?.role ?? ''))
+// 归属方(VL/PL/PC 有 qc.dispose)：可见本组织整改任务 + 提交整改回执。
+const isOwner = computed(() => auth.has('qc.dispose'))
 const risks = ref<any[]>([])
 const tasks = ref<any[]>([])
 const loading = ref(false)
+// 平台处理决定分档
+const DECISIONS = [
+  { v: 'INTERVIEW', label: '约谈' }, { v: 'WARNING', label: '警告' }, { v: 'RECTIFY', label: '限期整改' },
+  { v: 'RESTRICT', label: '限制' }, { v: 'DEACTIVATE', label: '停用账号' },
+]
+const decisionLabel = (d?: string) => DECISIONS.find((x) => x.v === d)?.label ?? (d || '—')
 const levelType = (l: string) => ({ HIGH: 'danger', MID: 'warning', LOW: 'info' } as any)[l] ?? 'info'
 // 纯展示：风险级别 → ds-admin .tag 配色（dan/war/inf），仅用于 markup 着色
 const levelTag = (l: string) => ({ HIGH: 'dan', MID: 'war', LOW: 'inf' } as any)[l] ?? 'inf'
@@ -25,7 +33,7 @@ async function load() {
   loading.value = true
   const r = await api.GET('/risks', { params: { query: { page: 1, size: 30 } } as any })
   risks.value = (r.data as any)?.items ?? []
-  if (isPlatform.value) {
+  if (isPlatform.value || isOwner.value) {
     const t = await api.GET('/dispose-tasks', { params: { query: { page: 1, size: 20 } } as any })
     tasks.value = (t.data as any)?.items ?? []
   }
@@ -46,13 +54,24 @@ async function escalate(row: any) {
   if (error) { ElMessage.error('上报失败：' + ((error as any)?.message ?? '')); return }
   ElMessage.success('已上报平台'); load()
 }
-// 复核（平台）
+// 复核（平台）：确认属实时可选处理决定(分档) + 沟通内容 → 通知归属方与当事人；停用真置账号停用
 const rdlg = ref(false); const rform = ref<any>({})
-function openReview(row: any) { rform.value = { id: row.id, verdict: 'CONFIRMED', note: '' }; rdlg.value = true }
+function openReview(row: any) { rform.value = { id: row.id, verdict: 'CONFIRMED', note: '', decision: 'INTERVIEW', decisionNote: '' }; rdlg.value = true }
 async function submitReview() {
-  const { error } = await api.POST('/risks/{id}/review', { params: { path: { id: rform.value.id } }, body: { verdict: rform.value.verdict, note: rform.value.note } as any })
+  const f = rform.value
+  const body: any = { verdict: f.verdict, note: f.note }
+  if (f.verdict === 'CONFIRMED') { body.decision = f.decision; body.decisionNote = f.decisionNote }
+  const { error } = await api.POST('/risks/{id}/review', { params: { path: { id: f.id } }, body })
   if (error) { ElMessage.error('复核失败：' + ((error as any)?.message ?? '')); return }
-  ElMessage.success('复核完成'); rdlg.value = false; load()
+  ElMessage.success(f.verdict === 'CONFIRMED' ? '已复核并下发处理决定' : '复核完成'); rdlg.value = false; load()
+}
+// 整改回执（归属方 VL/PL）→ 任务 DONE + 通知平台
+const cdlg = ref(false); const cform = ref<any>({})
+function openRectify(t: any) { cform.value = { id: t.id, receiptNote: '' }; cdlg.value = true }
+async function submitRectify() {
+  const { error } = await api.POST('/dispose-tasks/{id}/rectify', { params: { path: { id: cform.value.id } }, body: { receiptNote: cform.value.receiptNote } as any })
+  if (error) { ElMessage.error('回执失败：' + ((error as any)?.message ?? '')); return }
+  ElMessage.success('整改回执已提交'); cdlg.value = false; load()
 }
 onMounted(load)
 </script>
@@ -117,29 +136,38 @@ onMounted(load)
 
     <div class="alert info">处置归属(BR-M5-07a)：服务商 VL 处置本商催收员风险、物业 PL 处置本物业协调员风险；平台只复核(CONFIRMED/FALSE_POSITIVE/ESCALATED)。</div>
 
-    <template v-if="isPlatform">
+    <template v-if="isPlatform || isOwner">
       <div class="card-h" style="margin-top:22px">
-        <div class="t"><span class="bar"></span>处置任务跟踪</div>
-        <div class="ops"><span class="note" style="margin:0">GET /dispose-tasks · 仅平台监管视图 BR-M5-07b</span></div>
+        <div class="t"><span class="bar"></span>{{ isPlatform ? '处置任务跟踪' : '我的整改任务' }}</div>
+        <div class="ops"><span class="note" style="margin:0">{{ isPlatform ? 'GET /dispose-tasks · 平台监管 + 处理决定/整改回执' : '本组织整改任务 · 提交回执闭环' }}</span></div>
       </div>
       <table>
         <thead>
           <tr>
-            <th>服务商</th>
-            <th>任务类型</th>
-            <th style="width:120px">状态</th>
+            <th>归属方</th>
+            <th>当事人</th>
+            <th>处理决定</th>
+            <th>整改回执</th>
+            <th style="width:100px">状态</th>
             <th>时间</th>
+            <th v-if="!isPlatform" style="width:120px">操作</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="t in tasks" :key="t.id">
             <td>{{ t.provider || '—' }}</td>
-            <td>{{ t.taskType || '—' }}</td>
-            <td :title="t.status">{{ disposeTaskStatusLabel(t.status) }}</td>
-            <td>{{ t.tm || '—' }}</td>
+            <td>{{ t.targetAccount || '—' }}</td>
+            <td :title="t.decisionNote || ''">{{ decisionLabel(t.decision) }}<span v-if="t.decisionNote" class="note" style="margin:0;font-size:11px"> · {{ t.decisionNote }}</span></td>
+            <td>{{ t.receiptNote || '—' }}</td>
+            <td :title="t.status"><span class="tag" :class="t.status === 'DONE' ? 'suc' : (t.status === 'IN_PROGRESS' ? 'war' : 'inf')">{{ disposeTaskStatusLabel(t.status) }}</span></td>
+            <td>{{ t.receiptedAt || t.tm || '—' }}</td>
+            <td v-if="!isPlatform">
+              <button v-if="t.status !== 'DONE'" class="btn txt" @click="openRectify(t)">提交整改回执</button>
+              <span v-else class="tag suc" style="font-size:11px">已回执</span>
+            </td>
           </tr>
           <tr v-if="!tasks.length">
-            <td colspan="4" style="text-align:center;color:var(--sec);padding:32px 0">暂无数据</td>
+            <td :colspan="isPlatform ? 6 : 7" style="text-align:center;color:var(--sec);padding:32px 0">暂无数据</td>
           </tr>
         </tbody>
       </table>
@@ -168,9 +196,27 @@ onMounted(load)
             <el-option label="升级 ESCALATED" value="ESCALATED" />
           </el-select>
         </el-form-item>
-        <el-form-item label="说明"><el-input v-model="rform.note" type="textarea" :rows="2" /></el-form-item>
+        <template v-if="rform.verdict === 'CONFIRMED'">
+          <el-form-item label="处理决定">
+            <el-select v-model="rform.decision" style="width:100%">
+              <el-option v-for="d in DECISIONS" :key="d.v" :label="d.label" :value="d.v" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="沟通内容"><el-input v-model="rform.decisionNote" type="textarea" :rows="2" placeholder="随通知发给归属方与当事人（如整改要求/期限）" /></el-form-item>
+          <div class="alert" :class="rform.decision === 'DEACTIVATE' ? 'warn' : 'info'" style="margin:0 0 6px">
+            {{ rform.decision === 'DEACTIVATE' ? '⚠ 停用将立即停用当事人账号（无法登录），并通知归属方与当事人。' : '处理决定与沟通内容将通知归属方负责人与当事人，并建整改任务跟踪。' }}
+          </div>
+        </template>
+        <el-form-item label="说明"><el-input v-model="rform.note" type="textarea" :rows="2" placeholder="复核备注（可选）" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="rdlg=false">取消</el-button><el-button type="primary" @click="submitReview">提交复核</el-button></template>
+    </DsDrawer>
+
+    <DsDrawer v-model="cdlg" title="提交整改回执">
+      <el-form label-width="80px">
+        <el-form-item label="整改回执"><el-input v-model="cform.receiptNote" type="textarea" :rows="3" placeholder="说明本次整改措施/结果（如已约谈当事人、已完成培训）" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="cdlg=false">取消</el-button><el-button type="primary" @click="submitRectify">提交回执</el-button></template>
     </DsDrawer>
   </div>
 </template>

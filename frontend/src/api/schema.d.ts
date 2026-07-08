@@ -1536,7 +1536,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 平台复核(确认/误报/升级 BR-M5-07c)。确认/升级→建处置任务；误报→撤销 */
+        /** 平台复核(确认/误报/升级 BR-M5-07c)。确认→建处置任务(可带处理决定)；误报→撤销 */
         post: operations["reviewRisk"];
         delete?: never;
         options?: never;
@@ -1551,10 +1551,29 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 风险处置任务跟踪(**仅平台监管视图**·两侧不可见 BR-M5-07b) */
+        /** 风险处置任务跟踪(平台监管全量·归属方 VL/PL 见本组织任务 BR-M5-07b) */
         get: operations["listDisposeTasks"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dispose-tasks/{id}/rectify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 归属方(VL/PL)提交整改回执→任务 DONE，并通知平台复核人 */
+        post: operations["rectifyDisposeTask"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2447,7 +2466,12 @@ export interface components {
         /** @enum {string} */
         RiskReviewVerdictEnum: "CONFIRMED" | "FALSE_POSITIVE" | "ESCALATED";
         /** @enum {string} */
-        DisposeTaskStatusEnum: "PENDING" | "DONE";
+        DisposeTaskStatusEnum: "PENDING" | "IN_PROGRESS" | "DONE";
+        /**
+         * @description 平台处理决定：约谈/警告/限期整改/限制/停用(仅停用真置账号 DISABLED)
+         * @enum {string}
+         */
+        QcDecisionEnum: "INTERVIEW" | "WARNING" | "RECTIFY" | "RESTRICT" | "DEACTIVATE";
         /**
          * @description 督导动作：REMIND=提醒 ｜ TALK=督导谈话 ｜ TRAINING=安排培训 ｜ NOTE=记录(BR-M10-10)
          * @enum {string}
@@ -3447,6 +3471,8 @@ export interface components {
             level?: components["schemas"]["RiskLevelEnum"];
             segmentTs?: string;
             reviewed?: components["schemas"]["RiskReviewVerdictEnum"] | null;
+            /** @description 关联录音 id（跳通话记录页+AI复盘；无录音为 null） */
+            recordingId?: string | null;
         };
         DisposeTask: {
             id?: string;
@@ -3455,6 +3481,15 @@ export interface components {
             taskType?: string;
             status?: components["schemas"]["DisposeTaskStatusEnum"];
             tm?: string;
+            /** @description 平台处理决定 INTERVIEW/WARNING/RECTIFY/RESTRICT/DEACTIVATE */
+            decision?: string | null;
+            decisionNote?: string | null;
+            /** @description 当事人（违规人）展示名 */
+            targetAccount?: string | null;
+            /** @description 归属方整改回执 */
+            receiptNote?: string | null;
+            /** Format: date-time */
+            receiptedAt?: string | null;
         };
         /** @description 隐私最小化：仅缴费必要信息，不含催收过程/他案/服务商 BR-M7-07。姓名脱敏后展示；房号为账单归属确认+对公转账备注必要信息 */
         OwnerBill: {
@@ -6610,6 +6645,9 @@ export interface operations {
                 "application/json": {
                     verdict: components["schemas"]["RiskReviewVerdictEnum"];
                     note?: string;
+                    decision?: components["schemas"]["QcDecisionEnum"];
+                    /** @description 沟通/处理说明；随通知发给归属方与当事人 */
+                    decisionNote?: string;
                 };
             };
         };
@@ -6644,7 +6682,35 @@ export interface operations {
                     "application/json": components["schemas"]["DisposeTaskPage"];
                 };
             };
+        };
+    };
+    rectifyDisposeTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description 整改回执说明 */
+                    receiptNote?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     getOwnerBill: {

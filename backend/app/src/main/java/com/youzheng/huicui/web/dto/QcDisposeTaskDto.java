@@ -1,13 +1,9 @@
 package com.youzheng.huicui.web.dto;
 
 /**
- * 契约 DisposeTask（qc tag，仅平台监管视图）映射：
- *   id       = String(dispose_task.id)
- *   riskId   = String(risk_id)
- *   provider = org.name（JOIN provider 取责任组织展示名；列名 provider 存 org_id）
- *   taskType = task_type（整改/培训/警告/停权）
- *   status   = status（DisposeTaskStatusEnum PENDING|DONE）
- *   tm       = ISO(tm)
+ * 契约 DisposeTask（qc tag）映射：平台监管全量 + 归属方(VL/PL)见本组织任务。
+ *   id/riskId/provider(org.name)/taskType/status(PENDING|IN_PROGRESS|DONE)/tm。
+ * 处置闭环补充（可空）：decision(平台处理决定)/decisionNote/targetAccount(当事人名)/receiptNote(整改回执)/receiptedAt。
  */
 public record QcDisposeTaskDto(
         String id,
@@ -15,5 +11,10 @@ public record QcDisposeTaskDto(
         String provider,
         String taskType,
         String status,
-        String tm
+        String tm,
+        String decision,
+        String decisionNote,
+        String targetAccount,
+        String receiptNote,
+        String receiptedAt
 ) {}
