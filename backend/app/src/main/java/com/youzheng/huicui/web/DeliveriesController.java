@@ -71,7 +71,7 @@ public class DeliveriesController {
         pageArgs.add(pg.size);
         pageArgs.add(pg.offset);
         List<DeliveryRecordDto> items = jdbc.query(
-                "SELECT ca.id, ca.case_id, c.room, p.name AS project_name, b.no AS batch_no,"
+                "SELECT ca.id, ca.case_id, c.owner_name, c.room, p.name AS project_name, b.no AS batch_no,"
                         + " ca.created_at, ca.delivery_type, ca.session_token, ca.filename,"
                         + " ev.id AS evidence_id, ev.status AS evidence_status "
                         + from + evJoin + where
@@ -90,6 +90,7 @@ public class DeliveriesController {
             return new DeliveryRecordDto(
                     String.valueOf(rs.getLong("id")),
                     String.valueOf(rs.getLong("case_id")),
+                    rs.getString("owner_name"),
                     rs.getString("room"),
                     rs.getString("project_name"),
                     rs.getString("batch_no"),

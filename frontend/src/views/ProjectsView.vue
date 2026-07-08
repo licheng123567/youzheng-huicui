@@ -12,7 +12,7 @@ import { statusLabel, reduceDecideLabel } from '../constants/enums'
 // 列表内置搜索筛选(q/status)由服务端支持；查看档案=内联展开项目全量详情；查看批次→案件列表；编辑→ProjectEditDialog。
 const router = useRouter()
 const auth = useAuth()
-const { showCommInRate, ratePct, isProperty } = useRoleFields()
+const { role, showCommInRate, ratePct } = useRoleFields()
 
 // ── 列表状态 ──
 const items = ref<any[]>([])
@@ -84,6 +84,26 @@ function viewBatches(row: any) {
 const editDlg = ref(false)
 const editProject = ref<any>(null)
 function openEdit(row: any) { editProject.value = row; editDlg.value = true }
+
+// ── 作战手册·仅编辑手册（不进项目全量编辑弹窗）──
+// 协调员(PC)项目档案只读，唯独作战手册可优化设置：此入口只 POST /projects/{id}/playbook，
+// 不触碰项目名/区域/减免/协调员等档案字段（对标原型 PC playbook.adopt 但无 proj.edit）。
+const pbDlg = ref(false)
+const pbForm = ref<{ version: string; content: string }>({ version: '', content: '' })
+function openPlaybookEdit() {
+  pbForm.value = { version: selProjPlaybook.value?.version ?? 'v1.0', content: selProjPlaybook.value?.content ?? '' }
+  pbDlg.value = true
+}
+async function adoptPlaybook() {
+  const pid = selProj.value?.id
+  if (!pid) return
+  const { error } = await api.POST('/projects/{id}/playbook', { params: { path: { id: pid } }, body: { version: pbForm.value.version, content: pbForm.value.content } as any })
+  if (error) { ElMessage.error('采纳失败：' + ((error as any)?.message ?? '')); return }
+  ElMessage.success('已采纳作战手册'); pbDlg.value = false
+  const pb = await api.GET('/projects/{id}/playbook', { params: { path: { id: pid } } })
+  selProjPlaybook.value = pb.data ?? null
+}
+
 function onProjectSaved() {
   load()
   if (selProj.value) {
@@ -211,6 +231,15 @@ onMounted(load)
 
     <!-- 编辑对话框（共用） -->
     <ProjectEditDialog v-model="editDlg" :project="editProject" @saved="onProjectSaved" />
+
+    <!-- 作战手册·仅手册编辑（协调员亦可，项目档案其余只读） -->
+    <el-dialog v-model="pbDlg" title="维护作战手册" width="600px" append-to-body>
+      <el-form label-width="72px">
+        <el-form-item label="版本"><el-input v-model="pbForm.version" placeholder="如 v1.1" /></el-form-item>
+        <el-form-item label="内容"><el-input v-model="pbForm.content" type="textarea" :rows="10" placeholder="作战手册正文（通话前策略 / 话术指引）" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="pbDlg=false">取消</el-button><el-button type="primary" @click="adoptPlaybook">采纳发布</el-button></template>
+    </el-dialog>
   </div>
 
   <!-- ═══════════════ 内联项目档案 ═══════════════ -->
@@ -235,8 +264,8 @@ onMounted(load)
       <div class="r"><div class="k">状态</div><div class="v" :title="selProj.status">{{ statusLabel(selProj.status) }}</div></div>
     </div>
 
-    <!-- 减免政策维护（PL 角色可内联编辑；其他角色只读） -->
-    <template v-if="isProperty">
+    <!-- 减免政策维护（仅物业负责人 PL 可内联编辑；协调员 PC 项目档案只读——对标原型 role==='PL'） -->
+    <template v-if="role === 'PL'">
       <div class="sec-title">
         减免政策维护（项目级·阶梯）
         <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">批次级可在批次详情覆盖</span>
@@ -280,7 +309,7 @@ onMounted(load)
       </div>
     </template>
 
-    <template v-if="!isProperty">
+    <template v-if="role !== 'PL'">
       <div class="sec-title">
         减免政策
         <span class="note" style="margin:0 0 0 4px;font-weight:400">{{ reduceRows.length ? reduceRows.length + ' 档阶梯' : '—' }}</span>
@@ -315,7 +344,7 @@ onMounted(load)
     <div class="sec-title">
       作战手册
       <span v-if="selProjPlaybook" class="tag pri" style="font-size:11px;margin-left:6px">{{ selProjPlaybook.version || 'v1.0' }} 现行</span>
-      <button v-if="auth.has('playbook.adopt')" class="btn sm" style="margin-left:auto" @click="editProject = selProj; editDlg = true">维护手册</button>
+      <button v-if="auth.has('playbook.adopt')" class="btn sm" style="margin-left:auto" @click="openPlaybookEdit">维护手册</button>
     </div>
     <div v-if="selProjPlaybook" class="desc">
       <div class="r"><div class="k">版本</div><div class="v">{{ selProjPlaybook.version || '—' }}</div></div>

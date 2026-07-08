@@ -92,6 +92,7 @@ onMounted(load)
     <table v-loading="loading" style="margin-top:12px">
       <thead>
         <tr>
+          <th style="width:1%;white-space:nowrap">业主</th>
           <th style="width:80px">房号</th>
           <th>项目</th>
           <th style="width:110px">批次</th>
@@ -104,6 +105,7 @@ onMounted(load)
       </thead>
       <tbody>
         <tr v-for="row in items" :key="row.id">
+          <td style="white-space:nowrap">{{ row.ownerName || '—' }}</td>
           <td>{{ row.room || '—' }}</td>
           <td>{{ row.projectName || '—' }}</td>
           <td>{{ row.batchNo || '—' }}</td>
@@ -111,10 +113,10 @@ onMounted(load)
           <td><span class="tag" :class="typeTag(row.deliveryType)">{{ typeName(row.deliveryType) }}</span></td>
           <td>{{ channelName(row.channel) }}</td>
           <td><span class="tag" :class="evidenceTag(row)">{{ evidenceLabel(row) }}</span></td>
-          <td><button class="btn df" @click="openDetail(row)">明细</button></td>
+          <td><button class="btn txt" @click="openDetail(row)">查看详情</button></td>
         </tr>
         <tr v-if="!loading && !items.length">
-          <td colspan="8" style="text-align:center;color:var(--sec);padding:32px 0">暂无送达记录</td>
+          <td colspan="9" style="text-align:center;color:var(--sec);padding:32px 0">暂无送达记录</td>
         </tr>
       </tbody>
     </table>
@@ -129,6 +131,7 @@ onMounted(load)
     <!-- 送达单明细抽屉：送达要素 + 文件下载 + 存证情况（已存证可下证书） -->
     <DsDrawer v-model="dlg" title="送达单明细">
       <div class="desc" style="padding:4px 2px">
+        <div class="r"><div class="k">业主</div><div class="v">{{ sel.ownerName || '—' }}</div></div>
         <div class="r"><div class="k">房号</div><div class="v">{{ sel.room || '—' }}</div></div>
         <div class="r"><div class="k">项目</div><div class="v">{{ sel.projectName || '—' }}</div></div>
         <div class="r"><div class="k">批次</div><div class="v">{{ sel.batchNo || '—' }}</div></div>

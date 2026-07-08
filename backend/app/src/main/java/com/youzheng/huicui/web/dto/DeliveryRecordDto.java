@@ -3,7 +3,7 @@ package com.youzheng.huicui.web.dto;
 /**
  * 送达记录 DTO（对齐契约 components.schemas.DeliveryRecord）。协调员「送达管理」列表。
  * 一条 = 一份送达凭证附件（case_attachment.delivery_type 非空）。
- *   id←case_attachment.id, caseId←case_id, room←case.room, projectName←project.name, batchNo←batch.no,
+ *   id←case_attachment.id, caseId←case_id, ownerName←case.owner_name, room←case.room, projectName←project.name, batchNo←batch.no,
  *   deliveredAt←case_attachment.created_at(上传/录入时间, ISO date-time),
  *   deliveryType←case_attachment.delivery_type(DeliveryTypeEnum: LAWYER_LETTER/COLLECTION_NOTICE/COURT_DOC/OTHER),
  *   channel←session_token 派生(DeliveryChannelEnum: APP=扫码/手机上传, BACKEND=PC后台直传),
@@ -14,6 +14,7 @@ package com.youzheng.huicui.web.dto;
 public record DeliveryRecordDto(
         String id,
         String caseId,
+        String ownerName,
         String room,
         String projectName,
         String batchNo,

@@ -3669,6 +3669,7 @@ export interface components {
         DeliveryRecord: {
             id?: string;
             caseId?: string;
+            ownerName?: string | null;
             room?: string | null;
             projectName?: string | null;
             batchNo?: string | null;

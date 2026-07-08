@@ -72,6 +72,26 @@ async function openDetail(row: any) {
   if (error) { ElMessage.error('详情加载失败'); return }
   detail.value = data; ddlg.value = true
 }
+// ── 按批次下钻（对标原型 reconIn：回款明细 + 支付申请单）──
+// 回款明细：GET /batches/{id}/repay-lines（缴款日期/业主/房号/回款金额/渠道/结算状态）
+const rdDlg = ref(false); const rdBatch = ref<any>(null); const rdLines = ref<any[]>([]); const rdLoading = ref(false)
+async function openRepayDetail(row: any) {
+  rdBatch.value = row; rdLines.value = []; rdDlg.value = true; rdLoading.value = true
+  const { data, error } = await api.GET('/batches/{id}/repay-lines', { params: { path: { id: String(row.batchId) }, query: { page: 1, size: 200 } } as any })
+  rdLoading.value = false
+  if (error) { ElMessage.error('加载回款明细失败'); return }
+  rdLines.value = (data as any)?.items ?? []
+}
+// 支付申请单（批次单）：GET /payment-requests?side=IN&batchId（该批次的支付申请单列表·物业只读）
+const bDlg = ref(false); const bBatch = ref<any>(null); const bPrs = ref<any[]>([]); const bLoading = ref(false)
+async function openBatchBills(row: any) {
+  bBatch.value = row; bPrs.value = []; bDlg.value = true; bLoading.value = true
+  const { data, error } = await api.GET('/payment-requests', { params: { query: { side: side.value, batchId: String(row.batchId), page: 1, size: 50 } } as any })
+  bLoading.value = false
+  if (error) { ElMessage.error('加载支付申请单失败'); return }
+  bPrs.value = (data as any)?.items ?? []
+}
+
 // 完成（必带凭证）。fileUrl 应为上传所得地址：el-upload 选文件后置 fileUrl；无真实上传后端时保留可手填 URL，默认空且必填校验(BR-M9-12d)。
 const cdlg = ref(false); const cform = ref<any>({ fileUrl: '' })
 function openComplete(row: any) { cform.value = { id: row.id, version: row.version, type: side.value === 'IN' ? 'RECEIPT' : 'PAYMENT', fileUrl: '' }; cdlg.value = true }
@@ -200,7 +220,7 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
     <table>
       <thead>
         <tr>
-          <th>批次</th><th>项目</th><th>回款基数</th><th>回款率</th><th>比例</th><th>应结</th><th>已结</th><th>未结</th>
+          <th>批次</th><th>项目</th><th>回款基数</th><th>回款率</th><th>比例</th><th>应结</th><th>已结</th><th>未结</th><th style="width:170px">操作</th>
         </tr>
       </thead>
       <tbody>
@@ -213,11 +233,17 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
           <td class="num">{{ yuan(row.dueCents) }}</td>
           <td class="num"><span class="tag suc">{{ yuan(row.settledCents) }}</span></td>
           <td class="num"><span class="tag" :class="row.unsettledCents ? 'war' : 'inf'">{{ yuan(row.unsettledCents) }}</span></td>
+          <td>
+            <button class="btn txt" @click="openRepayDetail(row)">回款明细</button>
+            <button class="btn txt" @click="openBatchBills(row)">支付申请单</button>
+          </td>
         </tr>
-        <tr v-if="!rollup.length"><td colspan="8" class="note" style="text-align:center">暂无对账数据</td></tr>
+        <tr v-if="!rollup.length"><td colspan="9" class="note" style="text-align:center">暂无对账数据</td></tr>
       </tbody>
     </table>
 
+    <!-- 物业(PC/PL)只读：支付申请单改为「按批次·支付申请单」下钻查看（对标原型），此处不列扁平表 -->
+    <template v-if="!isReadonlyProperty">
     <div class="sec-title">支付申请单（GET /payment-requests?side={{side}}）</div>
     <table v-loading="loading">
       <thead>
@@ -247,6 +273,7 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
         <tr v-if="!loading && !prs.length"><td colspan="6" class="note" style="text-align:center">暂无支付申请单</td></tr>
       </tbody>
     </table>
+    </template>
    </template>
 
     <!-- 内催佣金链 -->
@@ -343,6 +370,34 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
           <el-table-column label="佣金"><template #default="{row}">{{ yuan(row.commCents) }}</template></el-table-column>
         </el-table>
       </template>
+    </el-dialog>
+
+    <!-- 按批次·回款明细（对标原型 repayDetailDialog）：缴款日期/业主/房号/回款金额/渠道/结算状态 -->
+    <el-dialog v-model="rdDlg" :title="`${rdBatch?.batch ?? ''} · 回款明细`" width="900px">
+      <el-table v-loading="rdLoading" :data="rdLines" border size="small" max-height="440">
+        <el-table-column prop="paidAt" label="缴款日期" width="120" />
+        <el-table-column prop="ownerName" label="业主" width="110" />
+        <el-table-column prop="room" label="房号" width="90" />
+        <el-table-column label="回款金额"><template #default="{row}">{{ yuan(row.amountCents) }}</template></el-table-column>
+        <el-table-column label="渠道"><template #default="{row}"><span :title="row.channel">{{ channelLabel(row.channel) }}</span></template></el-table-column>
+        <el-table-column label="结算状态" width="100"><template #default="{row}"><span class="tag" :class="row.settled ? 'suc' : 'war'">{{ row.settled ? '已结算' : '未结算' }}</span></template></el-table-column>
+      </el-table>
+      <div style="margin-top:6px;color:#606266">共 {{ rdLines.length }} 笔 · 合计回款 {{ yuan(rdLines.reduce((s,l)=>s+(l.amountCents||0),0)) }}</div>
+      <template #footer><el-button @click="rdDlg=false">关闭</el-button></template>
+    </el-dialog>
+
+    <!-- 按批次·支付申请单（对标原型 billsDialog）：该批次支付申请单列表（物业只读，可看详情） -->
+    <el-dialog v-model="bDlg" :title="`${bBatch?.batch ?? ''} · 支付申请单`" width="760px">
+      <el-table v-loading="bLoading" :data="bPrs" border size="small" max-height="440">
+        <el-table-column prop="code" label="单号" />
+        <el-table-column label="状态" width="100"><template #default="{row}"><span class="tag" :class="row.status==='PAID'?'suc':row.status==='VOIDED'?'inf':'war'">{{ payReqStatusLabel(row.status) }}</span></template></el-table-column>
+        <el-table-column label="基数"><template #default="{row}">{{ yuan(row.baseCents) }}</template></el-table-column>
+        <el-table-column label="比例" width="90"><template #default="{row}">{{ pct(row.commRate) }}</template></el-table-column>
+        <el-table-column label="应结佣金"><template #default="{row}">{{ yuan(row.commCents) }}</template></el-table-column>
+        <el-table-column label="操作" width="80"><template #default="{row}"><button class="btn txt" @click="openDetail(row)">详情</button></template></el-table-column>
+      </el-table>
+      <div v-if="!bLoading && !bPrs.length" class="note" style="margin-top:8px">该批次暂无支付申请单</div>
+      <template #footer><el-button @click="bDlg=false">关闭</el-button></template>
     </el-dialog>
 
     <!-- 完成 -->

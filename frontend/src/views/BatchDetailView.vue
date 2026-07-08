@@ -324,7 +324,8 @@ onMounted(loadAll)
       <!-- 作战手册 -->
       <div class="card">
         <div class="sec-title">作战手册（批次级） <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">继承项目 或 自定义覆盖（手册随批次走）</span></div>
-        <template v-if="auth.has('playbook.adopt') && !isCoordinator">
+        <!-- 批次作战手册：PL/PC/SA 可编辑（对标原型 ['PL','PC','SA']）——协调员亦可优化设置；VL/CO 只读调阅 -->
+        <template v-if="auth.has('playbook.adopt')">
           <div style="display:flex;gap:16px;margin-bottom:8px;font-size:13px">
             <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" value="inherit" :checked="playbookSource !== 'CUSTOM'" @change="playbookSource === 'CUSTOM' && restorePlaybook()"> 继承项目</label>
             <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" value="custom" :checked="playbookSource === 'CUSTOM'" @change="playbookSource !== 'CUSTOM' && openPlaybook()"> 自定义覆盖</label>

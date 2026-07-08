@@ -130,6 +130,10 @@ const pcFilteredRows = computed(() => pcRows.value.filter((r) => {
   return true
 }))
 function pcReset() { pcFilter.q = ''; pcFilter.project = '' }
+// 长历史降噪：进行中批次默认展开，已结项(批次 status=CLOSED)单独收起——多批次时主列表只看在办，历史按需展开。
+const pcActiveRows = computed(() => pcFilteredRows.value.filter((r) => !r.closed))
+const pcClosedRows = computed(() => pcFilteredRows.value.filter((r) => r.closed))
+const showClosed = ref(false)
 
 async function loadPc() {
   loading.value = true
@@ -143,8 +147,8 @@ async function loadPc() {
     const batches: any[] = ((batchesRes.data as any)?.items ?? batchesRes.data ?? []) as any[]
     const todos: any[] = ((wbRes.data as any)?.todos ?? []) as any[]
     // 批次 id → {code, project}
-    const bmap = new Map<string, { code: string }>()
-    batches.forEach((b: any) => bmap.set(String(b.id), { code: b.code }))
+    const bmap = new Map<string, { code: string; status?: string }>()
+    batches.forEach((b: any) => bmap.set(String(b.id), { code: b.code, status: b.status }))
     // 待处理工单 todo 计数（按 caseId）
     const ticketByCase = new Map<string, number>()
     todos.filter((t: any) => t.category === 'TICKET_RECEIPT').forEach((t: any) => {
@@ -156,6 +160,7 @@ async function loadPc() {
       const bid = String(c.batchId)
       if (!g.has(bid)) g.set(bid, {
         batchId: bid, batch: bmap.get(bid)?.code || ('批次#' + bid), proj: c.projectName || '本物业',
+        closed: bmap.get(bid)?.status === 'CLOSED',
         count: 0, delivered: 0, repayMarked: 0, repayMarkedCents: 0, tickets: 0, paylink: 0, legalActive: 0,
       })
       const row = g.get(bid)
@@ -216,12 +221,13 @@ onMounted(async () => {
         </select>
         <button class="btn df sm" @click="pcReset">重置</button>
       </div>
+      <!-- 进行中批次（默认展开）——只看在办，避免多批次长历史杂乱 -->
       <table>
         <thead>
           <tr><th>批次</th><th>项目</th><th>送达完成</th><th>回款标记额</th><th>工单处理</th><th>在办法务</th></tr>
         </thead>
         <tbody>
-          <tr v-for="r in pcFilteredRows" :key="r.batchId">
+          <tr v-for="r in pcActiveRows" :key="r.batchId">
             <td>{{ r.batch }}</td>
             <td>{{ r.proj }}</td>
             <td class="num">{{ r.delivered }}</td>
@@ -229,11 +235,35 @@ onMounted(async () => {
             <td class="num">{{ r.tickets }}</td>
             <td class="num">{{ r.legalActive }}</td>
           </tr>
-          <tr v-if="!loading && !pcFilteredRows.length">
-            <td colspan="6" class="note" style="text-align:center;padding:24px 0">暂无本物业批次数据。</td>
+          <tr v-if="!loading && !pcActiveRows.length">
+            <td colspan="6" class="note" style="text-align:center;padding:24px 0">暂无进行中批次。{{ pcClosedRows.length ? '已结项批次见下方。' : '' }}</td>
           </tr>
         </tbody>
       </table>
+
+      <!-- 已结项批次（默认收起）：全部处理完毕并结项的批次单独归档，点开可查阅历史 -->
+      <div v-if="pcClosedRows.length" style="margin-top:14px">
+        <div class="sec-title" style="cursor:pointer;user-select:none" @click="showClosed = !showClosed">
+          {{ showClosed ? '▾' : '▸' }} 已结项批次
+          <span class="tag inf" style="font-size:11px;margin-left:6px">{{ pcClosedRows.length }}</span>
+          <span class="note" style="font-weight:400;margin-left:8px">已全部处理完毕并结项，默认收起</span>
+        </div>
+        <table v-if="showClosed">
+          <thead>
+            <tr><th>批次</th><th>项目</th><th>送达完成</th><th>回款标记额</th><th>工单处理</th><th>在办法务</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in pcClosedRows" :key="r.batchId">
+              <td>{{ r.batch }}</td>
+              <td>{{ r.proj }}</td>
+              <td class="num">{{ r.delivered }}</td>
+              <td class="num">{{ yuan(r.repayMarkedCents) }}</td>
+              <td class="num">{{ r.tickets }}</td>
+              <td class="num">{{ r.legalActive }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 
