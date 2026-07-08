@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '../stores/auth'
 import { api } from '../api/client'
+import { roleName } from '../constants/roles'
 
 const auth = useAuth()
 const route = useRoute()
@@ -164,7 +165,7 @@ function logout() {
             消息<span v-if="unread > 0" style="position:absolute;top:-8px;right:-14px;background:var(--danger);color:#fff;font-size:11px;border-radius:9px;padding:1px 7px;line-height:1.4">{{ unread > 99 ? '99+' : unread }}</span>
           </span>
           <span class="link" @click="router.push('/profile')">
-            {{ auth.me.name }}（{{ auth.me.role }}）· {{ auth.me.org?.name }}
+            {{ auth.me.name }}（{{ roleName(auth.me.role) }}）· {{ auth.me.org?.name }}
           </span>
           <div class="av">{{ avatarChar }}</div>
           <span class="link" @click="logout">退出</span>

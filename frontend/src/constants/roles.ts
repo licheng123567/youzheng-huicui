@@ -31,6 +31,11 @@ export function roleLabel(code: string): string {
   return ROLE_LABELS[code as RoleCode] || code
 }
 
+// 仅中文名（无码前缀）：对外展示（顶栏/登录/操作区/移动端）用，避免裸码 PC/CO/PL 难懂
+export function roleName(code?: string | null): string {
+  return ROLE_NAMES[code as RoleCode] || code || ''
+}
+
 // role 角色模板提示：新建成员时按所选角色给出语义说明（净增）
 export const ROLE_HINTS: Record<RoleCode, string> = {
   SA: '平台超管：平台侧全量管理权限。',

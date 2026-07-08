@@ -2,6 +2,7 @@
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '../stores/auth'
+import { roleName } from '../constants/roles'
 
 // 移动作业端外壳：顶栏(标题/角色) + 内容(router-view) + 底部 4 Tab。
 // 角色 CO=催收员 / PC=协调员 由真实登录态(auth.me.role)决定,非演示切换。
@@ -23,7 +24,7 @@ const activeTab = computed(() => {
   return m?.path ?? '/m'
 })
 const title = computed(() => (route.meta.mtitle as string) || TABS.find((t) => t.path === activeTab.value)?.label || '有证慧催')
-const roleLabel = computed(() => ({ CO: '催收员', PC: '协调员', VL: '负责人' } as any)[auth.me?.role ?? ''] || auth.me?.role || '')
+const roleLabel = computed(() => roleName(auth.me?.role))
 </script>
 
 <template>

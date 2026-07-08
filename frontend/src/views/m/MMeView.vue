@@ -3,12 +3,13 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuth } from '../../stores/auth'
 import { api } from '../../api/client'
+import { roleName } from '../../constants/roles'
 
 // 移动「我的」:主体信息 + 我的结算(CO 自查 /me/settlement) + 账号与安全(改密 /me/password) + 退出。
 const auth = useAuth()
 const router = useRouter()
 const me = computed(() => auth.me)
-const roleLabel = computed(() => ({ CO: '催收员', PC: '协调员', VL: '负责人' } as any)[me.value?.role ?? ''] || me.value?.role || '')
+const roleLabel = computed(() => roleName(me.value?.role))
 const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
 
 const settle = ref<any>(null)

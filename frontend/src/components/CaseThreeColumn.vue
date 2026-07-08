@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import { caseStatusLabel, poolLabel, promiseStateLabel, callRecStatusLabel, legalDocTypeLabel, legalDocStatusLabel, legalStageLabel } from '../constants/enums'
+import { roleName } from '../constants/roles'
 import DsDrawer from './DsDrawer.vue'
 import PayLinkCard from './PayLinkCard.vue'
 import AiReviewPanel from './AiReviewPanel.vue'
@@ -985,7 +986,7 @@ onMounted(function () { loadAll(); loadCloseReasons() })
       <div class="opzone">
         <!-- 操作区（对标原型：OPS 按权限过滤 + 分组渲染） -->
         <div style="font-size:13px;font-weight:600;color:var(--txt);margin-bottom:10px;display:flex;align-items:center;gap:6px">
-          <span class="bar" style="width:3px;height:13px;background:var(--primary);border-radius:2px;display:inline-block"></span>操作区 · {{ role || '—' }}
+          <span class="bar" style="width:3px;height:13px;background:var(--primary);border-radius:2px;display:inline-block"></span>操作区 · {{ roleName(role) || '—' }}
         </div>
 
         <!-- 录音区（全角色可见：获取最新录音+AI复盘+手动上传救济） -->
