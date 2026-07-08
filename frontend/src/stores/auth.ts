@@ -23,8 +23,14 @@ export const useAuth = defineStore('auth', {
     },
     // 单账号 → {done:true}(已登录)；多账号 → {done:false, loginTicket, accounts} 待选(BR-M1-11)。
     async _doLogin(body: Record<string, string>): Promise<{ done: boolean; loginTicket?: string; accounts?: any[] }> {
-      const { data, error } = await api.POST('/auth/login', { body: body as never })
-      if (error || !data) throw new Error('登录失败：凭据错误')
+      const { data, error, response } = await api.POST('/auth/login', { body: body as never })
+      if (error || !data) {
+        // 区分「后端不可达/服务异常」与「凭据错误」——避免后端没启动时误报密码错。
+        const st = response?.status
+        if (st == null || st >= 500) throw new Error('无法连接后端服务，请确认后端已在 9091 启动')
+        if (st === 401 || st === 403 || st === 422) throw new Error('账号或密码错误')
+        throw new Error('登录失败（HTTP ' + st + '）')
+      }
       const d = data as { token?: string; loginTicket?: string; accounts?: any[] }
       if (d.token) { this._setToken(d.token); await this.fetchMe(); return { done: true } }
       if (d.loginTicket) return { done: false, loginTicket: d.loginTicket, accounts: d.accounts ?? [] }
