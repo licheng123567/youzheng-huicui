@@ -124,16 +124,28 @@ const pcKpi = computed(() => {
 })
 const pcFilter = reactive({ q: '', project: '' })
 const pcProjectOptions = computed(() => Array.from(new Set(pcRows.value.map((r) => r.proj).filter(Boolean))))
-const pcFilteredRows = computed(() => pcRows.value.filter((r) => {
+// 基础筛选（项目/批次号），完结进度改由下方 tab 控制（与催收员分支同款交互）
+const pcBaseRows = computed(() => pcRows.value.filter((r) => {
   if (pcFilter.q && !(r.batch || '').includes(pcFilter.q)) return false
   if (pcFilter.project && r.proj !== pcFilter.project) return false
   return true
 }))
 function pcReset() { pcFilter.q = ''; pcFilter.project = '' }
-// 长历史降噪：进行中批次默认展开，已结项(批次 status=CLOSED)单独收起——多批次时主列表只看在办，历史按需展开。
-const pcActiveRows = computed(() => pcFilteredRows.value.filter((r) => !r.closed))
-const pcClosedRows = computed(() => pcFilteredRows.value.filter((r) => r.closed))
-const showClosed = ref(false)
+// 长历史降噪：按完结进度分 tab（进行中 / 已结项 / 全部），默认「进行中」——多批次时只看在办，历史归到「已结项」tab。
+// 已结项 = 批次 status=CLOSED（全部处理完毕并结项）。与 CO 分支 待结算/已结算完毕/全部 tab 同构。
+const PC_TABS = [
+  { k: 'active', l: '进行中' },
+  { k: 'closed', l: '已结项' },
+  { k: 'all', l: '全部' },
+] as const
+const pcActiveTab = ref<'active' | 'closed' | 'all'>('active')
+const pcTabCount = computed(() => ({
+  active: pcBaseRows.value.filter((r) => !r.closed).length,
+  closed: pcBaseRows.value.filter((r) => r.closed).length,
+  all: pcBaseRows.value.length,
+}))
+const pcTabRows = computed(() => pcBaseRows.value.filter((r) =>
+  pcActiveTab.value === 'all' ? true : pcActiveTab.value === 'closed' ? r.closed : !r.closed))
 
 async function loadPc() {
   loading.value = true
@@ -213,6 +225,14 @@ onMounted(async () => {
         <div class="ops"><span class="note" style="margin:0">本物业各批次的送达 / 工单 / 回款标记 / 在办法务</span></div>
       </div>
       <div class="alert info" style="margin-top:0">本物业处置口径：仅统计你所在物业的送达存证、工单处理、线下回款标记与在办法务；不含提成（协调员非提成制）。数据按当前案件实时聚合。</div>
+
+      <!-- Tab：进行中 / 已结项 / 全部（默认进行中）——与催收员分支同款，多批次长历史降噪 -->
+      <div class="dtabs" style="padding:6px 0 2px">
+        <div v-for="t in PC_TABS" :key="t.k" class="t" :class="{ on: pcActiveTab === t.k }" @click="pcActiveTab = t.k">
+          {{ t.l }}<span class="tag" :class="t.k === 'closed' ? 'suc' : t.k === 'active' ? 'war' : 'inf'" style="font-size:10px;padding:0 5px;margin-left:4px">{{ pcTabCount[t.k] }}</span>
+        </div>
+      </div>
+
       <div class="toolbar" style="margin:10px 0">
         <input class="inp" v-model="pcFilter.q" placeholder="搜索 批次号" aria-label="批次号搜索">
         <select class="inp" v-model="pcFilter.project" aria-label="项目筛选">
@@ -221,13 +241,12 @@ onMounted(async () => {
         </select>
         <button class="btn df sm" @click="pcReset">重置</button>
       </div>
-      <!-- 进行中批次（默认展开）——只看在办，避免多批次长历史杂乱 -->
       <table>
         <thead>
           <tr><th>批次</th><th>项目</th><th>送达完成</th><th>回款标记额</th><th>工单处理</th><th>在办法务</th></tr>
         </thead>
         <tbody>
-          <tr v-for="r in pcActiveRows" :key="r.batchId">
+          <tr v-for="r in pcTabRows" :key="r.batchId">
             <td>{{ r.batch }}</td>
             <td>{{ r.proj }}</td>
             <td class="num">{{ r.delivered }}</td>
@@ -235,35 +254,13 @@ onMounted(async () => {
             <td class="num">{{ r.tickets }}</td>
             <td class="num">{{ r.legalActive }}</td>
           </tr>
-          <tr v-if="!loading && !pcActiveRows.length">
-            <td colspan="6" class="note" style="text-align:center;padding:24px 0">暂无进行中批次。{{ pcClosedRows.length ? '已结项批次见下方。' : '' }}</td>
+          <tr v-if="!loading && !pcTabRows.length">
+            <td colspan="6" class="note" style="text-align:center;padding:24px 0">
+              {{ pcActiveTab === 'active' ? '暂无进行中批次。' : pcActiveTab === 'closed' ? '暂无已结项批次。' : '暂无本物业批次数据。' }}
+            </td>
           </tr>
         </tbody>
       </table>
-
-      <!-- 已结项批次（默认收起）：全部处理完毕并结项的批次单独归档，点开可查阅历史 -->
-      <div v-if="pcClosedRows.length" style="margin-top:14px">
-        <div class="sec-title" style="cursor:pointer;user-select:none" @click="showClosed = !showClosed">
-          {{ showClosed ? '▾' : '▸' }} 已结项批次
-          <span class="tag inf" style="font-size:11px;margin-left:6px">{{ pcClosedRows.length }}</span>
-          <span class="note" style="font-weight:400;margin-left:8px">已全部处理完毕并结项，默认收起</span>
-        </div>
-        <table v-if="showClosed">
-          <thead>
-            <tr><th>批次</th><th>项目</th><th>送达完成</th><th>回款标记额</th><th>工单处理</th><th>在办法务</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="r in pcClosedRows" :key="r.batchId">
-              <td>{{ r.batch }}</td>
-              <td>{{ r.proj }}</td>
-              <td class="num">{{ r.delivered }}</td>
-              <td class="num">{{ yuan(r.repayMarkedCents) }}</td>
-              <td class="num">{{ r.tickets }}</td>
-              <td class="num">{{ r.legalActive }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
     </div>
   </div>
 
