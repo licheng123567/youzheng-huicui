@@ -637,7 +637,13 @@ const uploadDlg = ref(false)
 const uploadItems = ref<Array<{ id: string; name: string; url: string }>>([])
 const uploadNote = ref('')
 const uploadEvidence = ref(false)   // 是否同时上链存证，默认不勾
-function openUpload() { uploadItems.value = []; uploadNote.value = ''; uploadEvidence.value = false; uploadDlg.value = true }
+// 送达类型（默认「其他」）：经本弹窗上传即记为送达凭证(带类型)，进协调员「送达管理」列表；随附件写 delivery_type。
+const uploadDeliveryType = ref('OTHER')
+const DELIVERY_TYPES = [
+  { v: 'LAWYER_LETTER', label: '律师函' }, { v: 'COLLECTION_NOTICE', label: '催收单' },
+  { v: 'COURT_DOC', label: '诉讼文书' }, { v: 'OTHER', label: '其他' },
+]
+function openUpload() { uploadItems.value = []; uploadNote.value = ''; uploadEvidence.value = false; uploadDeliveryType.value = 'OTHER'; uploadDlg.value = true }
 function onUploaded(items: Array<{ id: string; name: string; url: string }>) {
   const seen = new Set(uploadItems.value.map((i) => i.id))
   items.forEach((it) => { if (!seen.has(it.id)) uploadItems.value.push(it) })
@@ -1109,9 +1115,13 @@ onMounted(function () { loadAll(); loadCloseReasons() })
 
     <!-- 上传文件/凭证：送达凭证/沟通材料上传 → 记跟进；协调员可勾选同时上链存证 -->
     <el-dialog v-model="uploadDlg" title="上传文件 / 凭证" width="480px" append-to-body>
-      <div class="alert info" style="margin-top:0">上传业主签收照片 / 送达回执 / 沟通材料等（可选文件或扫码用手机上传）。提交后记入跟进时间线；如需固证再勾选下方“同时上链存证”。</div>
+      <div class="alert info" style="margin-top:0">上传业主签收照片 / 送达回执 / 沟通材料等（可选文件或扫码用手机上传）。提交后记入跟进时间线并进「送达管理」；如需固证再勾选下方“同时上链存证”。</div>
       <div style="margin-top:12px">
-        <AttachmentUpload :case-id="id" @uploaded="onUploaded" />
+        <div class="lbl">送达类型（请先选类型再上传）</div>
+        <el-select v-model="uploadDeliveryType" size="small" style="width:100%;margin-bottom:10px">
+          <el-option v-for="t in DELIVERY_TYPES" :key="t.v" :label="t.label" :value="t.v" />
+        </el-select>
+        <AttachmentUpload :case-id="id" :delivery-type="uploadDeliveryType" @uploaded="onUploaded" />
       </div>
       <div v-if="uploadItems.length" style="margin-top:12px">
         <div class="lbl">已上传（{{ uploadItems.length }}）</div>

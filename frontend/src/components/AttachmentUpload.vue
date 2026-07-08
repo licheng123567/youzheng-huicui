@@ -7,7 +7,9 @@ import { ElMessage } from 'element-plus'
 //  - 直传：桌面选文件 → multipart 上传 → emit uploaded
 //  - 扫码：建会话 → 弹二维码(手机扫码打开 /u/{token} 公开页上传) → 桌面轮询自动附上
 // 后端 AttachmentController 为非 OpenAPI 契约端点，故用裸 fetch(带 Bearer)，照 uploadRecording 范式。
-const props = withDefaults(defineProps<{ caseId: string; qr?: boolean }>(), { qr: true })
+// deliveryType：非空表示上传件为「送达凭证」，随附件写入 case_attachment.delivery_type → 进协调员「送达管理」列表；
+// 不传/空则为普通跟进附件（不进送达管理）。扫码会话也携带，手机上传件继承。
+const props = withDefaults(defineProps<{ caseId: string; qr?: boolean; deliveryType?: string }>(), { qr: true })
 const emit = defineEmits<{ uploaded: [items: Array<{ id: string; name: string; url: string }>] }>()
 
 const token0 = () => localStorage.getItem('token') || ''
@@ -23,6 +25,7 @@ async function onFile(e: Event) {
   uploading.value = true
   try {
     const fd = new FormData(); fd.append('file', file)
+    if (props.deliveryType) fd.append('deliveryType', props.deliveryType)
     const r = await fetch(`/v1/cases/${props.caseId}/attachments`, {
       method: 'POST', headers: { Authorization: `Bearer ${token0()}` }, body: fd,
     })
@@ -48,7 +51,8 @@ let timer: any = null
 
 async function openScan() {
   try {
-    const r = await fetch(`/v1/cases/${props.caseId}/upload-sessions`, {
+    const q = props.deliveryType ? `?deliveryType=${encodeURIComponent(props.deliveryType)}` : ''
+    const r = await fetch(`/v1/cases/${props.caseId}/upload-sessions${q}`, {
       method: 'POST', headers: { Authorization: `Bearer ${token0()}` },
     })
     if (!r.ok) { ElMessage.error('创建扫码会话失败 ' + r.status); return }

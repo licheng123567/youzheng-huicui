@@ -1623,6 +1623,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 送达管理·送达记录列表(送达凭证聚合;物业本组织+PC协调集,服务商不可见)
+         * @description 协调员送达管理页:列已上传的送达凭证(case_attachment.delivery_type 非空),来源 app 扫码/PC后台;是否存证/存证态由关联 DELIVERY 存证派生。法务案件列表概念已移除(法务仅催收跟进手段之一)。
+         */
+        get: operations["listDeliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/evidence": {
         parameters: {
             query?: never;
@@ -3634,6 +3654,37 @@ export interface components {
         };
         EvidencePage: {
             items?: components["schemas"]["EvidenceItem"][];
+            meta?: components["schemas"]["PageMeta"];
+        };
+        /**
+         * @description 送达类型:律师函/催收单/诉讼文书/其他
+         * @enum {string}
+         */
+        DeliveryTypeEnum: "LAWYER_LETTER" | "COLLECTION_NOTICE" | "COURT_DOC" | "OTHER";
+        /**
+         * @description 送达渠道:APP=扫码/手机上传;BACKEND=PC后台直传
+         * @enum {string}
+         */
+        DeliveryChannelEnum: "APP" | "BACKEND";
+        DeliveryRecord: {
+            id?: string;
+            caseId?: string;
+            room?: string | null;
+            projectName?: string | null;
+            batchNo?: string | null;
+            /** Format: date-time */
+            deliveredAt?: string | null;
+            deliveryType?: components["schemas"]["DeliveryTypeEnum"];
+            channel?: components["schemas"]["DeliveryChannelEnum"];
+            filename?: string | null;
+            evidenced?: boolean;
+            /** @description 关联 DELIVERY 存证 id(供下证书);未存证为 null */
+            evidenceId?: string | null;
+            /** @description 存证态 ISSUING/ISSUED/FAILED;未存证为 null */
+            evidenceStatus?: string | null;
+        };
+        DeliveryRecordPage: {
+            items?: components["schemas"]["DeliveryRecord"][];
             meta?: components["schemas"]["PageMeta"];
         };
         EvidenceVerify: {
@@ -6772,6 +6823,29 @@ export interface operations {
                 };
             };
             409: components["responses"]["Conflict"];
+        };
+    };
+    listDeliveries: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryRecordPage"];
+                };
+            };
         };
     };
     listEvidence: {

@@ -1448,6 +1448,15 @@ paths:
       responses:
         '201': { description: created(出证中), content: { application/json: { schema: { $ref: '#/components/schemas/EvidenceItem' } } } }
         '409': { $ref: '#/components/responses/Conflict' }
+  /deliveries:
+    get:
+      operationId: listDeliveries
+      tags: [legal]
+      summary: 送达管理·送达记录列表(送达凭证聚合;物业本组织+PC协调集,服务商不可见)
+      description: '协调员送达管理页:列已上传的送达凭证(case_attachment.delivery_type 非空),来源 app 扫码/PC后台;是否存证/存证态由关联 DELIVERY 存证派生。法务案件列表概念已移除(法务仅催收跟进手段之一)。'
+      x-data-scope: range
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
+      responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/DeliveryRecordPage' } } } } }
   /evidence:
     get:
       operationId: listEvidence
@@ -2705,6 +2714,10 @@ components:
         itemCount: { type: integer, description: '打包内已出证存证条数' }
         items: { type: array, items: { $ref: '#/components/schemas/EvidenceItem' } }
     EvidencePage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/EvidenceItem' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }
+    DeliveryTypeEnum: { type: string, enum: [LAWYER_LETTER, COLLECTION_NOTICE, COURT_DOC, OTHER], description: '送达类型:律师函/催收单/诉讼文书/其他' }
+    DeliveryChannelEnum: { type: string, enum: [APP, BACKEND], description: '送达渠道:APP=扫码/手机上传;BACKEND=PC后台直传' }
+    DeliveryRecord: { type: object, properties: { id: { type: string }, caseId: { type: string }, room: { type: [string, 'null'] }, projectName: { type: [string, 'null'] }, batchNo: { type: [string, 'null'] }, deliveredAt: { type: [string, 'null'], format: date-time }, deliveryType: { $ref: '#/components/schemas/DeliveryTypeEnum' }, channel: { $ref: '#/components/schemas/DeliveryChannelEnum' }, filename: { type: [string, 'null'] }, evidenced: { type: boolean }, evidenceId: { type: [string, 'null'], description: '关联 DELIVERY 存证 id(供下证书);未存证为 null' }, evidenceStatus: { type: [string, 'null'], description: '存证态 ISSUING/ISSUED/FAILED;未存证为 null' } } }
+    DeliveryRecordPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/DeliveryRecord' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }
     EvidenceVerify: { type: object, properties: { valid: { type: boolean }, certNo: { type: string }, scene: { $ref: '#/components/schemas/EvidenceSceneEnum' }, issuedAt: { type: string, format: date-time }, hash: { type: string } } }
 
     # ---------- 计费/充值 M9-B（只用量不金额） ----------
