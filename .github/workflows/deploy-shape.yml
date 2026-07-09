@@ -31,13 +31,23 @@ jobs:
 
       - name: 镜像自检——迁移必须打进 jar、非 root、有 curl 供 HEALTHCHECK
         run: |
-          N=$(docker run --rm --entrypoint sh huicui-backend:ci -c "unzip -l /app/app.jar | grep -c 'db/migration/V'")
+          set -e
+          # 运行镜像里没有 unzip（也不该有）→ 把 jar 拷到 runner 上查
+          cid=$(docker create huicui-backend:ci)
+          docker cp "$cid":/app/app.jar /tmp/app.jar
+          docker rm "$cid" >/dev/null
+          N=$(unzip -l /tmp/app.jar | grep -c 'db/migration/V')
           echo "jar 内迁移文件数: $N"
           [ "$N" -ge 24 ] || { echo "::error::jar 内迁移不足 24 个（$N）——迁移没打进镜像"; exit 1; }
-          U=$(docker run --rm --entrypoint sh huicui-backend:ci -c "id -un")
+          # 迁移必须来自 classpath，不得再依赖 filesystem 相对路径
+          unzip -p /tmp/app.jar BOOT-INF/classes/application-prod.yml | grep -q 'filesystem:' \
+            && { echo "::error::application-prod.yml 仍引用 filesystem 迁移路径"; exit 1; } || true
+
+          U=$(docker run --rm --entrypoint id huicui-backend:ci -un)
           [ "$U" = "huicui" ] || { echo "::error::容器以 $U 运行，应为非 root 的 huicui"; exit 1; }
           docker run --rm --entrypoint sh huicui-backend:ci -c "command -v curl >/dev/null" \
             || { echo "::error::镜像缺 curl，HEALTHCHECK 会恒失败"; exit 1; }
+          echo "✅ 镜像自检通过（迁移 $N 个 / 用户 $U / curl 就位）"
 
       # 配不全必须拒绝启动，且理由可操作。逐条断言 ProdGuard 的中文提示。
       - name: fail-closed 实测（8 条，均应拒绝启动）
