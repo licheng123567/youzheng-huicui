@@ -49,6 +49,7 @@ public class AttachmentController {
 
     private static final long MAX_BYTES = 20L * 1024 * 1024;   // 20MB 软上限
     private static final long SESSION_TTL_SECONDS = 15L * 60;   // 扫码会话 15 分钟
+    private static final int MAX_FILES_PER_SESSION = 20;        // 公开扫码会话单次上传件数上限
 
     private long parseId(String id) {
         try { return Long.parseLong(id); }
@@ -117,7 +118,10 @@ public class AttachmentController {
         long caseId = ((Number) row.get("case_id")).longValue();
         if (!rec.caseVisible(s, caseId)) throw new ApiException(BizError.PERM_403, "无权查看该附件");
         String ct = row.get("content_type") == null ? "application/octet-stream" : (String) row.get("content_type");
+        // content_type 来自上传者：以附件形式下发 + 禁嗅探，防 text/html 附件在 API 源上被浏览器渲染。
         return ResponseEntity.ok().header("Content-Type", ct).header("Cache-Control", "private, max-age=60")
+                .header("Content-Disposition", "attachment")
+                .header("X-Content-Type-Options", "nosniff")
                 .body((byte[]) row.get("bytes"));
     }
 
@@ -162,6 +166,12 @@ public class AttachmentController {
                                                    @RequestParam(value = "file", required = false) MultipartFile file) {
         Session sess = session(token);   // 不存在/过期→404
         validateFile(file);
+        // 公开端点防灌注：单会话件数上限（15 分钟 TTL 内持 token 无限上传 20MB×N 会撑爆 bytea 主库）。
+        Integer cnt = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM case_attachment WHERE session_token = ?", Integer.class, token);
+        if (cnt != null && cnt >= MAX_FILES_PER_SESSION) {
+            throw new ApiException(BizError.STATE_409, "本次扫码上传已达 " + MAX_FILES_PER_SESSION + " 件上限");
+        }
         insertAttachment(sess.caseId(), token, file, null, sess.deliveryType());   // 继承会话送达类型
         return Map.of("ok", true);
     }

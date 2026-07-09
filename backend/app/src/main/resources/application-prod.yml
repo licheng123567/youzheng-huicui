@@ -7,6 +7,7 @@ spring:
     fail-on-missing-locations: false
 
 # prod 无任何 dev 凭据：
-#   huicui.jwt.secret        → 必须由环境变量 HUICUI_JWT_SECRET 注入（ProdGuard @PostConstruct 校验）
-#   huicui.dev-password      → 不存在（DevSeeder 被 @Profile("dev") 排除，不实例化）
-#   huicui.auth.dev-sms-code → 不存在（AuthController @Value 默认空串，sms-code 端点抛 ApiException）
+#   huicui.jwt.secret   → 必须由环境变量 HUICUI_JWT_SECRET 注入（ProdGuard @PostConstruct 校验）
+#   huicui.dev-password → 不存在（DevSeeder 被 @Profile("dev") 排除，不实例化）
+#   短信固定码 000000    → 仅 dev profile（AuthController.smsCode 门控：非 dev 且 sms 未启用 → 502 拒绝）
+#   数据源 dev 默认凭据  → ProdGuard 校验（localhost:5455 / 口令 test 直接拒绝启动）

@@ -67,7 +67,7 @@ async function submitDispose() {
 }
 // 上报平台
 async function escalate(row: any) {
-  const { error } = await api.POST('/risks/{id}/escalate', { params: { path: { id: row.id } }, body: { note: '上报平台复核' } as any })
+  const { error } = await api.POST('/risks/{id}/escalate', { params: { path: { id: row.id } }, body: { note: '上报平台复核' } })
   if (error) { ElMessage.error('上报失败：' + ((error as any)?.message ?? '')); return }
   ElMessage.success('已上报平台'); load()
 }

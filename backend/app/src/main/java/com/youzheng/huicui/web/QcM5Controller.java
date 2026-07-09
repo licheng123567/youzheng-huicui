@@ -173,11 +173,14 @@ public class QcM5Controller {
 
     // ── [3] POST /risks/{id}/escalate  escalateRisk（BR-M5-07a 上报）──────────────
     // perm=qc.escalate scope=own-org。对「非本组织员工」风险只读+上报（物业 PL/PC 见他商催收员风险→上报）。
-    // 契约无 requestBody；range 可见即可上报（不要求 own-org 匹配 actorOrg——上报恰用于非本组织风险）。
+    // requestBody 可选 {note}（上报说明，落审计）；range 可见即可上报（不要求 own-org 匹配 actorOrg——上报恰用于非本组织风险）。
+    public record EscalateInput(String note) {}
+
     @PostMapping("/risks/{id}/escalate")
     @RequirePermission("qc.escalate")
     @Transactional
-    public Map<String, Object> escalateRisk(@PathVariable("id") String id) {
+    public Map<String, Object> escalateRisk(@PathVariable("id") String id,
+                                            @RequestBody(required = false) EscalateInput in) {
         CurrentSubject s = SubjectContext.get();
         long riskId = parseId(id);
 
@@ -185,7 +188,8 @@ public class QcM5Controller {
         RiskSnapshot risk = riskQc.loadVisibleRisk(s, riskId);
 
         // 不改 actor 组织处置态、不建 dispose_task（建任务是平台 review 的事）；仅写审计留上报痕迹。
-        riskQc.audit(s, "qc.escalate", riskId, "上报平台复核",
+        String note = (in == null || in.note() == null || in.note().isBlank()) ? "上报平台复核" : in.note();
+        riskQc.audit(s, "qc.escalate", riskId, note,
                 riskQc.snapMap(risk), riskQc.snapMap(risk));
 
         return Map.of("ok", true);

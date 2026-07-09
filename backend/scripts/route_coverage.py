@@ -32,10 +32,16 @@ for f in glob.glob(os.path.join(WEB, "*.java")):
         handlers.add((VERB[verb], norm(base + path)))
 
 missing = sorted(contract - handlers)
-print(f"契约操作 {len(contract)} · 控制器 handler {len(handlers)} · 缺 handler {len(missing)}")
+extra = sorted(handlers - contract)   # 反向对账：实现了契约没有的端点 = SSOT 漂移(v1.5.0 起零容忍)
+print(f"契约操作 {len(contract)} · 控制器 handler {len(handlers)} · 缺 handler {len(missing)} · 契约外 handler {len(extra)}")
 for verb, p in missing:
     print(f"  ❌ 无 handler: {verb} {p}")
+for verb, p in extra:
+    print(f"  ❌ 契约外 handler: {verb} {p}")
 if missing:
     print("::error::存在契约声明但后端无 handler 的端点(Gate1 盲区,missing→404 被放过)")
+if extra:
+    print("::error::存在后端实现但契约未声明的端点(SSOT 漂移):先回写 openapi-core.yaml 再实现")
+if missing or extra:
     sys.exit(1)
-print("✅ 契约全部操作均有后端 handler")
+print("✅ 契约操作与后端 handler 双向一致")

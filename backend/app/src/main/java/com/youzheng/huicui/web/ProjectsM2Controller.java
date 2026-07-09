@@ -38,7 +38,7 @@ import java.util.stream.Collectors;
 
 /**
  * M2 projects 资源读端点（契约 listProjects / getProject），横切层范式 + scaffold 共享助手实现。
- * 与 demo 用 {@link ProjectsController} 物理隔离（新类名 ProjectsM2，不覆盖演示端点）。
+ * 类名带 M2 后缀（历史：曾与横切层验证的 demo 类 ProjectsController 并存，demo 已删）。
  *
  * 横切落地：
  *  - x-data-scope=range：M2 读阶段以 DataScope.ownOrg(s,"p.org_id") 落地（平台全量 / 物业本组织；
