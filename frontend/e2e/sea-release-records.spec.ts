@@ -13,7 +13,7 @@ test.describe('BR-M3-27 释放记录(VL 可见 / CO 不可见)', () => {
       test.skip(true, '释放记录入口未渲染')
     }
     await entry.click()
-    const drawer = page.locator('.el-drawer').filter({ hasText: /释放记录|释放历史/ })
+    const drawer = page.getByRole('dialog').filter({ hasText: '本商释放记录' })
     await expect(drawer).toBeVisible()
     // 本商释放记录表列：类型/案件/催收员/时间（按实现：逐条释放历史，非聚合频次）
     await expect(drawer.getByRole('columnheader', { name: '类型' })).toBeVisible()

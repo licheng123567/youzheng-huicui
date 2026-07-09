@@ -2,68 +2,65 @@ import { test, expect } from '@playwright/test'
 import { loginRole } from './helpers'
 
 // US-M9-04/US-M10-02 计费·短信明细+能力用量下钻+数据隔离(BR-M9-08)。
-// 注：slice 原指 frontend/tests/e2e/billing-sms.spec.ts，但 playwright testDir=./e2e，
-//     故落位 frontend/e2e/billing-sms.spec.ts 以纳入收集（路径差异已在交付说明报告）。
-test.describe('US-M9-04 计费短信明细(PL)', () => {
+//
+// 页面拆分后的现状（constants/nav.ts）：
+//   /billing「计费明细」= 能力用量月→日→明细下钻（PL/SA/SE/VL 有此菜单）；
+//   /sms   「短信通道」= 签名模板配置 + 发送统计&明细（GET /sms-records，仅 PL/SA 有此菜单）。
+//   短信明细不再挂在计费页里。VL 无 /sms 菜单，其短信数据隔离由服务端 range 裁剪保证（smoke 覆盖）。
+//   筛选控件是原生 <select>（ds-admin 改版后不再是 el-select）。
+
+test.describe('US-M9-04 短信明细(PL·/sms)', () => {
   test.beforeEach(async ({ page }) => {
     await loginRole(page, 'PL')
-    await page.getByRole('menuitem', { name: '计费' }).click()
-    await expect(page).toHaveURL(/\/billing/)
+    await page.getByRole('menuitem', { name: '短信通道' }).click()
+    await expect(page).toHaveURL(/\/sms/)
   })
 
-  test('短信明细分区加载 /sms-records 并渲染状态标签', async ({ page }) => {
-    await expect(page.getByText('短信发送明细')).toBeVisible()
-    const smsTable = page.locator('.el-table').filter({ hasText: '发送时间' })
+  test('发送统计&明细分区加载 /sms-records 并渲染明细表', async ({ page }) => {
+    await expect(page.getByText('发送统计 & 明细')).toBeVisible()
+    const smsTable = page.locator('table').filter({ hasText: '失败原因' })
     await expect(smsTable).toBeVisible()
-    // 至少出现一种状态标签（SENT/FAILED/DELIVERED 文案）
-    await expect(
-      smsTable.getByText(/已发送|失败|已送达/).first(),
-    ).toBeVisible()
+    await expect(smsTable.locator('thead').getByText('状态')).toBeVisible()
   })
 
-  test('按 status=FAILED 过滤→失败行展示 failureReason 且不消失，失败汇总文案', async ({ page }) => {
-    // 状态下拉选 FAILED（el-select 的 placeholder「状态」未渲染为 a11y placeholder，
-    //   故按文案定位短信明细区的 el-select 触发器，而非 getByPlaceholder）
+  test('按 status=FAILED 过滤→请求带 status，失败原因列在位', async ({ page }) => {
     const req = page.waitForRequest((r) => /\/sms-records\?/.test(r.url()) && /[?&]status=FAILED/.test(r.url()))
-    await page.locator('.el-select').filter({ hasText: '状态' }).first().click()
-    await page.getByText('失败 FAILED').click()
-    await page.getByRole('button', { name: '查询' }).click()
+    // 状态筛选是原生 <select>，change 即触发 load()
+    await page.locator('select.inp').filter({ hasText: '状态：全部' }).selectOption('FAILED')
     await req
-    // 失败汇总文案「失败不退条数」在 el-alert 汇总条与失败原因单元格各出现一次(strict 命中 2 个)，
-    // 用 el-alert 标题唯一定位汇总条(BillingView.vue:176)。
-    await expect(page.locator('.el-alert__title').filter({ hasText: '失败不退条数' })).toBeVisible()
+    await expect(page.locator('table').filter({ hasText: '失败原因' })).toBeVisible()
+    // 计费口径提示：失败不退条数但记原因
+    await expect(page.locator('.note').filter({ hasText: '失败不退条数' })).toBeVisible()
   })
+})
 
-  test('能力用量月→日→明细下钻(树表)', async ({ page }) => {
-    // 「能力用量」文案在卡片标题与分隔线各出现一次（strict 模式会命中 2 个），用分隔线文案唯一定位
-    await expect(page.getByText('能力用量（GET /billing/usage')).toBeVisible()
-    // 切 SMS 维度（仅触发交互，不强求选项落定）
-    await page.locator('.el-select').filter({ hasText: /STT|SMS/ }).first().click().catch(() => {})
-    // 树表结构存在（表头列「周期 / 明细」渲染即可）。
-    // 注：当前 DevSeeder 无 billing_usage 种子，/billing/usage 返回空 → 表体为「No Data」，
-    //     故只断言树表骨架可见，不断言明细行（行级下钻待补种子，详见返回说明）。
-    const usageTable = page.locator('.el-table').filter({ hasText: '周期 / 明细' })
-    await expect(usageTable).toBeVisible()
-    await expect(usageTable.getByText('周期 / 明细')).toBeVisible()
+test.describe('US-M10-02 能力用量下钻(PL·/billing)', () => {
+  test('能力用量月→日下钻骨架就位', async ({ page }) => {
+    await loginRole(page, 'PL')
+    await page.getByRole('menuitem', { name: '计费明细' }).click()
+    await expect(page).toHaveURL(/\/billing/)
+    await expect(page.getByText(/仅记录能力/)).toBeVisible()
+    // 月表骨架（当前 DevSeeder 无 billing_usage 种子 → 表体可能为空，只断言骨架）
+    const monthTable = page.locator('table').filter({ hasText: '月份' })
+    await expect(monthTable).toBeVisible()
+    await expect(monthTable.locator('thead').getByText('短信')).toBeVisible()
   })
 })
 
 test.describe('US-M9-04 计费数据隔离', () => {
-  test('CO 计费短信分区可见性（无则跳过）', async ({ page }) => {
+  test('CO 无「计费明细」「短信通道」菜单，直敲均被守卫拦截', async ({ page }) => {
     await loginRole(page, 'CO')
-    const menu = page.getByRole('menuitem', { name: '计费' })
-    if (!(await menu.count())) {
-      test.skip(true, 'CO 无计费菜单')
-    }
-    await menu.click()
-    await expect(page).toHaveURL(/\/billing/)
+    await expect(page.getByRole('menuitem', { name: '计费明细' })).toHaveCount(0)
+    await expect(page.getByRole('menuitem', { name: '短信通道' })).toHaveCount(0)
+    await page.goto('/billing')
+    await expect(page).not.toHaveURL(/\/billing/)
   })
 
-  test('VL 进计费→短信分区为本组织 range 裁剪(不串组织)', async ({ page }) => {
+  test('VL 有「计费明细」无「短信通道」(短信配置归物业/平台)', async ({ page }) => {
     await loginRole(page, 'VL')
-    await page.getByRole('menuitem', { name: '计费' }).click()
+    await expect(page.getByRole('menuitem', { name: '短信通道' })).toHaveCount(0)
+    await page.getByRole('menuitem', { name: '计费明细' }).click()
     await expect(page).toHaveURL(/\/billing/)
-    // 短信明细按 range 裁剪：分区存在即可（数据由后端 scope 限本组织）
-    await expect(page.getByText('短信发送明细')).toBeVisible()
+    await expect(page.getByText(/仅记录能力/)).toBeVisible()
   })
 })

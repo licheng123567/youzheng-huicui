@@ -9,6 +9,8 @@ export const useAuth = defineStore('auth', {
   state: () => ({
     token: localStorage.getItem('token') || '',
     me: null as Me | null,
+    // 在途的 /me 请求（仅 ensureMe 内部用，防并发重复拉取）；非响应式语义无所谓，放 state 便于类型推断。
+    _meInflight: null as Promise<void> | null,
   }),
   getters: {
     isAuthed: (s) => !!s.token,
@@ -51,6 +53,18 @@ export const useAuth = defineStore('auth', {
       const { data, error } = await api.GET('/me')
       if (error || !data) { this.logout(); throw new Error('获取当前主体失败') }
       this.me = data
+    },
+    /**
+     * 水合当前主体：整页刷新/新标签直达 URL 时 Pinia 是空的，token 在 localStorage 但 me 尚未拉取。
+     * 路由守卫必须先等到 me（否则 role 为空 → 越权判定被跳过 → 直敲 URL 可进任意页）。
+     * 并发调用共享同一个在途请求；失败(401/token 过期)时 fetchMe 已 logout，此处吞掉异常交由守卫按未登录处理。
+     */
+    async ensureMe() {
+      if (this.me || !this.token) return
+      if (!this._meInflight) {
+        this._meInflight = this.fetchMe().catch(() => undefined).finally(() => { this._meInflight = null })
+      }
+      await this._meInflight
     },
     logout() {
       this.token = ''

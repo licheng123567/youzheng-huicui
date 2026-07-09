@@ -6,7 +6,7 @@ test.describe('US-M1 登录与多账号', () => {
   test('口令登录(admin 单账号)直登工作台', async ({ page }) => {
     await loginAs(page, 'admin')
     await expect(page).toHaveURL(/\/dashboard/)
-    await expect(page.getByRole('menuitem', { name: '当前主体' })).toBeVisible()  // 导航就位
+    await expect(page.getByRole('menuitem', { name: '工作台' })).toBeVisible()  // 导航就位(全角色首项)
   })
 
   test('一号多账号(duo_pc)→出现选择→选定身份进工作台', async ({ page }) => {
@@ -19,12 +19,13 @@ test.describe('US-M1 登录与多账号', () => {
     await expect(choices.first()).toBeVisible()
     await choices.first().click()
     await expect(page).not.toHaveURL(/\/login/)
-    await expect(page.getByRole('menuitem', { name: '当前主体' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: '工作台' })).toBeVisible()
   })
 
   test('短信登录(13900009000+000000)→多账号选择', async ({ page }) => {
     await page.goto('/login')
-    await page.getByText('手机验证码', { exact: true }).click()  // 登录模式 Tab(ds-admin 文案)
+    // 「手机验证码」在页脚说明文案里也出现一次 → 必须限定在模式 Tab 内，否则 strict mode 命中 2 个
+    await page.locator('.mode-tabs').getByText('手机验证码').click()
     await page.getByPlaceholder(/手机号/).fill('13900009000')
     await page.getByRole('button', { name: /获取验证码/ }).click()
     await page.getByPlaceholder(/验证码/).fill('000000')

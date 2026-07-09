@@ -18,7 +18,8 @@ async function loadUnread() {
   const { data } = await api.GET('/notifications/unread-count', {})
   unread.value = (data as any)?.count ?? 0
 }
-onMounted(async () => { if (auth.isAuthed && !auth.me) await auth.fetchMe(); loadUnread() })
+// 守卫已在导航前 ensureMe()；此处复用同一在途请求（幂等，不会重复打 /me）。
+onMounted(async () => { await auth.ensureMe(); loadUnread() })
 
 // 菜单配置（KEY2PATH/PATH2LABEL/NAV_BY_ROLE/navLabel）已抽到 constants/nav.ts 单一真源，
 // 与路由越权守卫（router beforeEach 用 allowedPaths）共用，杜绝两处漂移。

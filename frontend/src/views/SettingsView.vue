@@ -188,7 +188,10 @@ function exportMatrix() {
 }
 
 // AI 配置编辑（PUT /ai-config）
-const aiDlg = ref(false); const aiForm = ref<any>({})
+const aiDlg = ref(false)
+// 嵌套字段初始就初始化：DsDrawer 是 Teleport 常驻渲染（非 v-if），模板里的 aiForm.llm.provider
+// 在抽屉关闭时也会求值；若 aiForm={} 则 aiForm.llm 为 undefined → 整个 /settings 白屏。
+const aiForm = ref<any>({ llm: {}, asr: {}, prompts: {}, flywheel: {} })
 function openAiEdit() {
   const c = aiConfig.value ?? {}
   // 后端首配可能返回 llm/asr=null，normalize 防 v-model 访问 null 嵌套崩溃

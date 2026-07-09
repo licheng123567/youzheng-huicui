@@ -56,3 +56,20 @@ export function allowedPaths(role: string): string[] {
   }
   return out
 }
+
+// 下钻详情页：从本角色菜单页可点进、但自身不是菜单项的详情路由。
+// 仅放行「有 id 的详情」（/batches/12），不放行裸列表页（/batches = 撮合派单，平台专属）。
+//   PL/PC/VL 的「案件管理」是批次优先入口（CasesView.viewBatch → /batches/{id}），
+//   且 PL 需在批次详情提案收佣比例（PUT /batches/{id}/comm-in-rate，三层佣金第一步）。
+//   缺此放行会让菜单内的合法链接被守卫弹回 /dashboard。
+// CO 不列入：其案件入口是私海/公海扁平清单，且资金双线上 CO 两线比例均不可见。
+const DRILLDOWN_PATHS: Record<string, string[]> = {
+  PL: ['/batches'], PC: ['/batches'], VL: ['/batches'],
+}
+
+/** 路由守卫判定单一入口：通用页 / 本角色菜单页(含子路径) / 本角色可下钻的详情页。 */
+export function isAllowedPath(role: string, path: string, universalPaths: string[]): boolean {
+  if (universalPaths.includes(path)) return true
+  if (allowedPaths(role).some((p) => path === p || path.startsWith(p + '/'))) return true
+  return (DRILLDOWN_PATHS[role] ?? []).some((p) => path.startsWith(p + '/'))
+}

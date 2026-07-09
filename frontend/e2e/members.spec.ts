@@ -5,10 +5,10 @@ import { loginRole } from './helpers'
 test.describe('US-M1-04 成员管理(PL/VL)', () => {
   test('PL 新增成员角色下拉显示「PC 物业协调员」(不含「催收员」误文案)', async ({ page }) => {
     await loginRole(page, 'PL')
-    await page.getByRole('menuitem', { name: '成员' }).click()
+    await page.getByRole('menuitem', { name: '成员管理' }).click()
     await expect(page).toHaveURL(/\/members/)
     await page.getByRole('button', { name: '新增成员' }).click()
-    const dlg = page.locator('.el-dialog').filter({ hasText: '新增成员' })
+    const dlg = page.getByRole('dialog').filter({ hasText: '新增成员' })
     await expect(dlg).toBeVisible()
     // 角色下拉
     await dlg.locator('.el-select').first().click()
@@ -19,10 +19,10 @@ test.describe('US-M1-04 成员管理(PL/VL)', () => {
 
   test('VL 新增成员角色下拉显示「CO 催收员」(无「服务商催收员」误文案)', async ({ page }) => {
     await loginRole(page, 'VL')
-    await page.getByRole('menuitem', { name: '成员' }).click()
+    await page.getByRole('menuitem', { name: '成员管理' }).click()
     await expect(page).toHaveURL(/\/members/)
     await page.getByRole('button', { name: '新增成员' }).click()
-    const dlg = page.locator('.el-dialog').filter({ hasText: '新增成员' })
+    const dlg = page.getByRole('dialog').filter({ hasText: '新增成员' })
     await expect(dlg).toBeVisible()
     await dlg.locator('.el-select').first().click()
     await expect(page.getByRole('option', { name: 'CO 催收员' })).toBeVisible()
@@ -33,7 +33,7 @@ test.describe('US-M1-04 成员管理(PL/VL)', () => {
     await loginRole(page, 'VL')
     await page.goto('/members')
     await page.getByRole('button', { name: '新增成员' }).click()
-    const dlg = page.locator('.el-dialog').filter({ hasText: '新增成员' })
+    const dlg = page.getByRole('dialog').filter({ hasText: '新增成员' })
     await expect(dlg).toBeVisible()
     await dlg.getByLabel('账号').fill('e2e_sub_' + (Date.now() % 100000))
     await dlg.getByLabel('姓名').fill('越子集测试')
@@ -53,7 +53,7 @@ test.describe('US-M1-04 成员管理(PL/VL)', () => {
   test('CO/VL(无 member.manage)无「成员」菜单·直链不渲染管理操作', async ({ page }) => {
     await loginRole(page, 'CO')
     // CO 无 member.manage → 侧栏无成员菜单
-    await expect(page.getByRole('menuitem', { name: '成员' })).toHaveCount(0)
+    await expect(page.getByRole('menuitem', { name: '成员管理' })).toHaveCount(0)
     // 直链进入也无管理操作（无新增成员按钮）
     await page.goto('/members')
     await expect(page.getByRole('button', { name: '新增成员' })).toHaveCount(0)

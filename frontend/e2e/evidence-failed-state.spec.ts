@@ -11,15 +11,15 @@ test.describe('M6 存证失败态与重试(SA)', () => {
   test.beforeEach(async ({ page }) => {
     await loginRole(page, 'SA')
     await page.goto('/evidence')
-    await expect(page.locator('.el-table').first()).toBeVisible()
+    await expect(page.locator('table').first()).toBeVisible()
   })
 
   test('状态列以 el-tag 呈现，种子内为 ISSUED(success)·无 FAILED(danger)', async ({ page }) => {
     // SA 全量可见 2 条 ISSUED 存证：状态列渲染 success 标签。
-    const successTag = page.locator('.el-tag.el-tag--success', { hasText: 'ISSUED' })
+    const successTag = page.locator('.tag[title="ISSUED"]')
     await expect(successTag.first()).toBeVisible()
     // 当前种子无 FAILED 存证 → 不存在 danger 标识（失败态用 danger 渲染由 EvidenceView.vue:46 保证）。
-    await expect(page.locator('.el-tag.el-tag--danger', { hasText: 'FAILED' })).toHaveCount(0)
+    await expect(page.locator('.tag[title="FAILED"]')).toHaveCount(0)
   })
 
   test('SA 无重试入口：不具 evidence.create 且无 FAILED 行', async ({ page }) => {

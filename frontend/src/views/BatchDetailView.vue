@@ -402,7 +402,10 @@ onMounted(loadAll)
       <div class="card">
         <div class="sec-title" style="display:flex;align-items:center">
           协调员（本批次）
-          <button v-if="auth.has('proj.edit') && !isCoordinator" class="btn sm" style="margin-left:auto" @click="openCoord">+ 添加协调员</button>
+          <!-- 门控须与契约一致：PUT /batches/{id}/coordinators 是 batch.import(平台)。
+               物业负责人在「项目档案」维护协调员(PUT /projects/{id}/coordinators · proj.edit)。
+               此前误门控为 proj.edit → PL 看得见按钮、点了必 403。 -->
+          <button v-if="auth.has('batch.import') && !isCoordinator" class="btn sm" style="margin-left:auto" @click="openCoord">+ 添加协调员</button>
         </div>
         <div v-if="b.coordinators && b.coordinators.length" class="coord-tags">
           <span v-for="c in b.coordinators" :key="c.id" class="tag pri" style="margin-right:6px;display:inline-flex;align-items:center;gap:4px">{{ c.name || c.id }}</span>
@@ -418,7 +421,8 @@ onMounted(loadAll)
         <div class="ops">
           <span class="note" style="margin:0">{{ filteredCases.length }}/{{ cases.length }} 条</span>
           <!-- 协调员不可手动添加案件（案件由物业负责人/平台导入，对标原型 PC 无导入/录入权） -->
-          <button v-if="(auth.has('batch.import') || auth.has('proj.edit')) && !isCoordinator" class="btn sm" style="margin-left:8px" @click="openManualAdd">+ 手动添加案件</button>
+          <!-- POST /batches/{id}/cases 亦是 batch.import；去掉 || proj.edit（否则 PL 点了必 403）。 -->
+          <button v-if="auth.has('batch.import') && !isCoordinator" class="btn sm" style="margin-left:8px" @click="openManualAdd">+ 手动添加案件</button>
         </div>
       </div>
       <!-- 筛选栏 -->

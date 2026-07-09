@@ -1,71 +1,58 @@
 import { test, expect } from '@playwright/test'
-import { loginRole, logout } from './helpers'
+import { loginRole } from './helpers'
 
-// P-DATA-08 跨层级筛选 + 批次号直达 + 关键字 + BR-M8-09 脱敏隔离。
-test.describe('P-DATA-08 案件跨层级筛选(PC)', () => {
-  test('项目+状态下拉过滤→请求带 projectId&status，行数变化', async ({ page }) => {
+// P-DATA-08 案件跨层级筛选 + 批次下钻 + 关键字 + BR-M8-09 脱敏隔离。
+//
+// 现状（CasesView 按角色分两支，src/views/CasesView.vue）：
+//   管理角色(SA/SE/PL/PC/VL)=「批次优先」：顶部筛选打 GET /batches（q=批次号/项目名、status）；
+//     点批次行 → /batches/{id} → 该页再打 GET /cases?batchId=（批次内案件明细，含「业主/房号」二级筛选）。
+//   催收员(CO)=「我的案件」扁平清单：筛选直接打 GET /cases（q、status）。
+//   筛选控件是原生 <select>/<input>（ds-admin 改版后不再是 el-select）。
+
+test.describe('P-DATA-08 案件跨层级筛选', () => {
+  test('PC 批次列表：关键字与状态筛选 → 请求带 q & status', async ({ page }) => {
     await loginRole(page, 'PC')
-    await page.getByRole('menuitem', { name: '案件' }).click()
+    await page.getByRole('menuitem', { name: '案件管理' }).click()
     await expect(page).toHaveURL(/\/cases/)
-    await expect(page.locator('.el-table').first()).toBeVisible()
+    await expect(page.locator('table').first()).toBeVisible()
 
-    // 选项目下拉首项（页面有项目/状态两个 el-select：弹层都挂在 body，须只点当前可见弹层里的项）。
-    // el-select 内层 input 会被 placeholder 浮层拦截 → 点 .el-select 包裹元素(按 placeholder 文案定位)而非 getByPlaceholder。
-    const projSelect = page.locator('.el-select').filter({ hasText: '全部项目' }).first()
-    const projReq = page.waitForRequest((r) => /\/cases\?/.test(r.url()) && /[?&]projectId=/.test(r.url()))
-    await projSelect.click()
-    const projItem = page
-      .locator('.el-select-dropdown')
-      .filter({ visible: true })
-      .locator('.el-select-dropdown__item')
-      .first()
-    await expect(projItem).toBeVisible()
-    await projItem.click()
-    await projReq
-    // 等项目下拉弹层完全收起，避免其关闭动画与状态下拉弹层叠加导致选错项
-    await expect(page.locator('.el-select-dropdown').filter({ visible: true })).toHaveCount(0)
-
-    // 选状态下拉首项 → 请求带 status（状态选项弹层含「待派单」，据此唯一定位）
-    const statReq = page.waitForRequest((r) => /\/cases\?/.test(r.url()) && /[?&]status=/.test(r.url()))
-    await page.locator('.el-select').filter({ hasText: '全部状态' }).first().click()
-    const statDropdown = page
-      .locator('.el-select-dropdown')
-      .filter({ visible: true })
-      .filter({ hasText: '待派单' })
-    const statItem = statDropdown.locator('.el-select-dropdown__item').first()
-    await expect(statItem).toBeVisible()
-    await statItem.click()
-    await statReq
-  })
-
-  test('带 ?batchId=xxx 进入→列表仅含该批次(批次号直达)', async ({ page }) => {
-    await loginRole(page, 'PC')
-    // 模拟从批次页/全局搜索直达
-    const req = page.waitForRequest((r) => /\/cases\?/.test(r.url()) && /[?&]batchId=B-DEMO-1/.test(r.url()))
-    await page.goto('/cases?batchId=B-DEMO-1')
-    await req
-    // 批次直达框回填
-    await expect(page.getByPlaceholder('批次号直达')).toHaveValue('B-DEMO-1')
-  })
-
-  test('关键字 q 命中目标；VL/CO 对脱敏案件用业主名/手机号无法命中', async ({ page }) => {
-    // PC 用关键字命中
-    await loginRole(page, 'PC')
-    await page.goto('/cases')
-    const qReq = page.waitForRequest((r) => /\/cases\?/.test(r.url()) && /[?&]q=/.test(r.url()))
-    await page.getByPlaceholder('手机号/户号/业主名').fill('张')
-    await page.getByPlaceholder('手机号/户号/业主名').press('Enter')
+    const qReq = page.waitForRequest((r) => /\/batches\?/.test(r.url()) && /[?&]q=/.test(r.url()))
+    const search = page.getByPlaceholder('批次号/项目名')
+    await search.fill('B-CH')
+    await search.press('Enter')
     await qReq
 
-    // VL 对脱敏案件：关键字命中应被裁剪（后端脱敏不返还匹配）
-    // 同一 test 内切角色：先清 token，否则 goto('/login') 会因已登录重定向回工作台、登录框不出现
-    await logout(page)
-    await loginRole(page, 'VL')
+    const statusReq = page.waitForRequest((r) => /\/batches\?/.test(r.url()) && /[?&]status=/.test(r.url()))
+    await page.locator('select.inp').first().selectOption('IN_PROGRESS')
+    await statusReq
+  })
+
+  test('PC 点批次行下钻 → 批次详情按 batchId 拉案件明细', async ({ page }) => {
+    await loginRole(page, 'PC')
     await page.goto('/cases')
-    await expect(page.locator('.el-table').first()).toBeVisible()
-    await page.getByPlaceholder('手机号/户号/业主名').fill('13800138000')
-    await page.getByPlaceholder('手机号/户号/业主名').press('Enter')
-    // 脱敏隔离：业主名/手机号关键字不泄露已结案案件明细（无该明文行）
+    const row = page.locator('tbody tr.row-click').first()
+    await expect(row).toBeVisible()
+
+    // 批次详情用 GET /cases?batchId={id} 拉本批次案件（契约 listCases 的 batchId 参数）
+    const req = page.waitForRequest((r) => /\/cases\?/.test(r.url()) && /[?&]batchId=\d+/.test(r.url()))
+    await row.click()
+    await expect(page).toHaveURL(/\/batches\/\d+/)
+    await req
+  })
+
+  test('CO 我的案件：关键字 q 走 /cases；脱敏案件用手机号搜不出明文(BR-M8-09)', async ({ page }) => {
+    await loginRole(page, 'CO')
+    await page.goto('/cases')
+    await expect(page.locator('table').first()).toBeVisible()
+
+    const qReq = page.waitForRequest((r) => /\/cases\?/.test(r.url()) && /[?&]q=/.test(r.url()))
+    // exact：顶栏全局搜索框 placeholder 是「搜案件/业主/房号/电话」，子串会同时命中
+    const search = page.getByPlaceholder('业主/房号', { exact: true })
+    await search.fill('13800138000')
+    await search.press('Enter')
+    await qReq
+
+    // 脱敏隔离：结案案件的业主手机号不以明文出现在列表里
     await expect(page.getByText('13800138000')).toHaveCount(0)
   })
 })

@@ -6,15 +6,17 @@ import { loginRole } from './helpers'
 //   内催佣金行「生成佣金单」入口 → 穿透弹窗(人→批次下拉→明细勾选, 非手输 lineIds)；
 //   佣金支付单行「详情」→ lines 穿透快照(业主/房号/回款/佣金)；「确认支付」→ 变 SETTLED。
 //
-// 实测种子现实(SettlementView 渲染快照)：VL 落 /settlement 时 side 默认 OUT，
-//   「内催佣金」表与「佣金支付单」表均渲染、表头齐备，但当前后端 /co-commissions 与
+// 路由现状：内催佣金已拆为独立页 /co-commission（菜单「催收员佣金」），不再挂在 /settlement 下；
+//   且 VL 菜单里的对账线是 /settlement-out（付佣对账），/settlement 属物业收佣线、VL 被守卫拦截。
+//
+// 实测种子现实：「内催佣金」表与「佣金支付单」表均渲染、表头齐备，但当前后端 /co-commissions 与
 //   /co-pay-docs 对 VL 返回空集(表体 No Data)——故面板结构恒在、行/按钮可能缺。
 //   下方用例断言「面板与表头结构」必出(快照权威)，行级穿透动作按行存在与否条件执行，
-//   保证用例反映真实现而非假设种子。(若需稳定验证整链，见返回里 DevSeeder 待补清单。)
+//   保证用例反映真实现而非假设种子。
 test.describe('US-M9-10 内催佣金穿透(VL)', () => {
   test.beforeEach(async ({ page }) => {
     await loginRole(page, 'VL')
-    await page.goto('/settlement')
+    await page.goto('/co-commission')
   })
 
   test('内催佣金面板可见(showCoComm)', async ({ page }) => {
@@ -43,8 +45,9 @@ test.describe('US-M9-10 内催佣金穿透(VL)', () => {
   })
 
   test('佣金单详情→lines 穿透快照(业主/房号/回款/佣金)', async ({ page }) => {
-    // 「佣金支付单」面板(GET /co-pay-docs · PENDING_PAY→确认支付→SETTLED)标题恒在
-    await expect(page.getByText(/佣金支付单/)).toBeVisible()
+    // 「佣金支付单」面板标题恒在。页面里「佣金支付单」还出现在空态文案与详情抽屉标题里
+    // → strict mode 会命中多个，故限定分隔标题 .sec-title。
+    await expect(page.locator('.sec-title').filter({ hasText: '佣金支付单' })).toBeVisible()
 
     // 行级「详情」：仅当有佣金支付单行时穿透验证(种子现实可能空)
     const detailBtn = page.getByRole('button', { name: /^详情$/ })

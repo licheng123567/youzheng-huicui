@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { loginRole } from './helpers'
+import { loginRole, openCaseByAcctNo } from './helpers'
 
 // US-M5 余额不足暂停→充值补解析(BR-M5-02)：
 // QUOTA_BLOCKED 录音出「补解析」按钮→/recordings/{id}/parse 转 PARSING；
@@ -8,20 +8,15 @@ test.describe('US-M5 余额不足补解析(CO)', () => {
   // parse 桩实现把 QUOTA_BLOCKED→PARSING 不可逆，三用例各占一件 QB 案（M5-QB-0{1,2,3}）互不串味。
   async function openCallTab(page: any, acctNo: string) {
     await loginRole(page, 'CO')
-    await page.getByRole('menuitem', { name: '案件' }).click()
-    await expect(page).toHaveURL(/\/cases/)
-    const rows = page.locator('.el-table__row')
-    await expect(rows.first()).toBeVisible()
-    // 锚定指定 QUOTA_BLOCKED 录音的私海案（余额不足暂停态，供「补解析」按钮渲染）
-    await rows.filter({ hasText: acctNo }).first().click()
-    await expect(page).toHaveURL(/\/cases\/\d+/)
-    await page.getByRole('tab', { name: /通话 \/ AI 复盘/ }).click()
+    // CO 的「我的案件」扁平表无户号列 → 走全局搜索按户号定位指定 QUOTA_BLOCKED 录音的私海案
+    await openCaseByAcctNo(page, acctNo)
     // 录音面板按需加载：先点「获取最新通话录音」拉取 latest，QUOTA_BLOCKED 态按钮才渲染。
     // getLatest 异步，等面板「状态」描述项渲染（任一状态先到位），再交由用例守卫判 QUOTA_BLOCKED。
     // 注：parse 桩把 QUOTA_BLOCKED→PARSING 不可逆，二次跑全量时该案已 PARSING→守卫优雅 skip（不留红）。
     await page.getByRole('button', { name: '获取最新通话录音' }).click()
-    // 等录音面板渲染完成（「看 AI 复盘」按钮恒在面板内），再让用例守卫判 QUOTA_BLOCKED 状态。
-    await expect(page.getByRole('button', { name: '看 AI 复盘' })).toBeVisible()
+    // 等录音面板渲染完成。哨兵不能用「查看并标注（AI 复盘）」——那个按钮仅 status===READY 才渲染，
+    // 而本 spec 专测 QUOTA_BLOCKED 态。改用恒在的 .rec-ready（状态标签+时长）作为面板就绪信号。
+    await expect(page.locator('.rec-ready')).toBeVisible()
   }
 
   test('QUOTA_BLOCKED→显示「补解析」按钮', async ({ page }) => {

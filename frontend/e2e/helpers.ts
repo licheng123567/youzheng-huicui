@@ -43,3 +43,53 @@ export async function expectMenu(page: Page, label: string, visible: boolean) {
   if (visible) await expect(item).toBeVisible()
   else await expect(item).toHaveCount(0)
 }
+
+/**
+ * 按户号(acctNo)打开案件详情。
+ * 走全局搜索 /search（通用页，全角色可达；后端按 业主/房号/户号/电话 匹配 + range 裁剪）——
+ * 不能走「案件管理」：管理角色那里是**批次**优先列表；催收员的「我的案件」扁平表也**没有户号列**，
+ * 按 acctNo 过滤行永远匹配不到。
+ */
+export async function openCaseByAcctNo(page: Page, acctNo: string) {
+  await page.goto(`/search?q=${acctNo}`)
+  const rows = page.locator('tbody tr.row-click')
+  await expect(rows.first()).toBeVisible()
+  await rows.first().click()
+  await expect(page).toHaveURL(/\/cases\/\d+/)
+}
+
+/**
+ * 进批次详情（角色相关的两条入口，constants/nav.ts 单一真源）：
+ *   平台 SA/SE → 菜单「撮合派单」列表 → 点批次号 a.link（无 href 故无 link role）。
+ *   PL/PC/VL   → 无撮合派单菜单；走菜单「案件管理」批次优先入口 → 点批次行（tr.row-click）。
+ *   CO         → 案件入口是私海/公海扁平清单，无批次详情可达（本函数不支持）。
+ * code 省略则取首行；给定 code 时按批次号精确定位那一行。
+ * tab='props' 时切到「批次属性」——协调员/减免档位/作战手册/佣金提案都在该 tab（默认 tab 是「案件明细」）。
+ */
+export async function openBatchDetail(page: Page, role: RoleKey, code?: string, tab: 'cases' | 'props' = 'cases') {
+  if (role === 'CO') throw new Error('CO 无批次详情入口（案件入口为私海/公海扁平清单）')
+  if (role === 'SA' || role === 'SE') {
+    await page.getByRole('menuitem', { name: '撮合派单' }).click()
+    await expect(page).toHaveURL(/\/batches/)
+    const row = code
+      ? page.locator('tbody tr').filter({ hasText: code }).first()
+      : page.locator('tbody tr').first()
+    await expect(row).toBeVisible()
+    await row.locator('a.link').first().click()
+  } else {
+    await page.getByRole('menuitem', { name: '案件管理' }).click()
+    await expect(page).toHaveURL(/\/cases/)
+    const row = code
+      ? page.locator('tbody tr.row-click').filter({ hasText: code }).first()
+      : page.locator('tbody tr.row-click').first()
+    await expect(row).toBeVisible()
+    await row.click()
+  }
+  await expect(page).toHaveURL(/\/batches\/\d+/)
+  if (tab === 'props') {
+    // tab 是普通 span（无 tab role），按文案点；点后等该 tab 的固定卡片标题出现。
+    // 注意 .sec-title 里同时含标题文案与「+ 添加协调员」按钮，故不能用 exact 文本匹配。
+    await page.getByText('批次属性', { exact: true }).click()
+    await expect(page.locator('.sec-title', { hasText: '协调员（本批次）' })).toBeVisible()
+  }
+}

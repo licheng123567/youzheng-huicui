@@ -5,14 +5,14 @@ import { loginRole } from './helpers'
 // VL/CO 打开已结案(redacted)案件→联系人电话脱敏占位、明细被统计卡替代；
 // 平台同案仍见完整明细。
 test.describe('US-M8 结案脱敏(VL/CO 收敛 / 平台全见)', () => {
-  // 打开案件列表里指定户号的案件（缺省取首行）。
+  // 按户号打开案件。走全局搜索（/search 是通用页，全角色可达；后端按 owner/room/acct_no/phone 匹配，
+  // range 裁剪）——不能走「案件管理」：管理角色(VL/SA)那里是**批次**优先列表，没有 acctNo 行可点。
   // M8-RD-01 = co1 持有的 WITHDRAWN 私海案（对 VL/CO 触发 BR-M8-09 脱敏；SA 见全量明细）。
   async function openSomeCase(page: any, acctNo = 'M8-RD-01') {
-    await page.getByRole('menuitem', { name: '案件' }).click()
-    await expect(page).toHaveURL(/\/cases/)
-    const rows = page.locator('.el-table__row')
+    await page.goto(`/search?q=${acctNo}`)
+    const rows = page.locator('tbody tr.row-click')
     await expect(rows.first()).toBeVisible()
-    await rows.filter({ hasText: acctNo }).first().click()
+    await rows.first().click()
     await expect(page).toHaveURL(/\/cases\/\d+/)
   }
 
@@ -26,16 +26,17 @@ test.describe('US-M8 结案脱敏(VL/CO 收敛 / 平台全见)', () => {
         test.skip(true, '未命中已脱敏案件')
       }
       await expect(redactAlert.first()).toBeVisible()
-      // 联系人逐行明细收敛为统计卡：不出现「设主号」逐行操作
-      await expect(page.getByRole('button', { name: '设主号' })).toHaveCount(0)
+      // 收敛为统计卡：联系人逐行 .contact-item 一行不渲染
+      await expect(page.locator('.contact-item')).toHaveCount(0)
     })
   }
 
   test('SA 同案仍见完整联系人明细', async ({ page }) => {
     await loginRole(page, 'SA')
     await openSomeCase(page)
-    // 平台不收敛：联系人表渲染（主号列/电话明细可见）
-    await expect(page.getByRole('tab', { name: /概览 \/ 联系人/ })).toBeVisible()
-    await expect(page.locator('.el-table').first()).toBeVisible()
+    // 平台不收敛：无脱敏提示，且联系人逐行明细渲染。
+    // （不以「设为主号码」为锚——该操作要 case.follow，平台超管并不持有。）
+    await expect(page.getByText(/已结案并脱敏/)).toHaveCount(0)
+    await expect(page.locator('.contact-item').first()).toBeVisible()
   })
 })

@@ -12,7 +12,8 @@ const router = useRouter()
 
 // 移动作业端仅面向 CO/PC；其它角色（SA/SE/PL/VL）无移动视图 → 回桌面工作台，避免空白页。
 onMounted(async () => {
-  if (auth.isAuthed && !auth.me) await auth.fetchMe()
+  // /m 路由不走桌面守卫的角色白名单，故这里自行水合 me 再判角色（ensureMe 幂等、共享在途请求）。
+  await auth.ensureMe()
   if (auth.me && !['CO', 'PC'].includes(auth.me.role ?? '')) router.replace('/dashboard')
 })
 

@@ -8,7 +8,7 @@ test.describe('US-M9-06 物业结算只读(PL/PC)', () => {
   for (const role of ['PL', 'PC'] as const) {
     test(`${role} 侧栏可见结算并进入(修 H-01)`, async ({ page }) => {
       await loginRole(page, role)
-      const menu = page.getByRole('menuitem', { name: '结算' })
+      const menu = page.getByRole('menuitem', { name: '付佣对账' })
       await expect(menu).toBeVisible()
       await menu.click()
       await expect(page).toHaveURL(/\/settlement/)
@@ -26,9 +26,9 @@ test.describe('US-M9-06 物业结算只读(PL/PC)', () => {
     test(`${role} 对账汇总三列有值非「—」(修 M-10)`, async ({ page }) => {
       await loginRole(page, role)
       await page.goto('/settlement')
-      const recon = page.locator('.el-table').first()
+      const recon = page.locator('table').first()
       await expect(recon).toBeVisible()
-      const firstRow = recon.locator('.el-table__row').first()
+      const firstRow = recon.locator('tbody tr').first()
       await expect(firstRow).toBeVisible()
       // 批次/比例/应结三列任一不得为占位「—」
       await expect(firstRow.getByText('—', { exact: true })).toHaveCount(0)

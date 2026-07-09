@@ -1,107 +1,64 @@
 import { test, expect } from '@playwright/test'
 import { loginRole } from './helpers'
 
-// BR-M6 三场景按次存证·场景校验；M6-FE-REFIDS 验收：
-// PC 在案件详情发起 RECORDING 存证：未选录音被挡/提示；选 READY 录音提交→成功(toast「发起存证成功」)；
-// DELIVERY 未选 SIGNED 文书被挡；MATERIAL_PACK 可留空成功。
-// 现实对齐：只有 S3 私海案件 (acctNo=M3-S3-01,业主周私海) 种了 READY 录音 / SIGNED 文书；
-// 其余案件「本案无 READY 录音」。提交成功是 ElMessage「发起存证成功」并关闭弹窗，无 ISSUING 文案。
-test.describe('BR-M6 按次存证·场景 refIds 校验(PC)', () => {
-  // 打开指定案件详情的「发起存证」对话框。
-  // acctNo 缺省取第一行；需 READY 录音/SIGNED 文书的用例传 'M3-S3-01'(唯一种了外围实体的私海案件)。
-  async function openEvidenceDialog(page: any, acctNo?: string) {
-    await loginRole(page, 'PC')
-    await page.getByRole('menuitem', { name: '案件' }).click()
-    await expect(page).toHaveURL(/\/cases/)
-    const rows = page.locator('.el-table__row')
-    await expect(rows.first()).toBeVisible()
-    const row = acctNo ? rows.filter({ hasText: acctNo }).first() : rows.first()
-    await expect(row).toBeVisible()
-    await row.click()
-    await expect(page).toHaveURL(/\/cases\/\d+/)
-    const btn = page.getByRole('button', { name: '发起存证' })
-    await expect(btn).toBeVisible()
-    await btn.click()
-    return page.locator('.el-dialog').filter({ hasText: /存证|场景/ })
-  }
+// BR-M6 按次存证：UI 入口与 evidence.create 门控。
+//
+// 口径变更（送达存证区重构后，见 CaseThreeColumn / AiReviewPanel）：
+//   已**没有**独立的「发起存证」对话框（旧版让用户选 scene + 勾 refIds）。现在两个真实入口：
+//     ① RECORDING：AI 复盘面板里「🔒 存证本次录音」——scene/refIds 由前端按当前录音固定填入，
+//        用户不再手选，故「未选录音→被挡」这类校验在 UI 上已不可达（服务端仍强校验，
+//        由 smoke「PL 发起存证(RECORDING)」+ Gate1 覆盖）。
+//     ② DELIVERY：案件详情「📎 上传文件 / 凭证（可选存证）」对话框里勾「同时上链存证」。
+//   本 spec 因此改为验证：两个入口的存在性与 evidence.create 权限门控。
+//
+// 定位案件：走全局搜索按户号（/search 通用页）。PC 是管理角色，「案件管理」是**批次**优先列表，
+//   点行进的是批次详情，拿不到案件详情。M3-S3-01 = 唯一种了 READY 录音的私海案件。
 
-  // 把「存证场景」下拉切到指定中文项(录音/送达/材料包)。
-  // el-select 的内层 combobox <input> 会被 placeholder 浮层拦截点击，故点 .el-select 包裹元素(场景=弹窗内第一个)；
-  // 下拉弹层挂在 body，须只在当前可见 popper 里选项，避免命中 refIds 多选下拉的同名项。
-  async function selectScene(page: any, dlg: any, label: string) {
-    await dlg.locator('.el-select').first().click()
-    await page
-      .locator('.el-select-dropdown')
-      .filter({ visible: true })
-      .locator('.el-select-dropdown__item')
-      .filter({ hasText: label })
-      .first()
-      .click()
-  }
+const ACCT = 'M3-S3-01'
 
-  test('RECORDING 未选录音→提交被挡并提示', async ({ page }) => {
-    const dlg = await openEvidenceDialog(page)
+// 角色选择用 PL（物业负责人）而非 PC：
+//   pristine 种子里 cuihu_pc.permissions 为 NULL（= 角色全集，含 evidence.create），
+//   但 members.spec 的「编辑成员·权限子集」用例会在运行期把 cuihu_pc 改成子集
+//   ['case.follow','case.paylink']。于是任何对 PC 的 evidence.create 断言都**依赖 spec 执行顺序**。
+//   PL 不被任何用例改权限，是稳定锚点。子集授权本身由 members.spec 自己覆盖。
+async function openCase(page: any, role: 'PL' | 'CO') {
+  await loginRole(page, role)
+  await page.goto(`/search?q=${ACCT}`)
+  const rows = page.locator('tbody tr.row-click')
+  await expect(rows.first()).toBeVisible()
+  await rows.first().click()
+  await expect(page).toHaveURL(/\/cases\/\d+/)
+}
+
+test.describe('BR-M6 按次存证·UI 入口与门控', () => {
+  test('PL(evidence.create) 上传对话框含「同时上链存证」勾选(DELIVERY 入口)', async ({ page }) => {
+    await openCase(page, 'PL')
+    await page.getByRole('button', { name: /上传文件 \/ 凭证/ }).click()
+    const dlg = page.getByRole('dialog').filter({ hasText: '上传文件 / 凭证' })
     await expect(dlg).toBeVisible()
-    // 默认 scene=RECORDING，不选 refIds 直接提交 → 前置校验拦截
-    await dlg.getByRole('button', { name: /确定|提交|发起/ }).click()
-    await expect(page.getByText(/需选择至少一条 READY 录音/)).toBeVisible()
+    // 说明文案里也提到「同时上链存证」→ 必须锚定勾选项自身的 label（含 checkbox）
+    const evidenceLabel = dlg.locator('label').filter({ hasText: '同时上链存证' })
+    await expect(evidenceLabel).toBeVisible()
+    await expect(evidenceLabel.locator('input[type="checkbox"]')).toBeVisible()
   })
 
-  test('RECORDING 选中 READY 录音→提交成功', async ({ page }) => {
-    // S3 私海案件 (M3-S3-01) 种了 READY 录音；computeAvailableActions 修复后 PC 在其 IN_PROGRESS 详情的
-    // availableActions 含 evidence→「发起存证」按钮渲染，本用例真正提交录音存证(dedup-safe，见末尾断言)。
-    // 守卫保留作防御：若实现回退致按钮不渲染则优雅 skip，不留红。
-    await loginRole(page, 'PC')
-    await page.getByRole('menuitem', { name: '案件' }).click()
-    await expect(page).toHaveURL(/\/cases/)
-    const rows = page.locator('.el-table__row')
-    await expect(rows.first()).toBeVisible()
-    const row = rows.filter({ hasText: 'M3-S3-01' }).first()
-    await expect(row).toBeVisible()
-    await row.click()
-    await expect(page).toHaveURL(/\/cases\/\d+/)
-    const btn = page.getByRole('button', { name: '发起存证' })
-    test.skip(
-      (await btn.count()) === 0,
-      '(防御)PC 在 M3-S3-01 的 availableActions 不含 evidence→无「发起存证」入口；正常种子下不应命中',
-    )
-    await btn.click()
-    const dlg = page.locator('.el-dialog').filter({ hasText: /存证|场景/ })
-    await expect(dlg).toBeVisible()
-    // 第一个 el-select 是「存证场景」，refIds(选录音)是第二个
-    const sel = dlg.locator('.el-select').nth(1)
-    await sel.click()
-    await page.locator('.el-select-dropdown').filter({ visible: true }).locator('.el-select-dropdown__item').first().click()
-    // 点弹窗内「备注」输入框收起多选下拉(勿用 Esc，会连带关闭对话框)，避免遮挡提交
-    await dlg.getByText('备注').click()
-    await dlg.getByRole('button', { name: /确定|提交|发起/ }).click()
-    // 成功为 ElMessage「发起存证成功」并关闭弹窗(无 ISSUING 文案)。
-    // 实现对同案+同场景+同 refIds 幂等去重(409「同案同场景同关联的存证已发起」)：本案种子已有
-    // RECORDING 存证(ref_ids=[录音1])，选同一录音重提将命中去重。故断言「成功」或「去重提示」其一，
-    // 与同文件 MATERIAL_PACK 用例一致，使用例可重复执行(dedup-safe)。
-    await expect(
-      page.getByText(/发起存证成功|同案同场景同关联的存证已发起/).first(),
-    ).toBeVisible()
+  test('PL AI 复盘面板含「存证本次录音」(RECORDING 入口)', async ({ page }) => {
+    await openCase(page, 'PL')
+    const openReview = page.getByRole('button', { name: /查看并标注（AI 复盘）/ })
+    if (!(await openReview.count())) {
+      test.skip(true, '该案无 READY 录音，AI 复盘入口不渲染')
+    }
+    await openReview.click()
+    const panel = page.getByRole('dialog', { name: 'AI 复盘 · 本次录音' })
+    await expect(panel).toBeVisible()
+    await expect(panel.getByRole('button', { name: /存证本次录音/ })).toBeVisible()
   })
 
-  test('DELIVERY 未选 SIGNED 文书→提交被挡并提示', async ({ page }) => {
-    const dlg = await openEvidenceDialog(page)
-    await expect(dlg).toBeVisible()
-    await selectScene(page, dlg, '送达')
-    // 不选文书直接提交 → 前置校验拦截
-    await dlg.getByRole('button', { name: /确定|提交|发起/ }).click()
-    await expect(page.getByText(/需选择至少一份 SIGNED 文书/)).toBeVisible()
-  })
-
-  test('MATERIAL_PACK 可留空受理(无 refIds)', async ({ page }) => {
-    const dlg = await openEvidenceDialog(page)
-    await expect(dlg).toBeVisible()
-    await selectScene(page, dlg, '材料包')
-    await dlg.getByRole('button', { name: /确定|提交|发起/ }).click()
-    // 材料包场景无 refIds 也应受理 → 成功 toast「发起存证成功」。
-    // 实现对同案+同场景+同 refIds 做幂等去重(409 STATE_409「同案同场景同关联的存证已发起」)：
-    // 首跑成功，重跑命中去重；二者都证明「无 refIds 被受理且通过校验」(非前置 422 拦截)。
-    // 故断言「成功 toast」或「已发起去重提示」其一可见，使用例可重复执行。
-    await expect(page.getByText(/发起存证成功|同案同场景同关联的存证已发起/).first()).toBeVisible()
+  // 「上传与存证」整区由 v-if="isPropertyRole" 控制 → 催收员侧根本不渲染该入口
+  // （存证是物业/平台的动作，BR-M6 三方隔离：服务商不可见存证）。
+  test('CO 无「上传与存证」区(无上传/存证入口)', async ({ page }) => {
+    await openCase(page, 'CO')
+    await expect(page.getByText('上传与存证', { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /上传文件 \/ 凭证/ })).toHaveCount(0)
   })
 })

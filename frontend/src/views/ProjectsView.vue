@@ -6,6 +6,7 @@ import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import { useRoleFields } from '../composables/useRoleFields'
 import ProjectEditDialog from '../components/ProjectEditDialog.vue'
+import CoordinatorPicker from '../components/CoordinatorPicker.vue'
 import { statusLabel, reduceDecideLabel } from '../constants/enums'
 
 // GET /projects（契约客户端）。资金双线：平台/物业见 commInRate，服务商视角字段级无。
@@ -112,6 +113,21 @@ function onProjectSaved() {
   }
 }
 
+// ── US-M2-02 项目协调员维护（PUT /projects/{id}/coordinators · proj.edit）──
+// 「+ 管理协调员」此前只把 coordEditDlg 置 true 却无对应弹层 → 死按钮，PL 在 UI 上根本挂不了协调员
+// （批次级协调员是平台 batch.import，物业侧唯一入口就在这里）。
+async function saveProjectCoordinators(coordinatorIds: string[]) {
+  const id = String(selProj.value?.id ?? '')
+  const { error } = await api.PUT('/projects/{id}/coordinators', {
+    params: { path: { id } },
+    body: { coordinatorIds },
+  })
+  if (error) { ElMessage.error('保存协调员失败：' + ((error as any)?.message ?? '')); return }
+  ElMessage.success('已更新项目协调员')
+  coordEditDlg.value = false
+  viewProfile({ id })
+}
+
 // ── 内联减免阶梯维护（PL 角色） ──
 const reduceRows = ref<{ discount: string; capYuan: number | null; waivePenalty: boolean; decide: string }[]>([])
 const reduceDirty = ref(false)
@@ -155,6 +171,11 @@ onMounted(load)
 </script>
 
 <template>
+  <!-- 编辑/新建项目抽屉：列表视图与内联档案共用。
+       必须挂在两个互斥 v-if 卡片之外——此前挂在列表卡片(v-if="!selProj")里，
+       一进内联档案列表卡片就卸载，档案里的「编辑档案」按钮只置 editDlg=true 却无弹层可开（死按钮）。 -->
+  <ProjectEditDialog v-model="editDlg" :project="editProject" @saved="onProjectSaved" />
+
   <!-- ═══════════════ 列 表 视 图 ═══════════════ -->
   <div v-if="!selProj" class="card">
     <div class="card-h">
@@ -228,9 +249,6 @@ onMounted(load)
       <div class="pg on">{{ page }}</div>
       <div class="pg" @click="page * size < total && (page++, load())">›</div>
     </div>
-
-    <!-- 编辑对话框（共用） -->
-    <ProjectEditDialog v-model="editDlg" :project="editProject" @saved="onProjectSaved" />
 
     <!-- 作战手册·仅手册编辑（协调员亦可，项目档案其余只读） -->
     <el-dialog v-model="pbDlg" title="维护作战手册" width="600px" append-to-body>
@@ -374,6 +392,12 @@ onMounted(load)
       </template>
       <span v-else class="note">暂未关联协调员</span>
     </div>
+    <CoordinatorPicker
+      v-model="coordEditDlg"
+      :selected="selProj.coordinators ?? []"
+      title="维护项目协调员（PUT /projects/{id}/coordinators）"
+      @submit="saveProjectCoordinators"
+    />
 
     <!-- 编辑对话框（内联档案内亦可编辑） -->
     <div style="margin-top:16px">

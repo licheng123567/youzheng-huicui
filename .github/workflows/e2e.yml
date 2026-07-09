@@ -49,6 +49,13 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
+      # 秒级静态对账：spec 里的「角色×菜单点击 / 角色×goto」必须与 src/constants/nav.ts
+      # （菜单+路由白名单单一真源）一致。放在 Playwright 之前——这类不一致在真屏里
+      # 每条要烧 30s 超时才暴露，静态查一次全出。
+      - name: E2E 导航口径对账（nav.ts SSOT）
+        working-directory: frontend
+        run: npm run e2e:navlint
+
       - name: 跑 Playwright 真屏 E2E（webServer 自启 vite）
         working-directory: frontend
         env: { CI: "true" }
