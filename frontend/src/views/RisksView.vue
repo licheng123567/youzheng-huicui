@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
+import { useRoleFields } from '../composables/useRoleFields'
 import { riskLevelLabel, riskVerdictLabel, disposeTaskStatusLabel } from '../constants/enums'
 import DsDrawer from '../components/DsDrawer.vue'
 import AiReviewPanel from '../components/AiReviewPanel.vue'
@@ -12,10 +13,10 @@ import { downloadAuthedFile } from '../utils/download'
 // M5 质检：风险看板(GET /risks·全量检测) + 处置归属(VL/PL 处置自己员工风险) + 平台复核 + 处置跟踪(仅平台)。
 const auth = useAuth()
 const router = useRouter()
-const isPlatform = computed(() => ['SA', 'SE'].includes(auth.me?.role ?? ''))
-// 物业角色(PL/PC)：风险看板只「上报」不「处置」——对标原型 §质检 role==='PL'||'PC' 仅 escalate。
-// 处置(标记/转质检/通知)是服务商(VL)对本商催收员风险的动作；物业对催收员风险只上报平台。
-const isProperty = computed(() => ['PL', 'PC'].includes(auth.me?.role ?? ''))
+// 平台/物业口径统一走 useRoleFields（单一真源，避免多处 ['SA','SE']/['PL','PC'] 定义漂移）。
+// 物业角色(PL/PC)：风险看板只「上报」不「处置」——对标原型 §质检 role==='PL'||'PC' 仅 escalate；
+// 看板处置(标记/转质检/通知)是服务商(VL)对本商催收员风险的动作(故按钮 !isProperty)；物业对催收员风险只上报平台。
+const { isPlatform, isProperty } = useRoleFields()
 // 归属方(VL/PL/PC 有 qc.dispose)：可见本组织整改任务 + 提交整改回执。
 const isOwner = computed(() => auth.has('qc.dispose'))
 const risks = ref<any[]>([])

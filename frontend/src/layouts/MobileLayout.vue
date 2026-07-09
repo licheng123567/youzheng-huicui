@@ -10,7 +10,11 @@ const auth = useAuth()
 const route = useRoute()
 const router = useRouter()
 
-onMounted(async () => { if (auth.isAuthed && !auth.me) await auth.fetchMe() })
+// 移动作业端仅面向 CO/PC；其它角色（SA/SE/PL/VL）无移动视图 → 回桌面工作台，避免空白页。
+onMounted(async () => {
+  if (auth.isAuthed && !auth.me) await auth.fetchMe()
+  if (auth.me && !['CO', 'PC'].includes(auth.me.role ?? '')) router.replace('/dashboard')
+})
 
 const TABS = [
   { path: '/m', label: '工作台', icon: '🏠' },

@@ -11,6 +11,7 @@ import DsDrawer from '../components/DsDrawer.vue'
 //     （无专属统计端点，按 /cases + /batches + /workbench 现有数据实时聚合，不臆造）。
 const auth = useAuth()
 const isCoordinator = computed(() => auth.me?.role === 'PC')
+const isCollector = computed(() => auth.me?.role === 'CO')
 
 const loading = ref(false)
 const stats = ref<any>(null)
@@ -189,7 +190,8 @@ async function loadPc() {
 
 onMounted(async () => {
   if (!auth.me) await auth.fetchMe()   // 直达路由时 me 可能尚未就绪，先确保角色已知再选口径
-  if (isCoordinator.value) loadPc(); else load()
+  // 仅 PC(协调员产能) / CO(催收员提成) 两套口径；其它角色不误拉 /me/stats（见模板兜底）。
+  if (isCoordinator.value) loadPc(); else if (isCollector.value) load()
 })
 </script>
 
@@ -265,7 +267,7 @@ onMounted(async () => {
   </div>
 
   <!-- ═══════════ 催收员（CO）：服务商内部考核口径 ═══════════ -->
-  <div v-else>
+  <div v-else-if="isCollector">
     <!-- 统计周期切换 -->
     <div class="toolbar" style="margin-bottom:14px">
       <span class="note" style="margin:0">统计周期（KPI）：</span>
@@ -408,5 +410,11 @@ onMounted(async () => {
       </template>
       <template #footer><el-button @click="detailOpen = false">关闭</el-button></template>
     </DsDrawer>
+  </div>
+
+  <!-- 兜底：非 CO/PC 角色（SA/SE/PL/VL）无个人业绩口径，给占位而非误当催收员拉 /me/stats -->
+  <div v-else class="card">
+    <div class="card-h"><div class="t"><span class="bar"></span>我的业绩</div></div>
+    <div class="note" style="padding:24px 0;text-align:center">「我的业绩」仅面向催收员（提成）与物业协调员（处置产能）。当前角色无个人业绩口径。</div>
   </div>
 </template>

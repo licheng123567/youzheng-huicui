@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuth } from '../stores/auth'
+import { allowedPaths } from '../constants/nav'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -62,11 +63,26 @@ const router = createRouter({
   ],
 })
 
-// 路由守卫：未登录访问受保护页 → 跳登录（前端兜底，真隔离在服务端 x-data-scope）。
+// 通用页：任何已登录角色可达（不在角色菜单里但属账户/工具页）。
+const UNIVERSAL_PATHS = ['/dashboard', '/profile', '/search', '/notifications']
+
+// 路由守卫：
+//  1) 未登录访问受保护页 → 跳登录（真数据隔离仍在服务端 x-data-scope/perm）。
+//  2) 角色越权直达兜底(⑬)：仅可进本角色菜单内的页（+其详情子路由前缀）+ 通用页；否则回工作台。
+//     根治「任意登录用户 URL 直达任意页」；me 未就绪时不拦（首屏放行，服务端仍兜底）。
 router.beforeEach((to) => {
   const auth = useAuth()
   if (!to.meta.public && !auth.isAuthed) return { name: 'login', query: { redirect: to.fullPath } }
   if (to.name === 'login' && auth.isAuthed) return { path: '/' }
+  // 公开页 / 移动端(/m 由 MobileLayout 限 CO/PC) 不走本守卫
+  if (to.meta.public || to.path === '/m' || to.path.startsWith('/m/')) return true
+  const role = auth.me?.role
+  if (role) {
+    const allowed = allowedPaths(role)
+    const ok = UNIVERSAL_PATHS.includes(to.path)
+      || allowed.some((p) => to.path === p || to.path.startsWith(p + '/'))
+    if (!ok) return { path: '/dashboard' }
+  }
   return true
 })
 

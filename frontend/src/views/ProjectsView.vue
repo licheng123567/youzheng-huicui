@@ -12,7 +12,7 @@ import { statusLabel, reduceDecideLabel } from '../constants/enums'
 // 列表内置搜索筛选(q/status)由服务端支持；查看档案=内联展开项目全量详情；查看批次→案件列表；编辑→ProjectEditDialog。
 const router = useRouter()
 const auth = useAuth()
-const { role, showCommInRate, ratePct } = useRoleFields()
+const { showCommInRate, ratePct } = useRoleFields()
 
 // ── 列表状态 ──
 const items = ref<any[]>([])
@@ -264,8 +264,8 @@ onMounted(load)
       <div class="r"><div class="k">状态</div><div class="v" :title="selProj.status">{{ statusLabel(selProj.status) }}</div></div>
     </div>
 
-    <!-- 减免政策维护（仅物业负责人 PL 可内联编辑；协调员 PC 项目档案只读——对标原型 role==='PL'） -->
-    <template v-if="role === 'PL'">
+    <!-- 减免政策维护（单一口径 reduce.policy.edit：PL/平台可编，PC 已无此权→只读；修好 SA/SE 内联档案改不了减免的 bug） -->
+    <template v-if="auth.has('reduce.policy.edit')">
       <div class="sec-title">
         减免政策维护（项目级·阶梯）
         <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">批次级可在批次详情覆盖</span>
@@ -309,7 +309,7 @@ onMounted(load)
       </div>
     </template>
 
-    <template v-if="role !== 'PL'">
+    <template v-if="!auth.has('reduce.policy.edit')">
       <div class="sec-title">
         减免政策
         <span class="note" style="margin:0 0 0 4px;font-weight:400">{{ reduceRows.length ? reduceRows.length + ' 档阶梯' : '—' }}</span>

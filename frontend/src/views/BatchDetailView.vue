@@ -347,7 +347,8 @@ onMounted(loadAll)
       <!-- 减免政策 -->
       <div class="card">
         <div class="sec-title">减免政策（批次级） <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">继承项目 或 自定义覆盖阶梯（批次级优先）</span></div>
-        <template v-if="!tiersPermDenied && auth.has('reduce.policy.edit') && !isCoordinator">
+        <!-- 减免编辑单一口径 reduce.policy.edit（PC 已无此权→落下方只读分支）；批次作战手册的可编独立于此 -->
+        <template v-if="!tiersPermDenied && auth.has('reduce.policy.edit')">
           <div style="display:flex;gap:16px;margin-bottom:8px;font-size:13px">
             <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" value="inherit" :checked="tiersSource !== 'CUSTOM'" @change="tiersSource === 'CUSTOM' && clearReduce()"> 继承项目</label>
             <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" value="custom" :checked="tiersSource === 'CUSTOM'" @change="tiersSource !== 'CUSTOM' && openReduce()"> 自定义覆盖</label>

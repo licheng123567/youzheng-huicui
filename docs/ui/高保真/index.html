@@ -626,7 +626,7 @@
                     <td v-if="seaTab==='own'"><span class="tag" :class="t2Cls(cs)">{{ cs.t2Left||'—' }}</span><span v-if="t2Warn(cs)" class="tag dan" style="font-size:11px;margin-left:4px">即将退回</span></td>
                     <td @click.stop>
                       <a class="btn txt" @click="openCase(cs.id)">{{ canSeeDetail(cs)?'查看':'查看统计' }}</a>
-                      <a v-if="can('case.grab') && cs.status==='进行中' && !cs.owner" class="btn txt" :class="{df:cs.openRateSet===false}" @click="cs.openRateSet===false?toast('请先设置开放抢单付佣比例'):grab(cs)">抢单</a>
+                      <a v-if="can('case.claim') && cs.status==='进行中' && !cs.owner" class="btn txt" :class="{df:cs.openRateSet===false}" @click="cs.openRateSet===false?toast('请先设置开放抢单付佣比例'):grab(cs)">抢单</a>
                       <a v-if="seaTab==='own' && can('case.assign') && !cs.owner" class="btn txt" @click.stop="openAssign(cs)">分配</a>
                       <a v-if="seaTab==='own' && cs.owner && role==='VL'" class="btn txt wn" @click.stop="openReturnSea(cs)">主动退回公海</a>
                     </td>
@@ -864,7 +864,7 @@
         <template v-if="view==='legal'">
           <div class="card">
             <div class="card-h"><div class="t"><span class="bar"></span>送达管理</div>
-              <div class="ops"><button v-if="can('case.legal.start')" class="btn sm" @click="openApplyDoc()">+ 申请文书</button><span class="note" style="margin:0">按户送达存证（App 现场拍照上链）</span><button v-if="prevView==='caseDetail'" class="btn df sm" @click="view='caseDetail'">← 返回案件</button></div></div>
+              <div class="ops"><button v-if="can('legal.create')" class="btn sm" @click="openApplyDoc()">+ 申请文书</button><span class="note" style="margin:0">按户送达存证（App 现场拍照上链）</span><button v-if="prevView==='caseDetail'" class="btn df sm" @click="view='caseDetail'">← 返回案件</button></div></div>
             <div class="alert info" style="margin-top:0">协调员对各户线下送达 <b>催收单 / 律师函 / 告知单</b>，App 拍照签收 → 上链生成送达存证（M6 场景①）。律师函/起诉状需先「申请律师函」（按需付费 · M9）。</div>
             <div class="toolbar" style="margin:10px 0"><input class="inp" v-model="deliveryFilter.q" placeholder="搜索 业主 / 房号 / 电话" aria-label="搜索"><select class="inp" v-model="deliveryFilter.project" aria-label="项目筛选"><option value="">项目：全部</option><option v-for="p in scopedProjects" :key="p.name">{{ p.name }}</option></select><select class="inp" v-model="deliveryFilter.batch" aria-label="批次筛选"><option value="">批次：全部</option><option v-for="b in batches" :key="b.no" :value="b.no">{{ b.no }}</option></select><select class="inp" v-model="deliveryFilter.doc" aria-label="文书筛选"><option value="">文书：全部</option><option>催收单</option><option>律师函</option><option>告知单</option></select><select class="inp" v-model="deliveryFilter.status" aria-label="状态筛选"><option value="">状态：全部</option><option>待送达</option><option>已送达待签收</option><option>已签收</option><option>已存证</option></select><button class="btn df sm" @click="deliveryFilter={q:'',project:'',batch:'',doc:'',status:''}">重置</button></div>
             <table>
@@ -999,7 +999,7 @@
               <div class="toolbar" style="margin-bottom:8px"><button class="btn df sm" @click="billDrill.day=''">← 返回按日</button><span class="note" style="margin:0">{{ billDrill.day }} · 明细</span></div>
               <table>
                 <thead><tr><th>日期</th><th>类型</th><th>用量/次</th><th>业主</th><th>房号</th><th>项目</th><th>批次</th><th>状态</th></tr></thead>
-                <tbody><tr v-for="b in billDetailView" :key="b.date+b.type+b.ref"><td>{{ b.date }}</td><td>{{ b.type }}</td><td>{{ b.qty }}</td><td>{{ b.owner }}</td><td>{{ b.room }}</td><td>{{ b.proj }}</td><td>{{ b.batch }}</td><td><span class="tag" :class="b.status==='失败'?'dan':'suc'">{{b.status}}</span><a v-if="b.status==='失败'&&can('case.evidence')" class="btn txt" @click="toast('已重新提交解析：'+b.ref)">重试</a></td></tr></tbody>
+                <tbody><tr v-for="b in billDetailView" :key="b.date+b.type+b.ref"><td>{{ b.date }}</td><td>{{ b.type }}</td><td>{{ b.qty }}</td><td>{{ b.owner }}</td><td>{{ b.room }}</td><td>{{ b.proj }}</td><td>{{ b.batch }}</td><td><span class="tag" :class="b.status==='失败'?'dan':'suc'">{{b.status}}</span><a v-if="b.status==='失败'&&can('evidence.create')" class="btn txt" @click="toast('已重新提交解析：'+b.ref)">重试</a></td></tr></tbody>
               </table>
             </template>
             <div class="note">先按月统计 → 点「按日查看」→ 点「查看明细」看每笔（含业主/房号）。STT 按分钟、存证/法务按次、短信按条；<b>失败不计费</b>，可重试（M6-06）。</div>
@@ -1146,7 +1146,7 @@
               <div class="ops"><span class="note" style="margin:0">存证随案件发起；此处仅汇总查询与证书下载/核验</span><button class="btn df sm" @click="exportList('存证管理')">导出</button></div></div>
             <div class="toolbar" style="margin-bottom:10px"><input class="inp" v-model="evidenceFilter.q" placeholder="搜索 业主 / 房号 / 电话" aria-label="搜索"><select class="inp" v-model="evidenceFilter.project" aria-label="项目筛选"><option value="">项目：全部</option><option v-for="p in scopedProjects" :key="p.name">{{ p.name }}</option></select><select class="inp" v-model="evidenceFilter.batch" aria-label="批次筛选"><option value="">批次：全部</option><option v-for="b in batches" :key="b.no" :value="b.no">{{ b.no }}</option></select><button class="btn df sm" @click="evidenceFilter={q:'',project:'',batch:''}">重置</button></div>
             <table><thead><tr><th>案件</th><th>房号</th><th>项目</th><th>批次</th><th>联系电话</th><th>场景</th><th>对象</th><th>时间</th><th>上链哈希</th><th>状态</th><th>证书</th></tr></thead>
-              <tbody><tr v-for="e in evidenceFiltered" :key="e.case+e.scene+e.obj"><td>{{ e.case }}</td><td>{{ e.room }}</td><td>{{ projOf(e.batch) }}</td><td>{{ e.batch }}</td><td>{{ maskPhone(e.phone) }}</td><td>{{ e.scene }}</td><td>{{ e.obj }}</td><td>{{ e.time }}</td><td>{{ e.hash }}</td><td><span class="tag" :class="e.status==='失败'?'dan':'suc'">{{e.status}}</span></td><td><template v-if="e.status==='失败'"><a v-if="can('case.evidence')" class="btn txt" @click="toast('已重新发起存证：'+e.case+' '+e.scene)">重试</a><span v-else class="note">—</span></template><template v-else><a class="btn txt" @click="toast('下载存证证书 PDF')">下载</a><a class="btn txt" @click="openEvidenceVerify(e)">独立核验</a></template></td></tr></tbody></table>
+              <tbody><tr v-for="e in evidenceFiltered" :key="e.case+e.scene+e.obj"><td>{{ e.case }}</td><td>{{ e.room }}</td><td>{{ projOf(e.batch) }}</td><td>{{ e.batch }}</td><td>{{ maskPhone(e.phone) }}</td><td>{{ e.scene }}</td><td>{{ e.obj }}</td><td>{{ e.time }}</td><td>{{ e.hash }}</td><td><span class="tag" :class="e.status==='失败'?'dan':'suc'">{{e.status}}</span></td><td><template v-if="e.status==='失败'"><a v-if="can('evidence.create')" class="btn txt" @click="toast('已重新发起存证：'+e.case+' '+e.scene)">重试</a><span v-else class="note">—</span></template><template v-else><a class="btn txt" @click="toast('下载存证证书 PDF')">下载</a><a class="btn txt" @click="openEvidenceVerify(e)">独立核验</a></template></td></tr></tbody></table>
             <div class="note">存证只向物业按次计费、三场景同价；每次有可下载证书 + 第三方/法院核验二维码。<b>存证失败不计费</b>，可点『重试』重新发起。</div>
           </div>
         </template>
@@ -1834,7 +1834,7 @@
             <div style="font-size:11px;color:var(--sec);margin-bottom:8px">缴费二维码</div>
             <div style="width:80px;height:80px;background:#e4e7ed;margin:0 auto;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--sec)">QR</div>
           </div>
-          <div v-if="can('case.link')" style="display:flex;gap:8px">
+          <div v-if="can('case.paylink')" style="display:flex;gap:8px">
             <button class="btn df sm" @click="toast('已重发催费单')">重发</button>
             <button class="btn txt dgc" @click="toast('已作废此催费单');closeDrawer()">作废</button>
           </div>
@@ -1972,7 +1972,7 @@
 
       </div>
       <div class="df-footer">
-        <template v-if="['call','ticket','legal'].includes(drawer.kind) && can('case.evidence')">
+        <template v-if="['call','ticket','legal'].includes(drawer.kind) && can('evidence.create')">
           <template v-if="drawer.data && drawer.data.evidenced">
             <span class="tag suc">✓ 已存证</span>
             <a class="btn txt" @click="toast('查看存证证书（含哈希/时间戳/独立核验二维码）')">查看证书</a>
@@ -2092,7 +2092,7 @@
       </div>
     </div>
     <div class="rp-foot">
-      <template v-if="can('case.evidence')">
+      <template v-if="can('evidence.create')">
         <template v-if="reviewCallItem.evidenced">
           <span class="tag suc">✓ 录音已存证</span>
           <a class="btn txt" @click="toast('查看存证证书（含哈希/时间戳/独立核验二维码）')">查看证书</a>
@@ -2106,7 +2106,7 @@
     </div>
   </div>
 
-  <!-- 写跟进记录弹窗（case.mark：写跟进记录，非标记状态） -->
+  <!-- 写跟进记录弹窗（case.follow：写跟进记录，非标记状态） -->
   <div class="mask" :class="{on:followDialog.open}" @click.self="closeFollowDialog()"></div>
   <div class="dialog" :class="{on:followDialog.open}" role="dialog" aria-modal="true" tabindex="-1" aria-label="写跟进记录">
     <div class="dh">写跟进记录<span class="x" role="button" tabindex="0" aria-label="关闭" @click="closeFollowDialog()" @keydown.enter="closeFollowDialog()">×</span></div>
@@ -3288,7 +3288,7 @@
                     <span class="tm">{{ item.tm.slice(5,16) }}</span>
                     {{ item.title }}
                     <span v-if="item.who" style="color:var(--sec);font-size:12px"> · {{ item.who }}</span>
-                    <a v-if="item.type==='call' && can('case.evidence')" class="btn txt" style="font-size:12px;margin-left:6px" @click.stop="evidenceItem(item)">存证</a>
+                    <a v-if="item.type==='call' && can('evidence.create')" class="btn txt" style="font-size:12px;margin-left:6px" @click.stop="evidenceItem(item)">存证</a>
                     <span v-if="item.type==='call' && item.evidenced" class="tag suc" style="font-size:11px;margin-left:4px">已存证</span>
                     <span class="td-arr">›</span>
                   </div>
@@ -3452,7 +3452,7 @@ const app = createApp({
     const roles={
       SA:{label:'平台超管',user:'平台王',scope:'all',scopeLabel:'全平台',redactClosed:false,
         nav:[{group:'业务'},'workbench','dispatch','platformSea','projects','cases',{group:'能力'},'playbookLib','qc','evidence',{group:'财务'},'reconIn','reconOut','billing','recharge','sms',{group:'系统'},'orgMgmt','members','settings','reports','audit'],
-        perms:['proj.edit','batch.import','case.dispatch','case.assign','case.close','case.reduce','case.evidence','case.legal.start','case.repay','case.reverse','case.void','case.link','case.call','report.export','case.ticket']},
+        perms:['proj.edit','batch.import','case.dispatch','case.assign','case.close','case.reduce','evidence.create','legal.create','case.repay.mark','case.reverse','case.void','case.paylink','case.call','report.export','case.ticket']},
       SE:{label:'平台员工',user:'平台李',scope:'range',scopeLabel:'数据范围内·阳光物业(沪/浦东)',redactClosed:false,
         dataRange:{properties:['阳光物业'],areas:['沪/浦东'],providers:['安信催收']},
         nav:[{group:'业务'},'workbench','dispatch','platformSea','projects','cases',{group:'能力'},'playbookLib','qc','evidence',{group:'财务'},'reconIn','reconOut','billing',{group:'系统'},'orgMgmt','members','settings','audit',{group:'报表'},'reports'],perms:['case.dispatch','case.assign','report.export']},
@@ -3461,24 +3461,24 @@ const app = createApp({
         perms:['proj.edit','batch.import','case.call','case.reduce','case.close','case.void','report.export']},
       PC:{label:'物业协调员',user:'物业钱',scope:'property',scopeLabel:'本物业',redactClosed:false,
         nav:[{group:'业务'},'workbench','cases','callLog','myLinks',{group:'项目'},'projects',{group:'能力'},'qc','legal','evidence',{group:'财务'},'reconIn',{group:'我的'},'myStats',{group:'消息'},'inbox'],
-        perms:['case.call','case.mark','case.promise','case.repay','case.reverse','case.legal.start','case.evidence','case.close','case.link','case.void','case.reduce','case.ticket']},
+        perms:['case.call','case.follow','case.promise','case.repay.mark','case.reverse','legal.create','evidence.create','case.close','case.paylink','case.void','case.reduce','case.ticket']},
       VL:{label:'服务商负责人',user:'安信周',scope:'provider',scopeLabel:'派给本服务商',redactClosed:true,
         nav:[{group:'业务'},'workbench','providerSea','projects','qc','cases',{group:'财务'},'reconOut','coCommission','recharge','billing',{group:'管理'},'reports','members','audit',{group:'消息'},'inbox'],
         perms:['case.assign','report.export']},
       CO:{label:'催收员',user:'安信王五',scope:'provider',scopeLabel:'本服务商公海+私海',redactClosed:true,
         nav:[{group:'业务'},'workbench','myCases','providerSea','callLog','myLinks',{group:'我的'},'myStats','mySettle',{group:'消息'},'inbox'],
-        perms:['case.call','case.mark','case.promise','case.link','case.suggestLegal','case.release','case.grab','case.ticket']},
+        perms:['case.call','case.follow','case.promise','case.paylink','case.suggestLegal','case.release','case.claim','case.ticket']},
     };
     const OPS=[
-      {p:'case.mark',label:'写跟进记录',act:'写跟进记录到时间线·手记（不改变案件状态）',cls:'',group:'follow'},
+      {p:'case.follow',label:'写跟进记录',act:'写跟进记录到时间线·手记（不改变案件状态）',cls:'',group:'follow'},
       {p:'case.promise',label:'登记承诺',act:'登记单笔/分期承诺',cls:'df',group:'follow'},
       {p:'case.ticket',label:'转工单',act:'open:ticket',cls:'df',group:'follow'},
-      {p:'case.link',label:'发催费单',act:'生成缴费链接（短信/转微信）',cls:'df',group:'follow'},
-      {p:'case.repay',label:'标线下回款',act:'标注线下回款+上传凭证',cls:'df',group:'follow'},
+      {p:'case.paylink',label:'发催费单',act:'生成缴费链接（短信/转微信）',cls:'df',group:'follow'},
+      {p:'case.repay.mark',label:'标线下回款',act:'标注线下回款+上传凭证',cls:'df',group:'follow'},
       {p:'case.reverse',label:'冲正',act:'冲正误登记回款（留痕）',cls:'df',group:'follow'},
       {p:'case.suggestLegal',label:'建议法务',act:'轻量标注建议法务（不移案）',cls:'df',group:'legal'},
-      {p:'case.legal.start',label:'申请律师函',act:'go:legal',cls:'df',group:'legal'},
-      {p:'case.evidence',label:'存证',act:'发起存证（三场景）',cls:'df',group:'legal'},
+      {p:'legal.create',label:'申请律师函',act:'go:legal',cls:'df',group:'legal'},
+      {p:'evidence.create',label:'存证',act:'发起存证（三场景）',cls:'df',group:'legal'},
       {p:'case.reduce',label:'减免审批',act:'减免/政策分期审批（PC超规则需转PL特批）',cls:'df',group:'manage'},
       {p:'case.assign',label:'分配',act:'分配/再分配给催收员',cls:'df',group:'manage'},
       {p:'case.release',label:'释放',act:'释放回公海（须填原因）',cls:'df',group:'manage'},
@@ -3536,8 +3536,8 @@ const app = createApp({
       {f:'操作日志 / 审计',CO:'○',PC:'○',VL:'本商',PL:'本物业',SE:'范围内',SA:'全局'}
     ];
     const roleTemplates=[
-      {name:'协调员',perms:['case.call','case.promise','case.repay','case.legal.start','case.evidence','case.close','case.link','case.reduce']},
-      {name:'催收员',perms:['case.call','case.mark','case.promise','case.link','case.suggestLegal','case.release','case.grab']},
+      {name:'协调员',perms:['case.call','case.promise','case.repay.mark','legal.create','evidence.create','case.close','case.paylink','case.reduce']},
+      {name:'催收员',perms:['case.call','case.follow','case.promise','case.paylink','case.suggestLegal','case.release','case.claim']},
       {name:'平台员工',perms:['case.dispatch','case.assign','report.export']},
     ];
     // M1 跨组织兼职账号  (Q1-8: Vue.reactive for push support)
@@ -3553,10 +3553,10 @@ const app = createApp({
     // M1 permName helper
     const permName=(p)=>{ const m={
       'proj.edit':'项目编辑','batch.import':'批次导入','case.dispatch':'派单','case.assign':'分配',
-      'case.close':'结案','case.reduce':'减免','case.evidence':'存证','case.legal.start':'申请律师函',
-      'case.repay':'标回款','case.reverse':'冲正','case.void':'作废','case.link':'发催费单',
-      'case.call':'拨号','report.export':'导出报表','case.mark':'标注跟进','case.promise':'登记承诺',
-      'case.suggestLegal':'建议法务','case.release':'释放','case.grab':'抢单',
+      'case.close':'结案','case.reduce':'减免','evidence.create':'存证','legal.create':'申请律师函',
+      'case.repay.mark':'标回款','case.reverse':'冲正','case.void':'作废','case.paylink':'发催费单',
+      'case.call':'拨号','report.export':'导出报表','case.follow':'标注跟进','case.promise':'登记承诺',
+      'case.suggestLegal':'建议法务','case.release':'释放','case.claim':'抢单',
       'case.ticket':'建工单',
     }; return m[p]||p; };
     // M2 起诉要素字段集
@@ -4161,7 +4161,7 @@ const app = createApp({
     const filteredCases=computed(()=>{ const f=st.caseFilter; const q=(f.q||'').trim(); return visibleCases.value.filter(x=>{ if(f.status && x.status!==f.status) return false; if(f.project && projOf(x.batch)!==f.project) return false; if(f.batch && x.batch!==f.batch) return false; if(q && !((x.name||'').includes(q)||(x.room||'').includes(q))) return false; if(f.amtMin!=null&&f.amtMin!=='' && x.due<Number(f.amtMin)) return false; if(f.amtMax!=null&&f.amtMax!=='' && x.due>Number(f.amtMax)) return false; if(f.owner && !String(x.owner||'').includes(f.owner)) return false; return true; }); });
     const caseOps=computed(()=>{ if(!canSeeDetail(c.value)) return []; let ops=OPS.filter(o=>can(o.p));
       // 申请律师函/存证 移到自定义「送达存证 / 存证」区，故从自动操作里排除（PC/PL/SA/SE）
-      if(['PC','PL','SA','SE'].includes(st.role)) ops=ops.filter(o=>!['case.legal.start','case.evidence'].includes(o.p));
+      if(['PC','PL','SA','SE'].includes(st.role)) ops=ops.filter(o=>!['legal.create','evidence.create'].includes(o.p));
       // 协调员：被动处理（工单/减免）走「待办事项」，不在操作区
       if(st.role==='PC') ops=ops.filter(o=>!['case.ticket','case.reduce'].includes(o.p));
       return ops; });
@@ -4328,7 +4328,7 @@ const app = createApp({
       const move=(ev)=>{ let w=window.innerWidth-(ev.touches?ev.touches[0].clientX:ev.clientX); w=Math.max(560,Math.min(window.innerWidth*0.98,w)); st.reviewW=Math.round(w); };
       const up=()=>{ st.reviewResizing=false; document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up); document.removeEventListener('touchmove',move); document.removeEventListener('touchend',up); };
       document.addEventListener('mousemove',move); document.addEventListener('mouseup',up); document.addEventListener('touchmove',move,{passive:false}); document.addEventListener('touchend',up); };
-    // 写跟进记录（case.mark：写记录到时间线·手记，不改变案件状态）
+    // 写跟进记录（case.follow：写记录到时间线·手记，不改变案件状态）
     // 附件（图片/音频/文件，演示用递增命名）
     let attachSeq=0; const ATTACH_ICON={'图片':'🖼','音频':'🎵','文件':'📎'}; const ATTACH_EXT={'图片':'.jpg','音频':'.m4a','文件':'.pdf'};
     const addAttach=(arr,type)=>{ arr.push({type,icon:ATTACH_ICON[type],name:type+'_'+(++attachSeq)+ATTACH_EXT[type]}); toast('已添加'+type+'附件（演示）'); };
@@ -4578,8 +4578,8 @@ const app = createApp({
     const addBatchTier=()=>{ var b=st.selBatch; if(b){ if(!b.reduceTiersCustom) b.reduceTiersCustom=[]; b.reduceTiersCustom.push({discount:'',cap:'',waivePenalty:false,decide:'线下内部流程'}); } };
     const removeBatchTier=(i)=>{ if(st.selBatch&&st.selBatch.reduceTiersCustom) st.selBatch.reduceTiersCustom.splice(i,1); };
     const syncBatchReduce=()=>{ if(st.selBatch){ st.selBatch.reduceMode='inherit'; st.selBatch.reduceTiersCustom=[]; } toast('减免政策已同步为项目最新（重新继承）'); };
-    const opLabel=(o)=>{ if(st.role==='PC'&&o.p==='case.mark') return '跟进登记'; return o.label; };
-    const onOp=(o)=>{ if(o.p==='case.reduce'){ openReduceDialog(c.value); return; } if(o.act==='go:legal'){ st.view='legal'; return; } if(o.p==='case.release'){ openReleaseDialog(); return; } if(o.p==='case.close'){ openCloseDialog(c.value); return; } if(o.p==='case.promise'){ openPromiseDialog(); return; } if(o.p==='case.ticket'){ if(st.role==='PC'){ st.midTab='todo'; toast('请在中栏「待办事项」处理本案工单'); } else openTicketDialog(); return; } if(o.p==='case.repay'){ openRepayDialog(c.value); return; } if(o.p==='case.link'){ openLinkChannel(); return; } if(o.p==='case.suggestLegal'){ logOp('建议法务',c.value.name); toast('已打「建议法务」标注（不移案）'); return; } if(o.p==='case.mark'){ openFollowDialog(); return; } if(o.p==='case.reverse'){ askConfirm('冲正回款登记','冲正将红冲此前回款登记并全程留痕，不可撤销。请确认。',()=>toast('已冲正误登记回款（留痕）')); return; } toast(o.act); };
+    const opLabel=(o)=>{ if(st.role==='PC'&&o.p==='case.follow') return '跟进登记'; return o.label; };
+    const onOp=(o)=>{ if(o.p==='case.reduce'){ openReduceDialog(c.value); return; } if(o.act==='go:legal'){ st.view='legal'; return; } if(o.p==='case.release'){ openReleaseDialog(); return; } if(o.p==='case.close'){ openCloseDialog(c.value); return; } if(o.p==='case.promise'){ openPromiseDialog(); return; } if(o.p==='case.ticket'){ if(st.role==='PC'){ st.midTab='todo'; toast('请在中栏「待办事项」处理本案工单'); } else openTicketDialog(); return; } if(o.p==='case.repay.mark'){ openRepayDialog(c.value); return; } if(o.p==='case.paylink'){ openLinkChannel(); return; } if(o.p==='case.suggestLegal'){ logOp('建议法务',c.value.name); toast('已打「建议法务」标注（不移案）'); return; } if(o.p==='case.follow'){ openFollowDialog(); return; } if(o.p==='case.reverse'){ askConfirm('冲正回款登记','冲正将红冲此前回款登记并全程留痕，不可撤销。请确认。',()=>toast('已冲正误登记回款（留痕）')); return; } toast(o.act); };
     const riskColor=(row)=> row.due>=3000?'#dc2626':(row.due>=1000?'#f97316':'#3b82f6');
     const rateInvalid=computed(()=> Number(st.payRate) > Number(st.recvRate));
     const openRateInvalid=computed(()=>{ const r=st.commissionDialog.rate; return r!=null && r!=='' && Number(r)>Number(st.recvRate); });

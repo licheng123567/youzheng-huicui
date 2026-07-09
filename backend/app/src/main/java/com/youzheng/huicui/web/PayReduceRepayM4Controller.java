@@ -305,8 +305,8 @@ public class PayReduceRepayM4Controller {
     }
 
     // ── [5] approveReduction  POST /reductions/{id}/approve ─────────────────
-    // PL 系统内直接核准（终点 BR-M2-18a）：仅 OFFLINE_TRACE→EFFECTIVE 合法并联动 reduce_after；
-    //   已 EFFECTIVE→幂等 200；其它态→409。非本组织/非 PL→403。
+    // 减免核准（终点 BR-M2-18a）：仅 OFFLINE_TRACE→EFFECTIVE 合法并联动 reduce_after；已 EFFECTIVE→幂等 200；其它态→409。
+    //   鉴权=reduce.approve（仅 PL/平台持有；PC 已去该权→拦截器 403）+ scope=own-org（越组织→403）。PC 减免只线下留痕、超档转 PL。
     @PostMapping("/reductions/{id}/approve")
     @RequirePermission("reduce.approve")
     @Transactional
