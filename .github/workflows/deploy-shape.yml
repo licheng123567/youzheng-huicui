@@ -1,0 +1,129 @@
+name: 部署形态红线（fail-closed）
+
+# 部署形态的三条结论必须被持续验证，而不是只在某次本地跑过：
+#   ① 所有迁移都打进 jar（不再依赖 filesystem 相对路径）——历史事故：jar 部署静默跳过核心 schema
+#   ② prod 配不全就拒绝启动，且给出可操作的中文理由（而不是 JJWT 的 WeakKeyException 天书）
+#   ③ prod 起来后库里有全部 schema、但**没有 dev 种子**
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths: ["backend/**", "deploy/**", ".github/workflows/deploy-shape.yml"]
+  push:
+    branches: [main]
+    paths: ["backend/**", "deploy/**", ".github/workflows/deploy-shape.yml"]
+
+jobs:
+  image-and-failclosed:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_DB: huicui, POSTGRES_PASSWORD: Str0ngProdPw, POSTGRES_USER: huicui }
+        ports: ["5460:5432"]
+        options: >-
+          --health-cmd "pg_isready -U huicui" --health-interval 5s
+          --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 构建生产镜像（顺带验证 Dockerfile 可用）
+        run: docker build -f deploy/Dockerfile -t huicui-backend:ci .
+
+      - name: 镜像自检——迁移必须打进 jar、非 root、有 curl 供 HEALTHCHECK
+        run: |
+          N=$(docker run --rm --entrypoint sh huicui-backend:ci -c "unzip -l /app/app.jar | grep -c 'db/migration/V'")
+          echo "jar 内迁移文件数: $N"
+          [ "$N" -ge 24 ] || { echo "::error::jar 内迁移不足 24 个（$N）——迁移没打进镜像"; exit 1; }
+          U=$(docker run --rm --entrypoint sh huicui-backend:ci -c "id -un")
+          [ "$U" = "huicui" ] || { echo "::error::容器以 $U 运行，应为非 root 的 huicui"; exit 1; }
+          docker run --rm --entrypoint sh huicui-backend:ci -c "command -v curl >/dev/null" \
+            || { echo "::error::镜像缺 curl，HEALTHCHECK 会恒失败"; exit 1; }
+
+      # 配不全必须拒绝启动，且理由可操作。逐条断言 ProdGuard 的中文提示。
+      - name: fail-closed 实测（8 条，均应拒绝启动）
+        run: |
+          set -e
+          GOOD_JWT=$(openssl rand -base64 48)
+          DEV_SECRET='dev-only-secret-change-in-prod-至少32字节用于HS256签名0123456789'
+          DS='jdbc:postgresql://x:5432/huicui'
+
+          expect_reject() {
+            desc="$1"; want="$2"; shift 2
+            out=$(docker run --rm "$@" huicui-backend:ci 2>&1 || true)
+            if echo "$out" | grep -qF "$want"; then
+              echo "  ✅ $desc"
+            else
+              echo "::error::$desc —— 未看到期望的拒绝理由「$want」"
+              echo "$out" | tail -12
+              exit 1
+            fi
+          }
+
+          expect_reject "① 什么都不配" "SPRING_DATASOURCE_URL 未配置"
+          expect_reject "② 数据源=dev 默认库" "仍指向 dev 默认库" \
+            -e SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5455/huicui -e SPRING_DATASOURCE_PASSWORD=x -e HUICUI_JWT_SECRET="$GOOD_JWT"
+          expect_reject "③ 数据源口令=test" "使用 dev 默认口令" \
+            -e SPRING_DATASOURCE_URL="$DS" -e SPRING_DATASOURCE_PASSWORD=test -e HUICUI_JWT_SECRET="$GOOD_JWT"
+          expect_reject "④ JWT 未注入" "HUICUI_JWT_SECRET 未配置" \
+            -e SPRING_DATASOURCE_URL="$DS" -e SPRING_DATASOURCE_PASSWORD=realpw
+          expect_reject "⑤ JWT=dev 内置串" "使用了 dev 内置串" \
+            -e SPRING_DATASOURCE_URL="$DS" -e SPRING_DATASOURCE_PASSWORD=realpw -e HUICUI_JWT_SECRET="$DEV_SECRET"
+          expect_reject "⑥ JWT 强度不足" "强度不足" \
+            -e SPRING_DATASOURCE_URL="$DS" -e SPRING_DATASOURCE_PASSWORD=realpw -e HUICUI_JWT_SECRET=short
+          expect_reject "⑦ 短信启用但 PUBLIC_BASE=localhost" "仍是 localhost" \
+            -e SPRING_DATASOURCE_URL="$DS" -e SPRING_DATASOURCE_PASSWORD=realpw -e HUICUI_JWT_SECRET="$GOOD_JWT" \
+            -e HUICUI_SMS_ENABLED=true -e HUICUI_PUBLIC_BASE=http://localhost:5173
+          expect_reject "⑧ 存证启用但 URL=sandbox" "仍指向 sandbox" \
+            -e SPRING_DATASOURCE_URL="$DS" -e SPRING_DATASOURCE_PASSWORD=realpw -e HUICUI_JWT_SECRET="$GOOD_JWT" \
+            -e HUICUI_EBQ_ENABLED=true -e HUICUI_EBQ_APPKEY=k -e HUICUI_EBQ_SECRET=s
+
+      - name: 正路实测——配齐即起，24 迁移全跑，且不含 dev 种子
+        run: |
+          set -e
+          docker run -d --name huicui-prod --network host \
+            -e SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5460/huicui \
+            -e SPRING_DATASOURCE_USERNAME=huicui \
+            -e SPRING_DATASOURCE_PASSWORD=Str0ngProdPw \
+            -e HUICUI_JWT_SECRET="$(openssl rand -base64 48)" \
+            huicui-backend:ci
+
+          ok=0
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:9091/v1/actuator/health || true)
+            [ "$code" = "200" ] && { ok=1; break; }
+            sleep 3
+          done
+          [ "$ok" = 1 ] || { echo "::error::prod 容器未能就绪"; docker logs huicui-prod | tail -40; exit 1; }
+
+          echo "── 探针 ──"
+          for p in actuator/health actuator/health/readiness actuator/health/liveness; do
+            c=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9091/v1/$p)
+            [ "$c" = "200" ] || { echo "::error::/v1/$p → $c，应为 200（HEALTHCHECK 会失败）"; exit 1; }
+          done
+          for p in actuator/env actuator/beans; do
+            c=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9091/v1/$p)
+            [ "$c" = "200" ] && { echo "::error::/v1/$p 竟然 200，敏感端点不该暴露"; exit 1; }
+          done
+
+          echo "── 后门在 prod 必须关闭 ──"
+          c=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:9091/v1/auth/sms-code \
+                -H 'Content-Type: application/json' -d '{"phone":"13900001111"}')
+          [ "$c" = "502" ] || { echo "::error::/auth/sms-code → $c，prod 未启用短信时应 502 拒发"; exit 1; }
+
+          echo "── 库状态 ──"
+          # 用容器跑 psql，不依赖 runner 是否预装 postgresql-client
+          q() { docker run --rm --network host -e PGPASSWORD=Str0ngProdPw postgres:16 \
+                  psql -h localhost -p 5460 -U huicui -d huicui -tAc "$1" | tr -d '[:space:]'; }
+          M=$(q "SELECT count(*) FROM flyway_schema_history WHERE success;")
+          S=$(q "SELECT count(*) FROM flyway_schema_history WHERE version IN ('900','910');")
+          A=$(q "SELECT count(*) FROM account;")
+          echo "  迁移=$M  dev种子=$S  account=$A"
+          [ "$M" -ge 24 ] || { echo "::error::只应用了 $M 个迁移，核心 schema 可能被跳过"; exit 1; }
+          [ "$S" = "0" ]  || { echo "::error::prod 库里混入了 dev 种子迁移"; exit 1; }
+          [ "$A" = "0" ]  || { echo "::error::prod 库里有 $A 个账号，DevSeeder 不该在 prod 跑"; exit 1; }
+
+          echo "✅ 部署形态红线全过"
+
+      - name: 失败时导出容器日志
+        if: failure()
+        run: docker logs huicui-prod 2>&1 | tail -60 || true
