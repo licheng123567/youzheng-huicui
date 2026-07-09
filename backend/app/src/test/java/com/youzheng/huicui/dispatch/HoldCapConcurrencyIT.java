@@ -71,11 +71,11 @@ class HoldCapConcurrencyIT {
         txm = new DataSourceTransactionManager(dataSource);
 
         // 只在第一次运行时迁移（容器共享），后续测试不重跑 Flyway。
-        // 路径从 backend/app（maven 工作目录）出发：../db/migration 指向 backend/db/migration。
+        // 迁移已归位 classpath:db/migration（打进 jar），不再依赖 ../db/migration 相对路径。
         Flyway flyway = Flyway.configure()
                 .dataSource(dataSource)
-                // 核心 schema V1-V7（不含 dev 种子 V9xx）
-                .locations("filesystem:../db/migration")
+                // 全部 schema 迁移（不含 dev 种子 classpath:db/seed）
+                .locations("classpath:db/migration")
                 .baselineOnMigrate(false)
                 .load();
         // 迁移失败须暴露（路径错/脚本错应让测试 fail，不可静默吞掉）。
