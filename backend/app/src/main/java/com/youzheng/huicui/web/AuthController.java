@@ -35,13 +35,16 @@ public class AuthController {
     private final JdbcTemplate jdbc;
     private final JwtService jwt;
     private final com.youzheng.huicui.integration.SmsService sms;
+    private final org.springframework.core.env.Environment env;
     private final BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder();
     private final ObjectMapper om = new ObjectMapper();
 
-    public AuthController(JdbcTemplate jdbc, JwtService jwt, com.youzheng.huicui.integration.SmsService sms) {
+    public AuthController(JdbcTemplate jdbc, JwtService jwt, com.youzheng.huicui.integration.SmsService sms,
+                          org.springframework.core.env.Environment env) {
         this.jdbc = jdbc;
         this.jwt = jwt;
         this.sms = sms;
+        this.env = env;
     }
 
     /**
@@ -55,9 +58,11 @@ public class AuthController {
     private record SmsCode(String code, long exp) {}
     private final Map<String, Ticket> tickets = new ConcurrentHashMap<>();
     private final Map<String, SmsCode> smsCodes = new ConcurrentHashMap<>();
+    private final Map<String, Long> smsLastSentAt = new ConcurrentHashMap<>();
     private static final long TICKET_TTL_MS = 5 * 60 * 1000L;
     private static final long SMS_TTL_MS = 5 * 60 * 1000L;
-    // dev 固定码（仅 dev：DevSeeder 在跑即视为 dev）。生产务必改随机码经短信通道下发，且不得回显前端。
+    private static final long SMS_RESEND_INTERVAL_MS = 60 * 1000L;
+    // dev 固定码：仅 dev profile 下发（smsCode 端点门控）；非 dev 且短信未启用 → 502 拒绝。
     private static final String DEV_SMS_CODE = "000000";
 
     @PostMapping("/login")
@@ -73,6 +78,9 @@ public class AuthController {
                 throw new ApiException(BizError.AUTH_401, "验证码错误或已过期");
             }
             smsCodes.remove(phone);       // 一次性：用后即焚，防重放
+            // 码已被正确消费 → 解除该号的下发冷却：合法用户下次登录无需干等 60s。
+            // 不削弱防轰炸：攻击者拿不到码就无法走到这里，冷却对其照常生效。
+            smsLastSentAt.remove(phone);
         } else {
             // 口令登录：username+password 认证后,取该账号 phone（一号多账号以 phone 聚合）
             String username = req(body, "username"), password = req(body, "password");
@@ -115,12 +123,30 @@ public class AuthController {
     }
 
     @PostMapping("/sms-code")
-    public Map<String, Object> smsCode(@RequestBody Map<String, Object> body) {
+    public org.springframework.http.ResponseEntity<Map<String, Object>> smsCode(@RequestBody Map<String, Object> body) {
         String phone = req(body, "phone");
-        // enabled：随机码经智讯云普通短信下发（绝不回显 code）；未配：dev 固定码占位。
-        String code = sms.isEnabled() ? sms.sendVerificationCode(phone) : DEV_SMS_CODE;
-        smsCodes.put(phone, new SmsCode(code, System.currentTimeMillis() + SMS_TTL_MS));
-        return Map.of("sent", true, "ttlSeconds", SMS_TTL_MS / 1000);
+        // 频控（契约声明 429）：同手机号 60s 内只发一次；已发未过期的 code 不失效，重试登录仍可用。
+        long now = System.currentTimeMillis();
+        Long last = smsLastSentAt.get(phone);
+        if (last != null && now - last < SMS_RESEND_INTERVAL_MS) {
+            return org.springframework.http.ResponseEntity.status(429).body(Map.of(
+                    "sent", false, "message", "请求过于频繁，请稍后再试",
+                    "retryAfterSeconds", (SMS_RESEND_INTERVAL_MS - (now - last)) / 1000));
+        }
+        // enabled：随机码经智讯云普通短信下发（绝不回显 code）。
+        // 未启用：仅 dev profile 允许固定码 000000（供本地/E2E）；非 dev 一律拒绝——
+        //   否则任意知道手机号的人可用固定码登录任意账号（上线评估阻断项，勿回退）。
+        String code;
+        if (sms.isEnabled()) {
+            code = sms.sendVerificationCode(phone);
+        } else if (env.matchesProfiles("dev")) {
+            code = DEV_SMS_CODE;
+        } else {
+            throw new ApiException(BizError.BIZ_SMS_FAILED, "短信通道未启用，无法下发验证码");
+        }
+        smsLastSentAt.put(phone, now);
+        smsCodes.put(phone, new SmsCode(code, now + SMS_TTL_MS));
+        return org.springframework.http.ResponseEntity.ok(Map.of("sent", true, "ttlSeconds", SMS_TTL_MS / 1000));
     }
 
     @PostMapping("/select-account")

@@ -2,6 +2,7 @@
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '../stores/auth'
+import { roleName } from '../constants/roles'
 
 // 移动作业端外壳：顶栏(标题/角色) + 内容(router-view) + 底部 4 Tab。
 // 角色 CO=催收员 / PC=协调员 由真实登录态(auth.me.role)决定,非演示切换。
@@ -9,7 +10,12 @@ const auth = useAuth()
 const route = useRoute()
 const router = useRouter()
 
-onMounted(async () => { if (auth.isAuthed && !auth.me) await auth.fetchMe() })
+// 移动作业端仅面向 CO/PC；其它角色（SA/SE/PL/VL）无移动视图 → 回桌面工作台，避免空白页。
+onMounted(async () => {
+  // /m 路由不走桌面守卫的角色白名单，故这里自行水合 me 再判角色（ensureMe 幂等、共享在途请求）。
+  await auth.ensureMe()
+  if (auth.me && !['CO', 'PC'].includes(auth.me.role ?? '')) router.replace('/dashboard')
+})
 
 const TABS = [
   { path: '/m', label: '工作台', icon: '🏠' },
@@ -23,7 +29,7 @@ const activeTab = computed(() => {
   return m?.path ?? '/m'
 })
 const title = computed(() => (route.meta.mtitle as string) || TABS.find((t) => t.path === activeTab.value)?.label || '有证慧催')
-const roleLabel = computed(() => ({ CO: '催收员', PC: '协调员', VL: '负责人' } as any)[auth.me?.role ?? ''] || auth.me?.role || '')
+const roleLabel = computed(() => roleName(auth.me?.role))
 </script>
 
 <template>

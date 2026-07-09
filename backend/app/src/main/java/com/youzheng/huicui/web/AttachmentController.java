@@ -20,6 +20,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -48,6 +49,7 @@ public class AttachmentController {
 
     private static final long MAX_BYTES = 20L * 1024 * 1024;   // 20MB 软上限
     private static final long SESSION_TTL_SECONDS = 15L * 60;   // 扫码会话 15 分钟
+    private static final int MAX_FILES_PER_SESSION = 20;        // 公开扫码会话单次上传件数上限
 
     private long parseId(String id) {
         try { return Long.parseLong(id); }
@@ -68,15 +70,21 @@ public class AttachmentController {
         return (n == null || n.isBlank()) ? "attachment" : n;
     }
 
-    private long insertAttachment(long caseId, String sessionToken, MultipartFile file, Long uploadedBy) {
+    // 送达类型白名单：空/非法一律落 NULL（普通跟进附件，不进送达管理）。
+    private static final Set<String> DELIVERY_TYPES = Set.of("LAWYER_LETTER", "COLLECTION_NOTICE", "COURT_DOC", "OTHER");
+    private static String normDeliveryType(String t) {
+        return (t != null && DELIVERY_TYPES.contains(t)) ? t : null;
+    }
+
+    private long insertAttachment(long caseId, String sessionToken, MultipartFile file, Long uploadedBy, String deliveryType) {
         byte[] bytes;
         try { bytes = file.getBytes(); }
         catch (Exception e) { throw new ApiException(BizError.VALIDATION_422, "文件读取失败"); }
         return jdbc.queryForObject(
-                "INSERT INTO case_attachment(case_id, session_token, filename, content_type, bytes, uploaded_by)"
-                        + " VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+                "INSERT INTO case_attachment(case_id, session_token, filename, content_type, bytes, uploaded_by, delivery_type)"
+                        + " VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
                 Long.class, caseId, sessionToken, safeName(file),
-                file.getContentType(), bytes, uploadedBy);
+                file.getContentType(), bytes, uploadedBy, normDeliveryType(deliveryType));
     }
 
     // ── [1] POST /cases/{id}/attachments ─────────────────────────────────────────
@@ -84,14 +92,15 @@ public class AttachmentController {
     @RequirePermission("case.follow")
     @Transactional
     public Map<String, Object> uploadAttachment(@PathVariable("id") String id,
-                                                @RequestParam(value = "file", required = false) MultipartFile file) {
+                                                @RequestParam(value = "file", required = false) MultipartFile file,
+                                                @RequestParam(value = "deliveryType", required = false) String deliveryType) {
         CurrentSubject s = SubjectContext.get();
         long caseId = parseId(id);
         if (!rec.caseExists(caseId)) throw new ApiException(BizError.NOT_FOUND_404, "案件不存在: " + id);
         if (!rec.caseVisible(s, caseId)) throw new ApiException(BizError.PERM_403, "无权操作该案件");
         validateFile(file);
         Long me = parseUploader(s);
-        long attId = insertAttachment(caseId, null, file, me);
+        long attId = insertAttachment(caseId, null, file, me, deliveryType);
         return Map.of("id", String.valueOf(attId), "name", safeName(file), "url", "/v1/attachments/" + attId);
     }
 
@@ -109,7 +118,10 @@ public class AttachmentController {
         long caseId = ((Number) row.get("case_id")).longValue();
         if (!rec.caseVisible(s, caseId)) throw new ApiException(BizError.PERM_403, "无权查看该附件");
         String ct = row.get("content_type") == null ? "application/octet-stream" : (String) row.get("content_type");
+        // content_type 来自上传者：以附件形式下发 + 禁嗅探，防 text/html 附件在 API 源上被浏览器渲染。
         return ResponseEntity.ok().header("Content-Type", ct).header("Cache-Control", "private, max-age=60")
+                .header("Content-Disposition", "attachment")
+                .header("X-Content-Type-Options", "nosniff")
                 .body((byte[]) row.get("bytes"));
     }
 
@@ -117,14 +129,17 @@ public class AttachmentController {
     @PostMapping("/cases/{id}/upload-sessions")
     @RequirePermission("case.follow")
     @Transactional
-    public Map<String, Object> createUploadSession(@PathVariable("id") String id) {
+    public Map<String, Object> createUploadSession(@PathVariable("id") String id,
+                                                   @RequestParam(value = "deliveryType", required = false) String deliveryType) {
         CurrentSubject s = SubjectContext.get();
         long caseId = parseId(id);
         if (!rec.caseExists(caseId)) throw new ApiException(BizError.NOT_FOUND_404, "案件不存在: " + id);
         if (!rec.caseVisible(s, caseId)) throw new ApiException(BizError.PERM_403, "无权操作该案件");
         String token = UUID.randomUUID().toString().replace("-", "");
-        jdbc.update("INSERT INTO upload_session(token, case_id, expires_at) VALUES (?, ?, ?)",
-                token, caseId, Timestamp.from(Instant.now().plusSeconds(SESSION_TTL_SECONDS)));
+        // 扫码会话携带送达类型，手机上传件(publicSessionUpload)继承 → 与桌面直传口径一致。
+        jdbc.update("INSERT INTO upload_session(token, case_id, expires_at, delivery_type) VALUES (?, ?, ?, ?)",
+                token, caseId, Timestamp.from(Instant.now().plusSeconds(SESSION_TTL_SECONDS)),
+                normDeliveryType(deliveryType));
         return Map.of("token", token);
     }
 
@@ -149,20 +164,33 @@ public class AttachmentController {
     @Transactional
     public Map<String, Object> publicSessionUpload(@PathVariable("token") String token,
                                                    @RequestParam(value = "file", required = false) MultipartFile file) {
-        Long caseId = sessionCaseId(token);   // 不存在/过期→404
+        Session sess = session(token);   // 不存在/过期→404
         validateFile(file);
-        insertAttachment(caseId, token, file, null);
+        // 公开端点防灌注：单会话件数上限（15 分钟 TTL 内持 token 无限上传 20MB×N 会撑爆 bytea 主库）。
+        Integer cnt = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM case_attachment WHERE session_token = ?", Integer.class, token);
+        if (cnt != null && cnt >= MAX_FILES_PER_SESSION) {
+            throw new ApiException(BizError.STATE_409, "本次扫码上传已达 " + MAX_FILES_PER_SESSION + " 件上限");
+        }
+        insertAttachment(sess.caseId(), token, file, null, sess.deliveryType());   // 继承会话送达类型
         return Map.of("ok", true);
     }
 
     /** token → 有效会话的 case_id；不存在或已过期→404。 */
     private Long sessionCaseId(String token) {
-        List<Long> ids = jdbc.query(
-                "SELECT case_id FROM upload_session WHERE token = ? AND expires_at > now()",
-                (rs, i) -> rs.getLong("case_id"), token);
-        if (ids.isEmpty()) throw new ApiException(BizError.NOT_FOUND_404, "上传会话不存在或已过期");
-        return ids.get(0);
+        return session(token).caseId();
     }
+
+    /** 有效会话（case_id + 送达类型）；不存在或已过期→404。 */
+    private Session session(String token) {
+        List<Session> rows = jdbc.query(
+                "SELECT case_id, delivery_type FROM upload_session WHERE token = ? AND expires_at > now()",
+                (rs, i) -> new Session(rs.getLong("case_id"), rs.getString("delivery_type")), token);
+        if (rows.isEmpty()) throw new ApiException(BizError.NOT_FOUND_404, "上传会话不存在或已过期");
+        return rows.get(0);
+    }
+
+    private record Session(Long caseId, String deliveryType) {}
 
     /** 当前主体 account id（用于 uploaded_by）；解析失败返 null（不阻断）。 */
     private Long parseUploader(CurrentSubject s) {

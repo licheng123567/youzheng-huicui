@@ -25,13 +25,13 @@ const sa = await login('admin', 'Admin@123')
 check('admin 登录得 token', !!sa)
 const meSa = await getJson('/me', sa)
 check('SA /me = 200 且 role=SA', meSa.status === 200 && meSa.body.role === 'SA', meSa.body?.org?.name)
-const projSa = await getJson('/projects-scope-demo', sa)
-check('SA 见全部 3 项目（平台全量）', projSa.body?.items?.length === 3, projSa.body?.scopeApplied)
+const projSa = await getJson('/projects?page=1&size=20', sa)
+check('SA 见全部 3 项目（平台全量）', projSa.body?.items?.length === 3)
 
 const pl = await login('cuihu_pl', 'Admin@123')
-const projPl = await getJson('/projects-scope-demo', pl)
+const projPl = await getJson('/projects?page=1&size=20', pl)
 const names = (projPl.body?.items || []).map((i) => i.name)
-check('翠湖 PL 仅见 2 项目（own-org 隔离）', projPl.body?.items?.length === 2, projPl.body?.scopeApplied)
+check('翠湖 PL 仅见 2 项目（own-org 隔离）', projPl.body?.items?.length === 2)
 check('翠湖 PL 看不到阳光物业项目', !names.includes('阳光花园'), names.join(','))
 
 // M2 真端点（前端 projects/batches/cases 视图消费的数据流）
@@ -120,10 +120,13 @@ if (s3) {
   check('GET 承诺列表增长(≥2)', (pr.body?.items?.length ?? 0) >= 2, '共 ' + pr.body?.meta?.total)
   // P2 子链
   check('CO 分期承诺 → 201', (await post(`/cases/${s3.id}/promises`, co, { date: '2026-09-01', amountCents: 200000, installments: [{ seq: 1, dueDate: '2026-09-01', amountCents: 100000 }, { seq: 2, dueDate: '2026-10-01', amountCents: 100000 }] })).status === 201)
-  check('CO 登记还款 → 201', (await post(`/cases/${s3.id}/repay-lines`, co, { amountCents: 50000, channel: 'WECHAT_QR', paidAt: '2026-06-25' })).status === 201)
+  // 回款登记归 PC/SA（审计62 B-01 从 CO 收回 case.repay.mark，权限矩阵:58-59）：CO 应 403。
+  check('CO 登记还款 → 403(无 case.repay.mark·已收权)', (await post(`/cases/${s3.id}/repay-lines`, co, { amountCents: 50000, channel: 'WECHAT_QR', paidAt: '2026-06-25' })).status === 403)
   check('CO 新增联系人 → 2xx', [200, 201].includes((await post(`/cases/${s3.id}/contacts`, co, { phone: '13900008888', label: '补充' })).status))
   // 工单处理：S3 工单 to_role=PC → 协调员 cuihu_pc 处理(ticket.handle)
   const pc = await login('cuihu_pc', 'Admin@123')
+  // 回款登记正路：PC 持 case.repay.mark（与上面 CO 403 成对，覆盖端点本身）
+  check('PC 登记还款 → 201', (await post(`/cases/${s3.id}/repay-lines`, pc, { amountCents: 50000, channel: 'WECHAT_QR', paidAt: '2026-06-25' })).status === 201)
   const tks = await getJson(`/cases/${s3.id}/tickets?page=1&size=20`, co)
   const pendTk = (tks.body?.items || []).find((t) => t.status === 'PENDING')
   if (pendTk) check('PC 处理工单(ticket.handle) → 2xx', [200, 201].includes((await post(`/tickets/${pendTk.id}/handle`, pc, { result: '已上门核实' })).status))
@@ -341,9 +344,14 @@ if (undone) {
   check('SA 平台复核 → 200', (await post(`/risks/${undone.id}/review`, sa, { verdict: 'CONFIRMED', note: '属实' })).status === 200)
   check('物业 PL 复核 → 403(只平台复核 BR-M5-07c)', (await post(`/risks/${undone.id}/review`, pl, { verdict: 'CONFIRMED' })).status === 403)
 }
+// 处置任务跟踪 x-data-scope=range（BR-M5-07b）：平台见全量；归属方(VL/PL 持 qc.dispose)见本组织任务；
+// 其余(CO 无 qc.dispose)→200 空列表（range 不是 platform-only，靠裁剪不靠 403）。
 const dtSa = await getJson('/dispose-tasks', sa)
 const dtVl = await getJson('/dispose-tasks', vl)
-check('处置任务跟踪仅平台(SA 200 / VL 403 BR-M5-07b)', dtSa.status === 200 && dtVl.status === 403, `SA ${dtSa.status}/VL ${dtVl.status}`)
+const dtCo = await getJson('/dispose-tasks', co)
+check('处置任务跟踪 SA 见全量 → 200 非空', dtSa.status === 200 && (dtSa.body?.items?.length ?? 0) > 0, `${dtSa.body?.items?.length} 条`)
+check('处置任务跟踪 VL 见本组织 → 200(range 裁剪)', dtVl.status === 200, `VL ${dtVl.status}/${dtVl.body?.items?.length} 条`)
+check('处置任务跟踪 CO 无 qc.dispose → 200 空(BR-M5-07b)', dtCo.status === 200 && (dtCo.body?.items?.length ?? 0) === 0, `CO ${dtCo.status}`)
 
 // M8 结案（PL 撤案/坏账）
 const plCases = await getJson('/cases?page=1&size=50', pl)
@@ -398,15 +406,27 @@ if (impBatchId) {
   check('SA 作废导入批次 → 2xx(留痕)', [200, 201, 204].includes((await post(`/batches/${impBatchId}/void`, sa, { reason: 'E2E 作废' })).status))
 }
 
-// 成员管理/督导（PL 管本组织成员）+ reset-password 指定 newPassword(#3 验证)
+// 成员管理/督导（PL 管本组织成员）+ B-04方案A 凭据交付闭环：
+//   reset-password 不再收明文口令，改发一次性 setupToken；成员走 /auth/setup-password 自设密码后方可登录。
 const newMem = await post('/members', pl, { username: 'pc_e2e', name: '协调员E2E', phone: '13900009999', role: 'PC' })
 check('PL 建本组织成员 → 2xx', [200, 201].includes(newMem.status), 'HTTP ' + newMem.status)
 const memId = newMem.body?.id
 if (memId) {
-  check('PL 重置成员密码(指定 newPassword) → 2xx', [200, 201].includes((await post(`/members/${memId}/reset-password`, pl, { newPassword: 'Pc@E2E123' })).status))
-  // 验证 #3: 指定的 newPassword 真生效(新成员能用它登录)
-  const memLogin = await fetch(`${B}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'password', username: 'pc_e2e', password: 'Pc@E2E123' }) })
-  check('新成员用指定口令登录 → 200(#3 newPassword 生效)', memLogin.status === 200)
+  const rst = await post(`/members/${memId}/reset-password`, pl, {})
+  check('PL 重置成员凭据 → 2xx + 返回 setupToken(B-04方案A)', [200, 201].includes(rst.status) && !!rst.body?.setupToken)
+  const setupToken = rst.body?.setupToken
+  // 未设密前不可登录（password_hash=NULL）
+  const preLogin = await fetch(`${B}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'password', username: 'pc_e2e', password: 'Pc@E2E123' }) })
+  check('未设密即登录 → 401(口令已被清除)', preLogin.status === 401)
+  if (setupToken) {
+    const setup = await fetch(`${B}/auth/setup-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: setupToken, newPassword: 'Pc@E2E123' }) })
+    check('成员用 setupToken 自设密码 → 2xx', [200, 201, 204].includes(setup.status), 'HTTP ' + setup.status)
+    const memLogin = await fetch(`${B}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'password', username: 'pc_e2e', password: 'Pc@E2E123' }) })
+    check('设密后成员登录 → 200(凭据闭环)', memLogin.status === 200)
+    // 一次性：同 token 再用 → 401
+    const reuse = await fetch(`${B}/auth/setup-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: setupToken, newPassword: 'Other@123' }) })
+    check('setupToken 重放 → 401(一次性)', reuse.status === 401)
+  }
   check('PL 督导成员(TRAINING) → 2xx', [200, 201].includes((await post(`/members/${memId}/supervision-actions`, pl, { action: 'TRAINING', note: 'E2E 培训' })).status))
   check('PL 停用成员 → 2xx', [200, 201, 204].includes((await post(`/members/${memId}/disable`, pl, {})).status))
 }
@@ -416,7 +436,34 @@ check('GET /permission-matrix(SA) → 200 非空', (await getJson('/permission-m
 check('GET /ai-config(SA) → 200', (await getJson('/ai-config', sa)).status === 200)
 const newOrg = await post('/orgs', sa, { type: 'PROVIDER', name: '测试服务商P4', ownerAccount: 'p4_vl', ownerPhone: '13900003333' })
 check('SA 新建组织+绑负责人 → 201', [200, 201].includes(newOrg.status), 'HTTP ' + newOrg.status)
-if (newOrg.body?.id) check('SA 改绑组织负责人 → 2xx', [200, 201, 204].includes((await fetch(`${B}/orgs/${newOrg.body.id}/owner`, { method: 'PATCH', headers: { Authorization: `Bearer ${sa}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ newPhone: '13900004444', resetPassword: true }) })).status))
+if (newOrg.body?.id) {
+  const reb = await fetch(`${B}/orgs/${newOrg.body.id}/owner`, { method: 'PATCH', headers: { Authorization: `Bearer ${sa}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ newPhone: '13900004444', resetPassword: true }) })
+  const rebBody = reb.ok ? await reb.json().catch(() => ({})) : {}
+  check('SA 改绑组织负责人 → 2xx', [200, 201, 204].includes(reb.status))
+  // v1.5.0 契约回写：resetPassword=true 时 200 响应体带一次性 ownerSetupToken（此前读的是契约不存在的字段）
+  check('改绑(resetPassword) → 响应带 ownerSetupToken(契约 v1.5.0)', !!rebBody?.ownerSetupToken)
+}
+
+// ── v1.5.0 回写端点 + 安全修复回归 ──────────────────────────────────
+// 1) 000000 后门：dev profile 下仍可用（本地/E2E 依赖）；非 dev 且短信未启用时端点应 502。此处只验 dev 行为+频控。
+const smsReq1 = await fetch(`${B}/auth/sms-code`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '13900007777' }) })
+check('sms-code 首次下发 → 200(dev 固定码)', smsReq1.status === 200)
+const smsReq2 = await fetch(`${B}/auth/sms-code`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '13900007777' }) })
+check('sms-code 60s 内重复 → 429(频控·防轰炸)', smsReq2.status === 429, 'HTTP ' + smsReq2.status)
+
+// 2) 佣金三端点(V922 回写契约)：comm-status 资金双线 + CO 两线均不可见(US-M9-09)
+// 复用上文已取的 b2(B-CH-2026-01 已派单批次，双线比例均非空)
+if (b2?.id) {
+  const csSa = await getJson(`/batches/${b2.id}/comm-status`, sa)
+  check('comm-status SA → 双线全见', csSa.status === 200 && csSa.body?.commInRate != null && csSa.body?.payOutRate != null, `in=${csSa.body?.commInRate}/out=${csSa.body?.payOutRate}`)
+  const csPl = await getJson(`/batches/${b2.id}/comm-status`, pl)
+  check('comm-status PL → 仅收佣线(无 payOutRate)', csPl.status === 200 && csPl.body?.payOutRate === undefined)
+  const csCo = await getJson(`/batches/${b2.id}/comm-status`, co)
+  check('comm-status CO → 两线均不可见(US-M9-09 只见自己提成)', csCo.status !== 200 || (csCo.body?.commInRate === undefined && csCo.body?.payOutRate === undefined), 'HTTP ' + csCo.status)
+  // 防倒挂(BR-M9-18)：付佣 > 收佣 → 422
+  const invert = await fetch(`${B}/batches/${b2.id}/commission-rates`, { method: 'PUT', headers: { Authorization: `Bearer ${sa}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ commInRate: 0.20, payOutRate: 0.30 }) })
+  check('平台定双佣 付佣>收佣 → 422 防倒挂', invert.status === 422)
+}
 
 // 一号多账号(BR-M1-11): password 多账号→loginTicket+accounts→select-account→token
 async function rawLogin(body) {
@@ -442,5 +489,5 @@ const smsR = await rawLogin({ mode: 'sms', phone: '13900009000', code: '000000' 
 check('短信登录(phone+000000) → 多账号 ticket', !!smsR?.loginTicket && (smsR?.accounts?.length ?? 0) === 2)
 check('坏票据 select-account → 401', (await fetch(`${B}/auth/select-account`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginTicket: 'bad', accountId: '1' }) })).status === 401)
 
-console.log(fail === 0 ? '\n🎉 全 117 端点·全模块·多账号登录 端到端全过 — 契约优先全链路贯通' : `\n⚠ ${fail} 项失败`)
+console.log(fail === 0 ? '\n🎉 全 150 端点·全模块·多账号登录 端到端全过 — 契约优先全链路贯通' : `\n⚠ ${fail} 项失败`)
 process.exit(fail === 0 ? 0 : 1)

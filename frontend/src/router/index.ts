@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuth } from '../stores/auth'
+import { isAllowedPath } from '../constants/nav'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -62,11 +63,26 @@ const router = createRouter({
   ],
 })
 
-// 路由守卫：未登录访问受保护页 → 跳登录（前端兜底，真隔离在服务端 x-data-scope）。
-router.beforeEach((to) => {
+// 通用页：任何已登录角色可达（不在角色菜单里但属账户/工具页）。
+const UNIVERSAL_PATHS = ['/dashboard', '/profile', '/search', '/notifications']
+
+// 路由守卫：
+//  1) 未登录访问受保护页 → 跳登录（真数据隔离仍在服务端 x-data-scope/perm）。
+//  2) 角色越权直达兜底(⑬)：仅可进本角色菜单内的页（+其详情子路由前缀）+ 通用页 + 可下钻详情页；否则回工作台。
+//     根治「任意登录用户 URL 直达任意页」。
+//     整页刷新/新标签直达时 Pinia 是空的（token 在 localStorage，me 未拉），必须先 ensureMe 等到 role，
+//     否则 role 恒为空 → 越权判定被整段跳过 → 守卫在它唯一该生效的场景(直敲 URL)失效。
+router.beforeEach(async (to) => {
   const auth = useAuth()
   if (!to.meta.public && !auth.isAuthed) return { name: 'login', query: { redirect: to.fullPath } }
   if (to.name === 'login' && auth.isAuthed) return { path: '/' }
+  // 公开页 / 移动端(/m 由 MobileLayout 限 CO/PC) 不走本守卫
+  if (to.meta.public || to.path === '/m' || to.path.startsWith('/m/')) return true
+  await auth.ensureMe()
+  // ensureMe 里 token 失效会 logout；此时按未登录处理
+  if (!auth.isAuthed) return { name: 'login', query: { redirect: to.fullPath } }
+  const role = auth.me?.role
+  if (role && !isAllowedPath(role, to.path, UNIVERSAL_PATHS)) return { path: '/dashboard' }
   return true
 })
 

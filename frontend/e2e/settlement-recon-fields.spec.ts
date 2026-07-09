@@ -17,9 +17,9 @@ test.describe('BR-M9-12a 对账汇总字段(SA·双线)', () => {
       const sideBtn = page.getByText(side === 'IN' ? /IN|收佣/ : /OUT|付佣/).first()
       if (await sideBtn.count()) await sideBtn.click().catch(() => {})
 
-      const recon = page.locator('.el-table').first()
+      const recon = page.locator('table').first()
       await expect(recon).toBeVisible()
-      const firstRow = recon.locator('.el-table__row').first()
+      const firstRow = recon.locator('tbody tr').first()
       await expect(firstRow).toBeVisible()
 
       // 比例列含百分号（commRate×100%）；应结列含金额；批次列非空 → 无漂移空列

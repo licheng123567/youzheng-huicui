@@ -3,6 +3,7 @@ import { ref, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuth } from '../stores/auth'
+import { roleName } from '../constants/roles'
 
 const auth = useAuth()
 const router = useRouter()
@@ -76,7 +77,7 @@ async function pick(a: any) {
             <div class="h">该手机号关联多个账号，请选择登录身份（一号多账号 BR-M1-11）</div>
             <div v-for="a in accounts" :key="a.accountId" class="a" role="button" tabindex="0"
                  @click="!loading && pick(a)" @keyup.enter="!loading && pick(a)">
-              <span>{{ a.name }} · {{ a.role }} · {{ a.orgName }}</span>
+              <span>{{ a.name }} · {{ roleName(a.role) }} · {{ a.orgName }}</span>
               <span class="link">登录</span>
             </div>
           </div>

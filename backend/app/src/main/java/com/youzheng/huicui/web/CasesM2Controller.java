@@ -38,7 +38,7 @@ import java.util.List;
 
 /**
  * M2 资源 cases 读端点（横切层范式 + scaffold 共享助手）。
- * 类名带 M2 后缀，避免与既有 ProjectsController 风格的 demo/占位类冲突；只承载本资源读端点。
+ * 类名带 M2 后缀（历史：曾与横切层验证的 demo 类并存，demo 已删）；只承载本资源读端点。
  *
  * 端点（基路径 /v1 由 server.servlet.context-path 提供，方法注解写裸路径）：
  *   GET /cases       listCases  —— 案件列表，x-data-scope=range，CasePage。

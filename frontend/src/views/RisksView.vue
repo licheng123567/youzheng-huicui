@@ -4,16 +4,19 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
+import { useRoleFields } from '../composables/useRoleFields'
 import { riskLevelLabel, riskVerdictLabel, disposeTaskStatusLabel } from '../constants/enums'
 import DsDrawer from '../components/DsDrawer.vue'
+import AiReviewPanel from '../components/AiReviewPanel.vue'
+import { downloadAuthedFile } from '../utils/download'
 
 // M5 质检：风险看板(GET /risks·全量检测) + 处置归属(VL/PL 处置自己员工风险) + 平台复核 + 处置跟踪(仅平台)。
 const auth = useAuth()
 const router = useRouter()
-const isPlatform = computed(() => ['SA', 'SE'].includes(auth.me?.role ?? ''))
-// 物业角色(PL/PC)：风险看板只「上报」不「处置」——对标原型 §质检 role==='PL'||'PC' 仅 escalate。
-// 处置(标记/转质检/通知)是服务商(VL)对本商催收员风险的动作；物业对催收员风险只上报平台。
-const isProperty = computed(() => ['PL', 'PC'].includes(auth.me?.role ?? ''))
+// 平台/物业口径统一走 useRoleFields（单一真源，避免多处 ['SA','SE']/['PL','PC'] 定义漂移）。
+// 物业角色(PL/PC)：风险看板只「上报」不「处置」——对标原型 §质检 role==='PL'||'PC' 仅 escalate；
+// 看板处置(标记/转质检/通知)是服务商(VL)对本商催收员风险的动作(故按钮 !isProperty)；物业对催收员风险只上报平台。
+const { isPlatform, isProperty } = useRoleFields()
 // 归属方(VL/PL/PC 有 qc.dispose)：可见本组织整改任务 + 提交整改回执。
 const isOwner = computed(() => auth.has('qc.dispose'))
 const risks = ref<any[]>([])
@@ -25,6 +28,20 @@ const DECISIONS = [
   { v: 'RESTRICT', label: '限制' }, { v: 'DEACTIVATE', label: '停用账号' },
 ]
 const decisionLabel = (d?: string) => DECISIONS.find((x) => x.v === d)?.label ?? (d || '—')
+// 片段 → 就地打开 AI 复盘右侧抽屉（与案件三栏/通话记录统一体验，不整页跳走）
+const reviewOpen = ref(false); const reviewRecId = ref(''); const reviewCaseId = ref(''); const reviewOwner = ref(''); const reviewRoom = ref('')
+function openReviewPanel(row: any) {
+  if (!row.recordingId) return
+  reviewRecId.value = String(row.recordingId); reviewCaseId.value = String(row.caseId || '')
+  reviewOwner.value = row.ownerName || row.caseName || ''; reviewRoom.value = row.room || ''
+  reviewOpen.value = true
+}
+// 统一鉴权下载（与别处一致，404 优雅提示）
+function downloadRec(row: any) {
+  if (!row.recordingId) return
+  const name = (reviewOwner.value || '录音') + '_' + row.recordingId + '.mp3'
+  downloadAuthedFile('/v1/recordings/' + row.recordingId + '/audio', name, '该录音暂无音频文件。')
+}
 const levelType = (l: string) => ({ HIGH: 'danger', MID: 'warning', LOW: 'info' } as any)[l] ?? 'info'
 // 纯展示：风险级别 → ds-admin .tag 配色（dan/war/inf），仅用于 markup 着色
 const levelTag = (l: string) => ({ HIGH: 'dan', MID: 'war', LOW: 'inf' } as any)[l] ?? 'inf'
@@ -50,7 +67,7 @@ async function submitDispose() {
 }
 // 上报平台
 async function escalate(row: any) {
-  const { error } = await api.POST('/risks/{id}/escalate', { params: { path: { id: row.id } }, body: { note: '上报平台复核' } as any })
+  const { error } = await api.POST('/risks/{id}/escalate', { params: { path: { id: row.id } }, body: { note: '上报平台复核' } })
   if (error) { ElMessage.error('上报失败：' + ((error as any)?.message ?? '')); return }
   ElMessage.success('已上报平台'); load()
 }
@@ -110,10 +127,10 @@ onMounted(load)
           <td><span class="tag" :class="levelTag(row.level)" :title="row.level">{{ riskLevelLabel(row.level) }}</span></td>
           <td>
             <template v-if="row.recordingId">
-              <a class="btn txt" @click="router.push('/cases/' + (row.caseId || '') + '/call/' + row.recordingId)" :title="row.segmentTs || ''">
-                🎧 {{ row.segmentTs || '播放' }}
+              <a class="btn txt" @click="openReviewPanel(row)" :title="'查看 AI 复盘 ' + (row.segmentTs || '')">
+                🎧 {{ row.segmentTs || 'AI 复盘' }}
               </a>
-              <a class="btn txt" :href="row.recordingUrl || '/v1/recordings/' + row.recordingId" target="_blank" download :title="'下载录音 ' + (row.segmentTs || '')">
+              <a class="btn txt" @click="downloadRec(row)" :title="'下载录音 ' + (row.segmentTs || '')">
                 ⬇ 下载
               </a>
             </template>
@@ -218,5 +235,8 @@ onMounted(load)
       </el-form>
       <template #footer><el-button @click="cdlg=false">取消</el-button><el-button type="primary" @click="submitRectify">提交回执</el-button></template>
     </DsDrawer>
+
+    <!-- AI 复盘右侧抽屉（与案件三栏/通话记录统一体验）：质检点片段就地看录音回放+对话转写+风险高亮 -->
+    <AiReviewPanel v-if="reviewRecId" v-model:open="reviewOpen" :recording-id="reviewRecId" :case-id="reviewCaseId" :owner-name="reviewOwner" :room="reviewRoom" />
   </div>
 </template>

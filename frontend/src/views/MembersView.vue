@@ -140,16 +140,12 @@ async function toggle(row: any) {
   if (error) { ElMessage.error((op === 'disable' ? '停用' : '启用') + '失败：' + ((error as any)?.message ?? '负责人不可停用')); return }
   ElMessage.success(op === 'disable' ? '已停用（私海案件回流公海）' : '已启用'); load()
 }
-// 重置密码（B-04方案A：响应返回 setupToken，展示后带外告知成员）
+// 重置密码（B-04方案A：不收明文密码——服务端清口令+发一次性 setupToken，展示后带外告知成员）
 const pDlg = ref(false)
-const pForm = ref<any>({ id: '', name: '', newPassword: '', notify: false })
-function openReset(row: any) { pForm.value = { id: row.id, name: row.name, newPassword: '', notify: false }; pDlg.value = true }
+const pForm = ref<any>({ id: '', name: '' })
+function openReset(row: any) { pForm.value = { id: row.id, name: row.name }; pDlg.value = true }
 async function submitReset() {
-  // ResetPasswordInput{newPassword?:string|null（留空=服务端生成）, notify?:boolean（短信通知员工）}
-  const body: any = {}
-  if (pForm.value.newPassword) body.newPassword = pForm.value.newPassword
-  if (pForm.value.notify) body.notify = true
-  const { data, error } = await api.POST('/members/{id}/reset-password', { params: { path: { id: pForm.value.id } }, body: body as any })
+  const { data, error } = await api.POST('/members/{id}/reset-password', { params: { path: { id: pForm.value.id } }, body: {} as any })
   if (error) { ElMessage.error('重置失败：' + ((error as any)?.message ?? '')); return }
   pDlg.value = false
   // B-04方案A：展示一次性 setupToken
@@ -303,16 +299,7 @@ onMounted(load)
 
     <DsDrawer v-model="pDlg" :title="`重置密码 · ${pForm.name}`" :width="420">
       <el-alert type="info" :closable="false" style="margin-bottom:10px"
-        title="重置后系统将生成一次性凭据 Token（24h 有效，一次性），请在下一步弹窗中复制并带外告知成员。成员用此 Token 走 /auth/setup-password 设密后方可登录。" />
-      <el-form label-width="100px">
-        <el-form-item label="自定义新密码">
-          <el-input v-model="pForm.newPassword" type="password" show-password autocomplete="new-password" placeholder="留空=系统生成" />
-          <div style="font-size:12px;color:#999;margin-top:4px">留空则由系统生成临时密码（仍以一次性凭据形式发放）</div>
-        </el-form-item>
-        <el-form-item label="短信通知">
-          <el-checkbox v-model="pForm.notify">短信通知员工（notify）</el-checkbox>
-        </el-form-item>
-      </el-form>
+        title="重置将清除现有口令并生成一次性凭据 Token（24h 有效，一次性），请在下一步弹窗中复制并带外告知成员。成员用此 Token 走 /auth/setup-password 自设密码后方可登录（不支持管理员代设明文密码）。" />
       <template #footer><el-button @click="pDlg=false">取消</el-button><el-button type="primary" @click="submitReset">重置并获取 Token</el-button></template>
     </DsDrawer>
 

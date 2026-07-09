@@ -11,6 +11,7 @@ import DsDrawer from '../components/DsDrawer.vue'
 //     （无专属统计端点，按 /cases + /batches + /workbench 现有数据实时聚合，不臆造）。
 const auth = useAuth()
 const isCoordinator = computed(() => auth.me?.role === 'PC')
+const isCollector = computed(() => auth.me?.role === 'CO')
 
 const loading = ref(false)
 const stats = ref<any>(null)
@@ -124,12 +125,28 @@ const pcKpi = computed(() => {
 })
 const pcFilter = reactive({ q: '', project: '' })
 const pcProjectOptions = computed(() => Array.from(new Set(pcRows.value.map((r) => r.proj).filter(Boolean))))
-const pcFilteredRows = computed(() => pcRows.value.filter((r) => {
+// 基础筛选（项目/批次号），完结进度改由下方 tab 控制（与催收员分支同款交互）
+const pcBaseRows = computed(() => pcRows.value.filter((r) => {
   if (pcFilter.q && !(r.batch || '').includes(pcFilter.q)) return false
   if (pcFilter.project && r.proj !== pcFilter.project) return false
   return true
 }))
 function pcReset() { pcFilter.q = ''; pcFilter.project = '' }
+// 长历史降噪：按完结进度分 tab（进行中 / 已结项 / 全部），默认「进行中」——多批次时只看在办，历史归到「已结项」tab。
+// 已结项 = 批次 status=CLOSED（全部处理完毕并结项）。与 CO 分支 待结算/已结算完毕/全部 tab 同构。
+const PC_TABS = [
+  { k: 'active', l: '进行中' },
+  { k: 'closed', l: '已结项' },
+  { k: 'all', l: '全部' },
+] as const
+const pcActiveTab = ref<'active' | 'closed' | 'all'>('active')
+const pcTabCount = computed(() => ({
+  active: pcBaseRows.value.filter((r) => !r.closed).length,
+  closed: pcBaseRows.value.filter((r) => r.closed).length,
+  all: pcBaseRows.value.length,
+}))
+const pcTabRows = computed(() => pcBaseRows.value.filter((r) =>
+  pcActiveTab.value === 'all' ? true : pcActiveTab.value === 'closed' ? r.closed : !r.closed))
 
 async function loadPc() {
   loading.value = true
@@ -143,8 +160,8 @@ async function loadPc() {
     const batches: any[] = ((batchesRes.data as any)?.items ?? batchesRes.data ?? []) as any[]
     const todos: any[] = ((wbRes.data as any)?.todos ?? []) as any[]
     // 批次 id → {code, project}
-    const bmap = new Map<string, { code: string }>()
-    batches.forEach((b: any) => bmap.set(String(b.id), { code: b.code }))
+    const bmap = new Map<string, { code: string; status?: string }>()
+    batches.forEach((b: any) => bmap.set(String(b.id), { code: b.code, status: b.status }))
     // 待处理工单 todo 计数（按 caseId）
     const ticketByCase = new Map<string, number>()
     todos.filter((t: any) => t.category === 'TICKET_RECEIPT').forEach((t: any) => {
@@ -156,6 +173,7 @@ async function loadPc() {
       const bid = String(c.batchId)
       if (!g.has(bid)) g.set(bid, {
         batchId: bid, batch: bmap.get(bid)?.code || ('批次#' + bid), proj: c.projectName || '本物业',
+        closed: bmap.get(bid)?.status === 'CLOSED',
         count: 0, delivered: 0, repayMarked: 0, repayMarkedCents: 0, tickets: 0, paylink: 0, legalActive: 0,
       })
       const row = g.get(bid)
@@ -172,7 +190,8 @@ async function loadPc() {
 
 onMounted(async () => {
   if (!auth.me) await auth.fetchMe()   // 直达路由时 me 可能尚未就绪，先确保角色已知再选口径
-  if (isCoordinator.value) loadPc(); else load()
+  // 仅 PC(协调员产能) / CO(催收员提成) 两套口径；其它角色不误拉 /me/stats（见模板兜底）。
+  if (isCoordinator.value) loadPc(); else if (isCollector.value) load()
 })
 </script>
 
@@ -208,6 +227,14 @@ onMounted(async () => {
         <div class="ops"><span class="note" style="margin:0">本物业各批次的送达 / 工单 / 回款标记 / 在办法务</span></div>
       </div>
       <div class="alert info" style="margin-top:0">本物业处置口径：仅统计你所在物业的送达存证、工单处理、线下回款标记与在办法务；不含提成（协调员非提成制）。数据按当前案件实时聚合。</div>
+
+      <!-- Tab：进行中 / 已结项 / 全部（默认进行中）——与催收员分支同款，多批次长历史降噪 -->
+      <div class="dtabs" style="padding:6px 0 2px">
+        <div v-for="t in PC_TABS" :key="t.k" class="t" :class="{ on: pcActiveTab === t.k }" @click="pcActiveTab = t.k">
+          {{ t.l }}<span class="tag" :class="t.k === 'closed' ? 'suc' : t.k === 'active' ? 'war' : 'inf'" style="font-size:10px;padding:0 5px;margin-left:4px">{{ pcTabCount[t.k] }}</span>
+        </div>
+      </div>
+
       <div class="toolbar" style="margin:10px 0">
         <input class="inp" v-model="pcFilter.q" placeholder="搜索 批次号" aria-label="批次号搜索">
         <select class="inp" v-model="pcFilter.project" aria-label="项目筛选">
@@ -221,7 +248,7 @@ onMounted(async () => {
           <tr><th>批次</th><th>项目</th><th>送达完成</th><th>回款标记额</th><th>工单处理</th><th>在办法务</th></tr>
         </thead>
         <tbody>
-          <tr v-for="r in pcFilteredRows" :key="r.batchId">
+          <tr v-for="r in pcTabRows" :key="r.batchId">
             <td>{{ r.batch }}</td>
             <td>{{ r.proj }}</td>
             <td class="num">{{ r.delivered }}</td>
@@ -229,8 +256,10 @@ onMounted(async () => {
             <td class="num">{{ r.tickets }}</td>
             <td class="num">{{ r.legalActive }}</td>
           </tr>
-          <tr v-if="!loading && !pcFilteredRows.length">
-            <td colspan="6" class="note" style="text-align:center;padding:24px 0">暂无本物业批次数据。</td>
+          <tr v-if="!loading && !pcTabRows.length">
+            <td colspan="6" class="note" style="text-align:center;padding:24px 0">
+              {{ pcActiveTab === 'active' ? '暂无进行中批次。' : pcActiveTab === 'closed' ? '暂无已结项批次。' : '暂无本物业批次数据。' }}
+            </td>
           </tr>
         </tbody>
       </table>
@@ -238,7 +267,7 @@ onMounted(async () => {
   </div>
 
   <!-- ═══════════ 催收员（CO）：服务商内部考核口径 ═══════════ -->
-  <div v-else>
+  <div v-else-if="isCollector">
     <!-- 统计周期切换 -->
     <div class="toolbar" style="margin-bottom:14px">
       <span class="note" style="margin:0">统计周期（KPI）：</span>
@@ -381,5 +410,11 @@ onMounted(async () => {
       </template>
       <template #footer><el-button @click="detailOpen = false">关闭</el-button></template>
     </DsDrawer>
+  </div>
+
+  <!-- 兜底：非 CO/PC 角色（SA/SE/PL/VL）无个人业绩口径，给占位而非误当催收员拉 /me/stats -->
+  <div v-else class="card">
+    <div class="card-h"><div class="t"><span class="bar"></span>我的业绩</div></div>
+    <div class="note" style="padding:24px 0;text-align:center">「我的业绩」仅面向催收员（提成）与物业协调员（处置产能）。当前角色无个人业绩口径。</div>
   </div>
 </template>

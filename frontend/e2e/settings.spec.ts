@@ -6,18 +6,18 @@ import { loginRole } from './helpers'
 test.describe('US-M3-11 系统配置(SA)', () => {
   test.beforeEach(async ({ page }) => {
     await loginRole(page, 'SA')
-    await page.getByRole('menuitem', { name: '设置' }).click()
+    await page.getByRole('menuitem', { name: '参数配置' }).click()
     await expect(page).toHaveURL(/\/settings/)
   })
 
   test('编辑 TIMERS(t2Hours)保存成功，版本递增；负数被拒', async ({ page }) => {
     // 读取当前 TIMERS 版本
-    const timersRow = page.locator('.el-table__row').filter({ hasText: 'TIMERS' })
+    const timersRow = page.locator('tbody tr').filter({ has: page.locator('b[title="TIMERS"]') })
     await expect(timersRow).toBeVisible()
     const before = (await timersRow.locator('td').nth(1).innerText()).trim()
 
     await page.getByRole('button', { name: '编辑时效参数(TIMERS)' }).click()
-    const dlg = page.locator('.el-dialog').filter({ hasText: '编辑时效参数 TIMERS' })
+    const dlg = page.getByRole('dialog').filter({ hasText: '编辑时效参数' })
     await expect(dlg).toBeVisible()
     // 改 T2 服务商处置(小时)
     const t2 = dlg.locator('.el-form-item').filter({ hasText: 'T2 服务商处置' }).locator('input')
@@ -30,7 +30,7 @@ test.describe('US-M3-11 系统配置(SA)', () => {
 
   test('编辑 MARK_CODES 数组(增一条 connected/effectiveFollowUp)保存回读一致', async ({ page }) => {
     await page.getByRole('button', { name: '编辑标记码(MARK_CODES)' }).click()
-    const dlg = page.locator('.el-dialog').filter({ hasText: '编辑标记码 MARK_CODES' })
+    const dlg = page.getByRole('dialog').filter({ hasText: '编辑标记码' })
     await expect(dlg).toBeVisible()
     await dlg.getByRole('button', { name: '+ 新增标记码' }).click()
     const lastRow = dlg.locator('.el-table__row').last()
@@ -46,7 +46,7 @@ test.describe('US-M3-11 系统配置(SA)', () => {
   test('编辑 SMS(cooldownMinutes/signature)与 CLOSE_REASONS 保存成功', async ({ page }) => {
     // SMS
     await page.getByRole('button', { name: '编辑短信配置(SMS)' }).click()
-    let dlg = page.locator('.el-dialog').filter({ hasText: '编辑短信配置 SMS' })
+    let dlg = page.getByRole('dialog').filter({ hasText: '编辑短信配置' })
     await expect(dlg).toBeVisible()
     await dlg.locator('.el-form-item').filter({ hasText: '同案冷却' }).locator('input').fill('30')
     await dlg.getByPlaceholder('平台统一配置 BR-M9-09').fill('【有证慧催】')
@@ -55,7 +55,7 @@ test.describe('US-M3-11 系统配置(SA)', () => {
 
     // CLOSE_REASONS
     await page.getByRole('button', { name: '编辑结案原因(CLOSE_REASONS)' }).click()
-    dlg = page.locator('.el-dialog').filter({ hasText: '编辑结案原因 CLOSE_REASONS' })
+    dlg = page.getByRole('dialog').filter({ hasText: '编辑结案原因' })
     await expect(dlg).toBeVisible()
     await dlg.getByRole('button', { name: '+ 新增结案原因' }).click()
     const lastRow = dlg.locator('.el-table__row').last()
@@ -82,6 +82,6 @@ test.describe('BR-M1-04b 配置仅平台(PL 门控)', () => {
   // /settings 为 platform:true 菜单，仅平台(SA/SE)可见；PL/PC/VL/CO 侧栏无「设置」入口。
   test('PL 无「设置」菜单(platform scope 门控)', async ({ page }) => {
     await loginRole(page, 'PL')
-    await expect(page.getByRole('menuitem', { name: '设置' })).toHaveCount(0)
+    await expect(page.getByRole('menuitem', { name: '参数配置' })).toHaveCount(0)
   })
 })

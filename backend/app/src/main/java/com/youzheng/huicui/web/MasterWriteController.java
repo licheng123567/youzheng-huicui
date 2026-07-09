@@ -403,11 +403,12 @@ public class MasterWriteController {
         boolean isProvider = "PROVIDER".equals(s.orgType());
         boolean isProperty = "PROPERTY".equals(s.orgType());
         Map<String, Object> out = new java.util.HashMap<>();
-        if (!isProvider) {   // 平台+物业 见收佣线
+        if (!isProvider) {   // 平台+物业(PL/PC 付佣对账) 见收佣线
             out.put("commInRate", row.get("comm_in_rate"));
             out.put("commInConfirmed", row.get("comm_in_confirmed"));
         }
-        if (!isProperty) {   // 平台+服务商 见付佣线
+        // 付佣线：平台 + 服务商负责人。CO 只见自己提成(cocomm.self.view，US-M9-09)，不见批次付佣比例。
+        if (!isProperty && !(isProvider && "CO".equals(s.role()))) {
             out.put("payOutRate", row.get("pay_out_rate"));
         }
         return out;

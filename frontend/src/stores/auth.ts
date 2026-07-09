@@ -9,6 +9,8 @@ export const useAuth = defineStore('auth', {
   state: () => ({
     token: localStorage.getItem('token') || '',
     me: null as Me | null,
+    // 在途的 /me 请求（仅 ensureMe 内部用，防并发重复拉取）；非响应式语义无所谓，放 state 便于类型推断。
+    _meInflight: null as Promise<void> | null,
   }),
   getters: {
     isAuthed: (s) => !!s.token,
@@ -23,8 +25,14 @@ export const useAuth = defineStore('auth', {
     },
     // 单账号 → {done:true}(已登录)；多账号 → {done:false, loginTicket, accounts} 待选(BR-M1-11)。
     async _doLogin(body: Record<string, string>): Promise<{ done: boolean; loginTicket?: string; accounts?: any[] }> {
-      const { data, error } = await api.POST('/auth/login', { body: body as never })
-      if (error || !data) throw new Error('登录失败：凭据错误')
+      const { data, error, response } = await api.POST('/auth/login', { body: body as never })
+      if (error || !data) {
+        // 区分「后端不可达/服务异常」与「凭据错误」——避免后端没启动时误报密码错。
+        const st = response?.status
+        if (st == null || st >= 500) throw new Error('无法连接后端服务，请确认后端已在 9091 启动')
+        if (st === 401 || st === 403 || st === 422) throw new Error('账号或密码错误')
+        throw new Error('登录失败（HTTP ' + st + '）')
+      }
       const d = data as { token?: string; loginTicket?: string; accounts?: any[] }
       if (d.token) { this._setToken(d.token); await this.fetchMe(); return { done: true } }
       if (d.loginTicket) return { done: false, loginTicket: d.loginTicket, accounts: d.accounts ?? [] }
@@ -45,6 +53,18 @@ export const useAuth = defineStore('auth', {
       const { data, error } = await api.GET('/me')
       if (error || !data) { this.logout(); throw new Error('获取当前主体失败') }
       this.me = data
+    },
+    /**
+     * 水合当前主体：整页刷新/新标签直达 URL 时 Pinia 是空的，token 在 localStorage 但 me 尚未拉取。
+     * 路由守卫必须先等到 me（否则 role 为空 → 越权判定被跳过 → 直敲 URL 可进任意页）。
+     * 并发调用共享同一个在途请求；失败(401/token 过期)时 fetchMe 已 logout，此处吞掉异常交由守卫按未登录处理。
+     */
+    async ensureMe() {
+      if (this.me || !this.token) return
+      if (!this._meInflight) {
+        this._meInflight = this.fetchMe().catch(() => undefined).finally(() => { this._meInflight = null })
+      }
+      await this._meInflight
     },
     logout() {
       this.token = ''

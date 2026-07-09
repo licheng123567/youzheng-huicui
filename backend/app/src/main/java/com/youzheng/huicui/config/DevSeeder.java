@@ -563,20 +563,22 @@ public class DevSeeder implements CommandLineRunner {
                     caseS3Id, "demo-paylink-" + caseS3Id, coHolder);
         }
         // 6a') 补 3 条缴费链接（不同展示态：待查看/已读未缴/已过期），使「我的缴费链接」演示齐全 4 态。
+        // created_at 回拨 2 天：既符合各展示态时序（"1 天前已读"的链接不能是刚建的），
+        // 也让种子不占满 SMS 冷却窗（BR-M4-14a），否则新库首次发 SMS 缴费链接即 409。
         Integer moreLinksExist = jdbc.queryForObject(
                 "SELECT count(*) FROM pay_link WHERE case_id = ? AND channel = 'SMS'", Integer.class, caseS3Id);
         if (moreLinksExist == null || moreLinksExist == 0) {
             jdbc.update(
-                    "INSERT INTO pay_link(case_id, token, amount_cents, expires_at, status, channel, created_by) "
-                            + "VALUES (?, ?, 260000, now() + interval '7 days', 'ACTIVE', 'SMS', ?)",
+                    "INSERT INTO pay_link(case_id, token, amount_cents, expires_at, status, channel, created_by, created_at) "
+                            + "VALUES (?, ?, 260000, now() + interval '7 days', 'ACTIVE', 'SMS', ?, now() - interval '2 days')",
                     caseS3Id, "demo-paylink-pending-" + caseS3Id, coHolder);
             jdbc.update(
-                    "INSERT INTO pay_link(case_id, token, amount_cents, expires_at, status, channel, created_by, viewed_at) "
-                            + "VALUES (?, ?, 260000, now() + interval '7 days', 'ACTIVE', 'SMS', ?, now() - interval '1 day')",
+                    "INSERT INTO pay_link(case_id, token, amount_cents, expires_at, status, channel, created_by, viewed_at, created_at) "
+                            + "VALUES (?, ?, 260000, now() + interval '7 days', 'ACTIVE', 'SMS', ?, now() - interval '1 day', now() - interval '2 days')",
                     caseS3Id, "demo-paylink-viewed-" + caseS3Id, coHolder);
             jdbc.update(
-                    "INSERT INTO pay_link(case_id, token, amount_cents, expires_at, status, channel, created_by) "
-                            + "VALUES (?, ?, 260000, now() - interval '1 day', 'EXPIRED', 'SMS', ?)",
+                    "INSERT INTO pay_link(case_id, token, amount_cents, expires_at, status, channel, created_by, created_at) "
+                            + "VALUES (?, ?, 260000, now() - interval '1 day', 'EXPIRED', 'SMS', ?, now() - interval '2 days')",
                     caseS3Id, "demo-paylink-expired-" + caseS3Id, coHolder);
         }
 

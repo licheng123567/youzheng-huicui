@@ -11,12 +11,12 @@ test.describe('US-M3-02 平台公海再派(SA)', () => {
     await expect(page).toHaveURL(/\/sea/)
     // 平台公海视图
     // 点池切换 radio 的可见 label span（el-radio 真 input 隐藏、点它被 __inner 拦截；
-    // 且 "平台公海" 文案也出现在表格"来源池"列 .el-tag，故锚定 .el-radio-button__inner 最稳）。
-    await page.locator('.el-radio-button__inner', { hasText: '平台公海' }).click()
-    await expect(page.locator('.el-table').first()).toBeVisible()
+    // 且 "平台公海" 文案也出现在表格"来源池"列 .el-tag，故限定在池分段控件 .segctrl 内）。
+    await page.locator('.segctrl span', { hasText: '平台公海' }).click()
+    await expect(page.locator('table').first()).toBeVisible()
     // 切池触发异步 load()，旧(服务商)表恒 visible 不会等到平台池数据；
     // 平台公海每行「来源池」列 .el-tag 文案=平台公海，等它出现确保已渲染平台池数据(再派按钮才就位)。
-    await expect(page.locator('.el-table .el-tag', { hasText: '平台公海' }).first()).toBeVisible()
+    await expect(page.locator('tbody tr .tag', { hasText: '平台公海' }).first()).toBeVisible()
   })
 
   test('退回案件再派服务商Y成功', async ({ page }) => {
@@ -25,7 +25,7 @@ test.describe('US-M3-02 平台公海再派(SA)', () => {
       test.skip(true, '无可再派(退回)案件')
     }
     await redispatchBtn.click()
-    const dlg = page.locator('.el-dialog').filter({ hasText: /再派|服务商/ })
+    const dlg = page.getByRole('dialog').filter({ hasText: '单案再派' })
     await expect(dlg).toBeVisible()
     // 选服务商Y（非原退回方）
     const sel = dlg.locator('.el-select').first()
@@ -43,7 +43,7 @@ test.describe('US-M3-02 平台公海再派(SA)', () => {
       test.skip(true, '无可再派(退回)案件')
     }
     await redispatchBtn.click()
-    const dlg = page.locator('.el-dialog').filter({ hasText: /再派|服务商/ })
+    const dlg = page.getByRole('dialog').filter({ hasText: '单案再派' })
     await expect(dlg).toBeVisible()
     // 下拉中原退回方应被禁用或提交后被拒
     const sel = dlg.locator('.el-select').first()
@@ -66,7 +66,7 @@ test.describe('US-M3-02 平台公海再派(SA)', () => {
       test.skip(true, '无 T1 超时入池案件')
     }
     await redispatchBtn.first().click()
-    const dlg = page.locator('.el-dialog').filter({ hasText: /再派|服务商/ })
+    const dlg = page.getByRole('dialog').filter({ hasText: '单案再派' })
     await expect(dlg).toBeVisible()
     const sel = dlg.locator('.el-select').first()
     await sel.click()

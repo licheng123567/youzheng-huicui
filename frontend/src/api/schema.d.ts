@@ -207,6 +207,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/batches/{id}/comm-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 批次佣金比例+平台确认态(三层佣金 V922·批次详情编辑卡；commInConfirmed 的唯一契约出口)
+         * @description 资金双线字段级裁剪：平台=双线全；物业(PL/PC 付佣对账)=仅 commInRate/commInConfirmed；
+         *     服务商负责人 VL=仅 payOutRate；**催收员 CO 两线均无**(只见自己提成 cocomm.self.view，US-M9-09)。
+         *     range 可见即可读(own-org/派往本商)；不可见→404 不泄露存在性。
+         */
+        get: operations["getBatchCommStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/batches/{id}/comm-in-rate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 物业提案建议收佣比例(三层佣金第一步：物业提案→平台 commission-rates 确认)
+         * @description 置 comm_in_confirmed=false 待平台确认；平台已确认后物业不可再改(409)。own-org 本物业裁剪。
+         */
+        put: operations["proposeCommInRate"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/batches/{id}/commission-rates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 平台确认双方佣金比例(收佣+付佣一处同定·防倒挂 BR-M9-18·置 commInConfirmed=true)
+         * @description 平台最终决定权：付佣 payOutRate ≤ 收佣 commInRate(毛利≥0)，倒挂→422 BIZ_PAYOUT_INVERT。
+         */
+        put: operations["setBatchCommissionRates"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/batches/import": {
         parameters: {
             query?: never;
@@ -965,6 +1033,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/recordings/{id}/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 回听录音音频(二进制流 V921·BR-M4-01b)
+         * @description 访问级别与 getRecording 一致：case-actor 行级裁剪(caseVisible)，不额外要求 case.call——
+         *     凡能读该录音元数据/转写/AI 复盘的角色即能回听(含 SA/SE/VL；跨租户不可见案件仍 403)。
+         *     录音存在但无音频字节(种子/历史录音)→404。
+         */
+        get: operations["streamRecordingAudio"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/recordings/{id}/reprocess": {
         parameters: {
             query?: never;
@@ -1173,6 +1265,115 @@ export interface paths {
         get: operations["getReconRollup"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/cases/{id}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 案件附件直传(送达凭证/跟进材料 V923·20MB 上限)
+         * @description deliveryType 送达类型白名单(LAWYER_LETTER/COLLECTION_NOTICE/COURT_DOC/OTHER)，空/非法落 NULL=普通跟进附件不进送达管理。返回 url=/v1/attachments/{id}，供 FollowUpInput.attachments 引用。
+         */
+        post: operations["uploadCaseAttachment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attachments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 附件下载(二进制流·case-actor 行级裁剪 V923)
+         * @description 以 Content-Disposition:attachment + nosniff 下发(content_type 来自上传者，防 HTML 附件被渲染)。
+         */
+        get: operations["streamAttachment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/cases/{id}/upload-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 创建手机扫码上传会话(TTL 15min·V923)
+         * @description 桌面端生成二维码(/u/{token} 公开页)供手机免登录上传；会话携带 deliveryType，手机上传件继承。
+         */
+        post: operations["createUploadSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/upload-sessions/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 上传会话 token(128bit 不可枚举) */
+                token: string;
+            };
+            cookie?: never;
+        };
+        /** 轮询扫码上传会话(桌面端收手机已传文件列表) */
+        get: operations["pollUploadSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/upload-sessions/{token}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 上传会话 token */
+                token: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 手机扫码免登录上传文件(公开端点·凭 token·单会话上限 20 件)
+         * @description 公开(security=[])：凭不可枚举 token+15min TTL 控制访问；过期/不存在→404 不泄露。单会话件数上限防灌注(409)。
+         */
+        post: operations["uploadSessionFile"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1623,6 +1824,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 送达管理·送达记录列表(送达凭证聚合;物业本组织+PC协调集,服务商不可见)
+         * @description 协调员送达管理页:列已上传的送达凭证(case_attachment.delivery_type 非空),来源 app 扫码/PC后台;是否存证/存证态由关联 DELIVERY 存证派生。法务案件列表概念已移除(法务仅催收跟进手段之一)。
+         */
+        get: operations["listDeliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/evidence": {
         parameters: {
             query?: never;
@@ -1675,6 +1896,28 @@ export interface paths {
          * @description 仅 status=FAILED 的存证可重试，置回 ISSUING 重新出证；非 FAILED → 409。按次计费只向物业(BR-M6-03)。
          */
         post: operations["retryEvidence"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/evidence/{id}/certificate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 下载易保全备案证书(zip·仅 ISSUED 可下 V924)
+         * @description own-org 裁剪(PC 须协调该案；服务商不可见存证)。仅 status=ISSUED 且已备案成功可下，否则 409。代理易保全 downPreservationCert。
+         */
+        get: operations["downloadEvidenceCertificate"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2757,6 +3000,44 @@ export interface components {
             items?: components["schemas"]["BatchView"][];
             meta?: components["schemas"]["PageMeta"];
         };
+        /** @description 批次佣金状态(V922)。字段按角色裁剪：平台=三字段全；物业=commInRate/commInConfirmed；服务商 VL=payOutRate；CO=空对象。commInConfirmed 的唯一契约出口(getBatch 三视图不含) */
+        BatchCommStatus: {
+            /** @description 收佣比例(物业↔平台线)；服务商/CO 不可见 */
+            commInRate?: components["schemas"]["Rate"];
+            /** @description 平台是否已确认双佣(true 后物业不可再提案)；服务商/CO 不可见 */
+            commInConfirmed?: boolean | null;
+            /** @description 付佣比例(平台↔服务商线)；物业/CO 不可见 */
+            payOutRate?: components["schemas"]["Rate"];
+        };
+        CommInProposeInput: {
+            /** @description 物业建议收佣比例(0-1 分数) */
+            commInRate: components["schemas"]["Rate"];
+        };
+        CommissionRatesInput: {
+            /** @description 平台确认收佣比例 */
+            commInRate: components["schemas"]["Rate"];
+            /** @description 平台确认付佣比例(≤commInRate 防倒挂 BR-M9-18) */
+            payOutRate: components["schemas"]["Rate"];
+        };
+        OkResult: {
+            ok?: boolean;
+        };
+        /** @description 案件附件(V923 case_attachment)。url=/v1/attachments/{id}，FollowUpInput.attachments 以该 url 引用 */
+        CaseAttachment: {
+            id: string;
+            /** @description 原始文件名 */
+            name: string;
+            /** @description 下载路径 /v1/attachments/{id}(经 streamAttachment 鉴权下发) */
+            url: string;
+        };
+        UploadSession: {
+            /** @description 扫码上传会话 token(128bit·TTL 15min)。手机公开页 /u/{token} */
+            token: string;
+        };
+        UploadSessionFiles: {
+            /** @description 会话内已上传文件(桌面轮询增量渲染) */
+            items: components["schemas"]["CaseAttachment"][];
+        };
         Case: {
             id?: string;
             /** @description 户号(必填·与 CaseImportRow 共用 ERD CASE.acct_no/BR-M2-14) */
@@ -3636,6 +3917,38 @@ export interface components {
             items?: components["schemas"]["EvidenceItem"][];
             meta?: components["schemas"]["PageMeta"];
         };
+        /**
+         * @description 送达类型:律师函/催收单/诉讼文书/其他
+         * @enum {string}
+         */
+        DeliveryTypeEnum: "LAWYER_LETTER" | "COLLECTION_NOTICE" | "COURT_DOC" | "OTHER";
+        /**
+         * @description 送达渠道:APP=扫码/手机上传;BACKEND=PC后台直传
+         * @enum {string}
+         */
+        DeliveryChannelEnum: "APP" | "BACKEND";
+        DeliveryRecord: {
+            id?: string;
+            caseId?: string;
+            ownerName?: string | null;
+            room?: string | null;
+            projectName?: string | null;
+            batchNo?: string | null;
+            /** Format: date-time */
+            deliveredAt?: string | null;
+            deliveryType?: components["schemas"]["DeliveryTypeEnum"];
+            channel?: components["schemas"]["DeliveryChannelEnum"];
+            filename?: string | null;
+            evidenced?: boolean;
+            /** @description 关联 DELIVERY 存证 id(供下证书);未存证为 null */
+            evidenceId?: string | null;
+            /** @description 存证态 ISSUING/ISSUED/FAILED;未存证为 null */
+            evidenceStatus?: string | null;
+        };
+        DeliveryRecordPage: {
+            items?: components["schemas"]["DeliveryRecord"][];
+            meta?: components["schemas"]["PageMeta"];
+        };
         EvidenceVerify: {
             valid?: boolean;
             certNo?: string;
@@ -4087,12 +4400,6 @@ export interface components {
                 providers?: string[];
             };
         };
-        /** @description 重置员工密码(US-M1-05)·新密码服务端可生成 */
-        ResetPasswordInput: {
-            newPassword?: string | null;
-            /** @description 是否短信通知员工 */
-            notify?: boolean;
-        };
         /** @description 负责人改绑手机+重置密码交接(US-M1-09) */
         OwnerRebindInput: {
             newPhone: string;
@@ -4220,6 +4527,22 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description 第三方通道失败/未启用(短信网关/存证服务) */
+        BadGateway: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "BIZ_SMS_FAILED",
+                 *       "message": "短信通道未启用，无法下发验证码",
+                 *       "traceId": "t-..."
+                 *     }
+                 */
+                "application/json": components["schemas"]["Error"];
+            };
+        };
     };
     parameters: {
         Id: string;
@@ -4290,13 +4613,15 @@ export interface operations {
                 content?: never;
             };
             422: components["responses"]["ValidationError"];
-            /** @description 请求过于频繁(限流)，稍后重试 */
+            /** @description 请求过于频繁(限流·同手机号 60s 内只发一次)，稍后重试 */
             429: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
+            /** @description 短信通道未启用/网关不可达(BIZ_SMS_FAILED)。非 dev 环境短信未启用时一律拒发——不存在固定验证码 */
+            502: components["responses"]["BadGateway"];
         };
     };
     selectAccount: {
@@ -4599,6 +4924,91 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    getBatchCommStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok(按角色裁剪后的字段子集) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchCommStatus"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    proposeCommInRate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommInProposeInput"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    setBatchCommissionRates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommissionRatesInput"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
         };
     };
     importBatch: {
@@ -5773,6 +6183,31 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    streamRecordingAudio: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 音频二进制流(Content-Type 为上传时的音频类型) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/*": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     reprocessRecording: {
         parameters: {
             query?: never;
@@ -6099,6 +6534,158 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
+        };
+    };
+    uploadCaseAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                    /**
+                     * @description 送达类型(可选)；缺省=普通附件
+                     * @enum {string}
+                     */
+                    deliveryType?: "LAWYER_LETTER" | "COLLECTION_NOTICE" | "COURT_DOC" | "OTHER";
+                };
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseAttachment"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    streamAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 附件二进制流 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    createUploadSession: {
+        parameters: {
+            query?: {
+                /** @description 送达类型(可选)，会话内上传件继承 */
+                deliveryType?: "LAWYER_LETTER" | "COLLECTION_NOTICE" | "COURT_DOC" | "OTHER";
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadSession"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    pollUploadSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 上传会话 token(128bit 不可枚举) */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadSessionFiles"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    uploadSessionFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 上传会话 token */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok?: boolean;
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
         };
     };
     listBatchRepayLines: {
@@ -6620,7 +7207,14 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description 上报说明(落审计；缺省"上报平台复核") */
+                    note?: string;
+                };
+            };
+        };
         responses: {
             /** @description ok */
             200: {
@@ -6774,6 +7368,29 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
+    listDeliveries: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                size?: components["parameters"]["Size"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryRecordPage"];
+                };
+            };
+        };
+    };
     listEvidence: {
         parameters: {
             query?: {
@@ -6847,6 +7464,34 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    downloadEvidenceCertificate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 备案证书 zip */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            /** @description 易保全服务不可达(BIZ_EVIDENCE_FAILED) */
+            502: components["responses"]["BadGateway"];
         };
     };
     getEvidencePackage: {
@@ -7771,12 +8416,17 @@ export interface operations {
             };
         };
         responses: {
-            /** @description ok */
+            /** @description ok。resetPassword=true 时带 ownerSetupToken(一次性设密令牌明文，仅此响应出现一次，带外转交新负责人 B-04方案A)；否则空对象 */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        /** @description 一次性 setupToken(TTL 24h)；仅 resetPassword=true 返回 */
+                        ownerSetupToken?: string;
+                    };
+                };
             };
             403: components["responses"]["Forbidden"];
         };

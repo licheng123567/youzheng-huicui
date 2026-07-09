@@ -11,10 +11,10 @@ import { loginRole } from './helpers'
 
 /** 通过单案「指派」弹窗发现一个真实可用的本商催收员 account.id，读出后关闭弹窗。 */
 async function discoverCollectorId(page: Page): Promise<string> {
-  const assignBtn = page.locator('.el-table__row').first().getByRole('button', { name: '指派' })
+  const assignBtn = page.locator('tbody tr').first().getByRole('button', { name: '指派' })
   if (!(await assignBtn.count())) return ''
   await assignBtn.click()
-  const adlg = page.locator('.el-dialog').filter({ hasText: '指派催收员' })
+  const adlg = page.getByRole('dialog').filter({ hasText: '指派催收员' })
   await expect(adlg).toBeVisible()
   // 弹窗按余量推荐并把推荐者 id 自动回填到「催收员 id」输入框（BR-M3-23）。
   // CI 环境若无在岗推荐 CO，输入框可能为空——优雅返回空串，调用方据此 skip（不硬失败）。
@@ -35,14 +35,14 @@ test.describe('US-M3-05 服务商批量分配(VL)', () => {
     await page.getByRole('menuitem', { name: '案件公海' }).click()
     await expect(page).toHaveURL(/\/sea/)
     // 点池切换 radio 的可见 label span（el-radio 真 input 隐藏、点它被 __inner 拦截；
-    // 且 "服务商公海" 文案也出现在表格"来源池"列 .el-tag，故锚定 .el-radio-button__inner 最稳）。
-    await page.locator('.el-radio-button__inner', { hasText: '服务商公海' }).click()
-    await expect(page.locator('.el-table').first()).toBeVisible()
+    // 且 "服务商公海" 文案也出现在表格"来源池"列 .el-tag，故限定在池分段控件 .segctrl 内）。
+    await page.locator('.segctrl span', { hasText: '服务商公海' }).click()
+    await expect(page.locator('table').first()).toBeVisible()
   })
 
   test('多选批量分配给同一催收员', async ({ page }) => {
     // 行多选框（type=selection）；服务商公海实测 2 件可批量。
-    const checks = page.locator('.el-table__row .el-checkbox')
+    const checks = page.locator('tbody tr input[type="checkbox"]')
     if ((await checks.count()) < 2) {
       test.skip(true, '服务商公海可分配案件不足以批量')
     }
@@ -56,7 +56,7 @@ test.describe('US-M3-05 服务商批量分配(VL)', () => {
     const batchBtn = page.getByRole('button', { name: /批量分配/ })
     await expect(batchBtn).toBeVisible()
     await batchBtn.click()
-    const dlg = page.locator('.el-dialog').filter({ hasText: '批量分配' })
+    const dlg = page.getByRole('dialog').filter({ hasText: '批量分配' })
     await expect(dlg).toBeVisible()
     // 填催收员 id（真实现：输入框，非点选推荐行）。
     await dlg.getByRole('textbox').fill(collectorId)
@@ -72,20 +72,20 @@ test.describe('US-M3-05 服务商批量分配(VL)', () => {
     // 注：当前 DevSeeder holdCap=50、服务商公海仅 2 件 → 无法构造真实超额，rejected 必为空。
     //   故此处断言可达的真实观测：批量分配后弹出「分配结果」面板并展示成功/被拒分项标签。
     //   若需真正验证「超持有上限被拒(BIZ_HOLD_CAP)」明细，需补种子（见返回说明）。
-    const checks = page.locator('.el-table__row .el-checkbox')
+    const checks = page.locator('tbody tr input[type="checkbox"]')
     if ((await checks.count()) < 1) {
       test.skip(true, '无可分配案件')
     }
     const collectorId = await discoverCollectorId(page)
     test.skip(!collectorId, '无在岗推荐催收员可用于批量分配')
 
-    // 全选触发批量。
-    const selectAll = page.locator('.el-table__header .el-checkbox').first()
-    if (await selectAll.count()) await selectAll.click()
+    // 表头无「全选」框（该列 th 为空）→ 逐行勾选。
+    const n = await checks.count()
+    for (let i = 0; i < n; i++) await checks.nth(i).check()
     const batchBtn = page.getByRole('button', { name: /批量分配/ })
     await expect(batchBtn).toBeVisible()
     await batchBtn.click()
-    const dlg = page.locator('.el-dialog').filter({ hasText: '批量分配' })
+    const dlg = page.getByRole('dialog').filter({ hasText: '批量分配' })
     await expect(dlg).toBeVisible()
     await dlg.getByRole('textbox').fill(collectorId)
     await dlg.getByRole('button', { name: '分配', exact: true }).click()

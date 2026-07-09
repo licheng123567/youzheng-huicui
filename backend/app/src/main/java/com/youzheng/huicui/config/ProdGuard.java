@@ -12,8 +12,10 @@ import org.springframework.context.annotation.Profile;
  * <ul>
  *   <li>HUICUI_JWT_SECRET 未注入（空串）→ 拒绝启动</li>
  *   <li>HUICUI_JWT_SECRET 与 dev 内置串相同 → 拒绝启动（防意外泄漏 dev 串到生产）</li>
- *   <li>huicui.auth.dev-sms-code 非空 → 拒绝启动（prod profile 不应有 dev 短信码）</li>
+ *   <li>数据源仍是 dev 默认（localhost:5455 / 口令 test）→ 拒绝启动</li>
  * </ul>
+ * 短信固定码 000000 的防线在 AuthController.smsCode：非 dev profile 且 sms 未启用 → 502 拒绝下发，
+ * 不依赖本护栏（此前校验的 huicui.auth.dev-sms-code 属性早已无代码读取，属失效护栏，已移除）。
  */
 @Profile("prod")
 @Configuration
@@ -25,8 +27,11 @@ public class ProdGuard {
     @Value("${huicui.jwt.secret:}")
     private String jwtSecret;
 
-    @Value("${huicui.auth.dev-sms-code:}")
-    private String devSmsCode;
+    @Value("${spring.datasource.url:}")
+    private String datasourceUrl;
+
+    @Value("${spring.datasource.password:}")
+    private String datasourcePassword;
 
     @PostConstruct
     public void validate() {
@@ -38,9 +43,13 @@ public class ProdGuard {
             throw new IllegalStateException(
                     "[ProdGuard] HUICUI_JWT_SECRET 使用了 dev 内置串：生产环境禁止使用开发密钥，拒绝启动。");
         }
-        if (devSmsCode != null && !devSmsCode.isBlank()) {
+        if (datasourceUrl != null && datasourceUrl.contains("localhost:5455")) {
             throw new IllegalStateException(
-                    "[ProdGuard] huicui.auth.dev-sms-code 在 prod profile 下不得配置，拒绝启动。");
+                    "[ProdGuard] 数据源仍指向 dev 默认库 localhost:5455：生产必须注入 SPRING_DATASOURCE_URL，拒绝启动。");
+        }
+        if ("test".equals(datasourcePassword)) {
+            throw new IllegalStateException(
+                    "[ProdGuard] 数据源使用 dev 默认口令：生产必须注入 SPRING_DATASOURCE_PASSWORD，拒绝启动。");
         }
     }
 }

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { loginRole } from './helpers'
+import { loginRole, openCaseByAcctNo } from './helpers'
 
 // US-M4 联系人管理与跟进留痕：
 // 联系人表显主号标记并可设主号(PATCH isPrimary，旧主号降级)；新增联系人可勾主号；
@@ -7,19 +7,12 @@ import { loginRole } from './helpers'
 test.describe('US-M4 联系人与跟进(CO)', () => {
   test.beforeEach(async ({ page }) => {
     await loginRole(page, 'CO')
-    await page.getByRole('menuitem', { name: '案件' }).click()
-    await expect(page).toHaveURL(/\/cases/)
-    const rows = page.locator('.el-table__row')
-    await expect(rows.first()).toBeVisible()
-    // 锚定有联系人/可写跟进的私海案 M3-S3-01（避免 M5-QB-01 顶到首行）
-    await rows.filter({ hasText: 'M3-S3-01' }).first().click()
-    await expect(page).toHaveURL(/\/cases\/\d+/)
-    // 默认在「概览 / 联系人」tab
-    await page.getByRole('tab', { name: /概览 \/ 联系人/ }).click()
+        // CO 的「我的案件」扁平表无户号列 → 走全局搜索按户号定位
+    await openCaseByAcctNo(page, 'M3-S3-01')
   })
 
   test('联系人表显主号标记且可设主号', async ({ page }) => {
-    const table = page.locator('.el-table').first()
+    const table = page.locator('table').first()
     await expect(table).toBeVisible()
     // 主号列存在
     await expect(page.getByText('主号').first()).toBeVisible()
@@ -31,13 +24,13 @@ test.describe('US-M4 联系人与跟进(CO)', () => {
   })
 
   test('新增联系人对话框可勾主号', async ({ page }) => {
-    // 联系方式分区的新增入口按钮文案为「+ 新增」(CaseDetailView)，gated by case.follow
-    const addBtn = page.getByRole('button', { name: '+ 新增' })
-    if (!(await addBtn.count())) {
-      test.skip(true, '无新增联系人入口(权限/视图)')
-    }
-    await addBtn.first().click()
-    const dlg = page.locator('.el-dialog').filter({ hasText: '新增联系人' })
+    // 联系方式分区的新增入口按钮文案为「+ 新增」(CaseDetailView)，gated by case.follow。
+    // CO 恒有 case.follow → 该入口必然出现；用 toBeVisible 显式等待，
+    // 不能用 count()（它不自动等待，页面未渲染完就返回 0 → 用例会"静默跳过"，看着像绿其实没测）。
+    const addBtn = page.getByRole('button', { name: '+ 新增' }).first()
+    await expect(addBtn).toBeVisible()
+    await addBtn.click()
+    const dlg = page.getByRole('dialog').filter({ hasText: '新增联系人' })
     await expect(dlg).toBeVisible()
     await dlg.getByPlaceholder('联系号码').fill('13900008888')
     // 设为主号开关
@@ -47,28 +40,25 @@ test.describe('US-M4 联系人与跟进(CO)', () => {
   })
 
   test('写跟进可上传附件并在时间线留痕', async ({ page }) => {
+    // 同理：CO 恒有 case.follow，「写跟进记录」必然出现 → 显式等待而非 count() 静默跳过
     const followBtn = page.getByRole('button', { name: '写跟进' })
-    if (!(await followBtn.count())) {
-      test.skip(true, '无写跟进入口(case.follow)')
-    }
+    await expect(followBtn).toBeVisible()
     await followBtn.click()
-    const dlg = page.locator('.el-dialog').filter({ hasText: '写跟进' })
+    const dlg = page.getByRole('dialog').filter({ hasText: '写跟进记录' })
     await expect(dlg).toBeVisible()
-    // 内容必填(后端校验)，否则提交 422、弹窗不关
-    await dlg.getByRole('textbox', { name: '内容' }).fill('e2e 跟进留痕')
-    // 附件加行入口，填名称+url(空行会被前端过滤掉)
-    await expect(dlg.getByRole('button', { name: '+ 加附件' })).toBeVisible()
-    await dlg.getByRole('button', { name: '+ 加附件' }).click()
+    // 内容必填(后端校验)。是裸 <textarea class="ta">（无 label 关联 → 无可访问名），按 placeholder 定位
+    await dlg.getByPlaceholder(/记录本次跟进情况/).fill('e2e 跟进留痕')
+    // 附件加行入口（文案是「+ 加外链附件」），填名称+url(空行会被前端过滤掉)
+    await expect(dlg.getByRole('button', { name: '+ 加外链附件' })).toBeVisible()
+    await dlg.getByRole('button', { name: '+ 加外链附件' }).click()
     await dlg.getByPlaceholder('名称').fill('录音')
     await dlg.getByPlaceholder('url').fill('https://example.com/a.mp3')
     await dlg.getByRole('button', { name: '提交' }).click()
     // 提交成功后弹窗关闭
     await expect(dlg).toBeHidden()
-    // 切到时间线留痕。el-tabs 非激活 tab 的面板仍留 DOM(hidden)，故须在「事件时间线」激活面板内断言，
-    // 否则 .el-table.first() 会命中其他 tab 的隐藏表格。该面板渲染 el-timeline，并能见到刚写的跟进留痕。
-    await page.getByRole('tab', { name: '事件时间线' }).click()
-    const tlPanel = page.getByRole('tabpanel', { name: '事件时间线' })
-    await expect(tlPanel.locator('.el-timeline')).toBeVisible()
-    await expect(tlPanel.getByText('e2e 跟进留痕').first()).toBeVisible()
+    // 切到「沟通记录」看留痕。中栏 tab 是 .dtabs .t 普通 div（非 el-tabs/role=tabpanel），
+    // 切换即整块替换内容，故直接在页面上断言刚写的跟进文案。
+    await page.locator('.dtabs .t').filter({ hasText: '沟通记录' }).click()
+    await expect(page.getByText('e2e 跟进留痕').first()).toBeVisible()
   })
 })

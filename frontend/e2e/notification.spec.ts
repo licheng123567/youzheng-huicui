@@ -5,9 +5,9 @@ import { loginAs } from './helpers'
 test.describe('v1.2.0 消息中心 + 公海事件', () => {
   test('消息中心页可达·互推通知列表就位', async ({ page }) => {
     await loginAs(page, 'cuihu_pc')                    // 协调员收工单通知
-    await page.getByRole('button', { name: '消息' }).click()
+    await page.locator('.top .link', { hasText: '消息' }).click()
     await expect(page).toHaveURL(/\/notifications/)
-    await expect(page.getByText(/消息中心/)).toBeVisible()
+    await expect(page.locator('.card .t').filter({ hasText: '消息中心' })).toBeVisible()
     await expect(page.getByText('仅未读')).toBeVisible()
   })
 
@@ -15,6 +15,6 @@ test.describe('v1.2.0 消息中心 + 公海事件', () => {
     await loginAs(page, 'jx_co1')
     await page.getByRole('menuitem', { name: '案件公海' }).click()
     await expect(page).toHaveURL(/\/sea/)
-    await expect(page.getByText('实时事件日志')).toBeVisible()
+    await expect(page.getByText('实时事件流水')).toBeVisible()
   })
 })

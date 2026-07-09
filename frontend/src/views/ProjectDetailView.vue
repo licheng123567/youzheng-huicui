@@ -138,6 +138,7 @@ onMounted(load)
       减免阶梯
       <span class="note" style="margin:0 0 0 4px;font-weight:400">BR-M2-18a 阶梯+决定权</span>
       <span style="margin-left:auto">
+        <!-- 单一口径 reduce.policy.edit：PC 已无此权→自然只读；无需再 role 判断 -->
         <button v-if="auth.has('reduce.policy.edit')" class="btn txt" @click="openReduce">维护减免规则</button>
         <button v-if="auth.has('reduce.policy.edit') && p.reduceTiers && p.reduceTiers.length" class="btn txt dgc" @click="clearReduce">清空</button>
       </span>
