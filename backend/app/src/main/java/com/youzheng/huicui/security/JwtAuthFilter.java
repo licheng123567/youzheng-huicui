@@ -43,7 +43,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 || path.startsWith("/pay/")
                 || path.matches("/evidence/[^/]+/verify")
                 // 扫码上传：手机凭会话 token 公开上传附件（token 未过期即授权，无需登录）。
-                || path.matches("/upload-sessions/[^/]+/file");
+                || path.matches("/upload-sessions/[^/]+/file")
+                // 运维探针：容器/编排器的存活与就绪检查必须免鉴权，否则 HEALTHCHECK 恒 401
+                // → 容器永远 unhealthy、depends_on:service_healthy 卡死。
+                // 只放行 health（prod 的 management.endpoints 也只暴露 health,info，
+                // 且 show-details:never，不泄露数据源等内部信息）；env/beans 等一律不放行。
+                || path.equals("/actuator/health")
+                || path.startsWith("/actuator/health/");
     }
 
     /**

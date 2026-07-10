@@ -30,16 +30,19 @@ test.describe('US-M9-10 内催佣金穿透(VL)', () => {
     await expect(page.getByText('催收员').first()).toBeVisible()
     await expect(page.getByText('批次数')).toBeVisible()
 
-    // 行级「生成佣金单」入口：仅当有催收员行时穿透验证(种子现实可能空)
-    const genBtn = page.getByRole('button', { name: /生成佣金单/ })
+    // 行级「生成佣金单」入口：仅当有催收员行时穿透验证(种子现实可能空)。
+    // 用 waitFor 而非裸 count()——count() 不自动等待，页面没渲染完就返回 0，
+    // 会让整个 if 分支被"静默跳过"，看着是绿的其实没测（PR#11 CI 正是这样掩盖了下面的 el-dialog 错误）。
+    const genBtn = page.getByRole('button', { name: /生成佣金单/ }).first()
+    await genBtn.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {})
     if (await genBtn.count()) {
-      await genBtn.first().click()
-      // 穿透弹窗标题含「生成佣金单」；明细以表格勾选呈现(批次下拉 + 勾选)，而非手输 lineIds 输入框
-      const dlg = page.locator('.el-dialog').filter({ hasText: /生成佣金单/ })
+      await genBtn.click()
+      // 穿透弹层是 DsDrawer(role=dialog)，不是 el-dialog
+      const dlg = page.getByRole('dialog').filter({ hasText: '生成佣金单' })
       await expect(dlg).toBeVisible()
       // 批次以下拉选择(el-select)穿透，非手输框
       await expect(dlg.locator('.el-select')).toBeVisible()
-      // 明细勾选区为表格(type=selection)，非手输 lineIds
+      // 明细勾选区为 el-table(type=selection)，非手输 lineIds
       await expect(dlg.locator('.el-table')).toBeVisible()
     }
   })

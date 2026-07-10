@@ -1,13 +1,38 @@
-# 仅 prod profile 生效的配置
+# 仅 prod profile 生效的配置。基础 yml 的默认 profile 就是 prod（fail-closed）。
+#
+# prod 不带任何默认凭据，必须由环境变量注入（Spring 宽松绑定，见 deploy/.env.example）：
+#   SPRING_DATASOURCE_URL / SPRING_DATASOURCE_USERNAME / SPRING_DATASOURCE_PASSWORD
+#   HUICUI_JWT_SECRET                （缺失或等于 dev 内置串 → ProdGuard 拒绝启动）
+#   HUICUI_PUBLIC_BASE               （启用短信时必须是真实可达域名，否则 ProdGuard 拒绝启动）
+#   HUICUI_SMS_* / HUICUI_EBQ_*      （不启用则相应能力降级，启动时 ProdGuard 会 WARN 提示）
+#
+# 迁移：全部在 classpath:db/migration（打进 jar），不含 dev 种子 classpath:db/seed。
+# 基础 yml 已把 fail-on-missing-locations / validate-on-migrate / out-of-order 三项取「严」，
+# 此处不再放宽——迁移路径缺失或校验和不符必须让启动失败，而不是静默跳过。
 spring:
   flyway:
-    # C-1：prod 包含真迁移 filesystem+classpath，排除 classpath:db/seed（dev种子V900/V910已移出migration目录）。
-    # V901-V916 真迁移在 classpath:db/migration，不含种子。
-    locations: filesystem:../db/migration,classpath:db/migration
-    fail-on-missing-locations: false
+    locations: classpath:db/migration
 
-# prod 无任何 dev 凭据：
-#   huicui.jwt.secret   → 必须由环境变量 HUICUI_JWT_SECRET 注入（ProdGuard @PostConstruct 校验）
-#   huicui.dev-password → 不存在（DevSeeder 被 @Profile("dev") 排除，不实例化）
-#   短信固定码 000000    → 仅 dev profile（AuthController.smsCode 门控：非 dev 且 sms 未启用 → 502 拒绝）
-#   数据源 dev 默认凭据  → ProdGuard 校验（localhost:5455 / 口令 test 直接拒绝启动）
+  # 生产不打印 SQL、连接池给出显式上限
+  datasource:
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:10}
+      minimum-idle: ${DB_POOL_MIN:2}
+      connection-timeout: 30000
+
+logging:
+  level:
+    root: info
+    com.youzheng.huicui: info
+
+# 运维探针：仅暴露 health/info，不开放 env/beans 等敏感端点
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true    # /actuator/health/liveness、/readiness（K8s/compose 探针）
