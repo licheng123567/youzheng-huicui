@@ -49,6 +49,10 @@ huicui:
   # 短信（智讯云/028lk）——未配置时 enabled=false，验证码退 dev 固定码、业务短信不触网关
   sms:
     enabled: ${HUICUI_SMS_ENABLED:false}
+    # dry-run：走完整条业务链路（冷却/sms_record/pay-link 状态机），但不触网关、不产生费用。
+    # 只用于预发演练。prod 开启会被 ProdEnvironmentGuard 大声 WARN（不硬失败，允许演练）。
+    # 注意：dry-run 会把短信正文（含验证码）写进日志——这是为了让人能真的登录一次。
+    dry-run: ${HUICUI_SMS_DRY_RUN:false}
     secret-name: ${HUICUI_SMS_SECRET_NAME:}
     secret-key: ${HUICUI_SMS_SECRET_KEY:}
     sms-base-url: ${HUICUI_SMS_BASE:}                       # 普通短信接口地址(向对接方索取)

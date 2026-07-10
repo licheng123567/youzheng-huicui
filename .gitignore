@@ -25,3 +25,6 @@ frontend/test-results/
 frontend/playwright-report/
 
 test-results/
+
+# 部署密钥：只跟踪 deploy/.env.example，绝不入库真凭据
+deploy/.env

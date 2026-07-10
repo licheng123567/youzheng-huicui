@@ -21,6 +21,8 @@ import org.springframework.context.annotation.Profile;
 @Configuration
 public class ProdGuard {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ProdGuard.class);
+
     private static final String DEV_SECRET =
             "dev-only-secret-change-in-prod-至少32字节用于HS256签名0123456789";
 
@@ -33,8 +35,22 @@ public class ProdGuard {
     @Value("${spring.datasource.password:}")
     private String datasourcePassword;
 
+    @Value("${huicui.sms.dry-run:false}")
+    private boolean smsDryRun;
+
+    @Value("${huicui.sms.enabled:false}")
+    private boolean smsEnabled;
+
     @PostConstruct
     public void validate() {
+        // dry-run 是预发演练开关：不触网关、且把验证码写进日志。生产长期开着 = 短信永远发不出去。
+        // 不硬失败（允许预发用 prod profile 演练），但必须刺眼。
+        if (smsEnabled && smsDryRun) {
+            log.warn("======================================================================");
+            log.warn("[ProdGuard] 短信处于 DRY-RUN：不会真的发出任何短信，且验证码会被写入日志！");
+            log.warn("[ProdGuard] 若这是正式生产环境，请立刻设置 HUICUI_SMS_DRY_RUN=false 并重启。");
+            log.warn("======================================================================");
+        }
         if (jwtSecret == null || jwtSecret.isBlank()) {
             throw new IllegalStateException(
                     "[ProdGuard] HUICUI_JWT_SECRET 未配置：生产环境必须通过环境变量注入 JWT 密钥，拒绝启动。");

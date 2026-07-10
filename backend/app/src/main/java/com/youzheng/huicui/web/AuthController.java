@@ -27,10 +27,17 @@ import java.util.concurrent.ConcurrentHashMap;
  *   - POST /auth/setup-password{token,newPassword}：消费一次性 setupToken（SHA-256 哈希匹配+
  *     TTL 24h+一次性 used_at），设 password_hash+must_change_password=FALSE；否则 401。
  *     此端点无需登录（security=[]）。
+ *
+ * ⚠ 单实例限定：loginTicket / 短信验证码 / 发送冷却 三者都存在**进程内存**里。
+ *   多实例部署（或滚动发布期间新旧实例并存）会立刻出现：在 A 实例拿的票据到 B 实例换不到 token、
+ *   冷却在实例间各算各的（限流形同虚设）。**横向扩容前必须先把这三者换成 Redis**。
+ *   本次只补了过期清扫（sweepExpired），没有解决多实例问题 —— 别把它当成已解决。
  */
 @RestController
 @RequestMapping("/auth")
 public class AuthController {
+
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AuthController.class);
 
     private final JdbcTemplate jdbc;
     private final JwtService jwt;
@@ -62,6 +69,25 @@ public class AuthController {
     private static final long TICKET_TTL_MS = 5 * 60 * 1000L;
     private static final long SMS_TTL_MS = 5 * 60 * 1000L;
     private static final long SMS_RESEND_INTERVAL_MS = 60 * 1000L;
+
+    /**
+     * 过期清扫。三个 Map 原先只在「被正确消费」时删除条目 ——
+     * 而 /auth/sms-code 是公开端点：攻击者用海量不同手机号刷它，就永远走不到消费那一步，
+     * 条目只进不出 → 无上界内存增长。这里按 TTL 主动清。
+     *
+     * fixedDelay 60s：与最短的 SMS_RESEND_INTERVAL_MS 同量级，最坏多留一个周期的过期条目，无碍。
+     */
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 60_000L, initialDelay = 60_000L)
+    void sweepExpired() {
+        long now = System.currentTimeMillis();
+        int before = tickets.size() + smsCodes.size() + smsLastSentAt.size();
+        tickets.values().removeIf(t -> t.exp() < now);
+        smsCodes.values().removeIf(c -> c.exp() < now);
+        // 冷却记录只需保留一个 SMS_RESEND_INTERVAL_MS 窗口
+        smsLastSentAt.entrySet().removeIf(e -> now - e.getValue() >= SMS_RESEND_INTERVAL_MS);
+        int after = tickets.size() + smsCodes.size() + smsLastSentAt.size();
+        if (before != after) log.debug("清扫过期鉴权临时态: {} → {}", before, after);
+    }
     // dev 固定码：仅 dev profile 下发（smsCode 端点门控）；非 dev 且短信未启用 → 502 拒绝。
     private static final String DEV_SMS_CODE = "000000";
 
