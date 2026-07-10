@@ -49,7 +49,9 @@ import java.util.Map;
  *
  * 【资金双线绑定 BR-M9-11/12（可验证鉴权）】
  *   IN=收佣（平台↔物业）：仅 PLATFORM 生成/撤销/完成；PROVIDER 访问 IN→403 BIZ_WRONG_SETTLE_SIDE。
- *   OUT=付佣（平台↔服务商）：仅 PROVIDER 且 batch.provider_id==orgId 生成/撤回；PROPERTY 访问 OUT→403。
+ *   OUT=付佣（平台↔服务商）：**双线均仅 PLATFORM 生成/发送/撤回**（2026-07 统一支付逻辑——
+ *     平台选择批次案件明细形成付款单、平台支付后标记完成；服务商只读可见本商单据与结算标记）。
+ *     OUT 单归属从明细 provider_id_at_repay 快照推导且须一致（一张付款单只付一个服务商）；PROPERTY 访问 OUT→403。
  *   读端点双线裁剪：IN→PLATFORM + 物业(batch→project.org_id==orgId) 可见；OUT→PLATFORM + 本商可见。
  *   generated_by 由服务端从 SubjectContext 派生（IN=当前平台账号 / OUT=当前服务商账号），绝不接受前端 body。
  *   complete x-data-scope=platform：仅平台可完成（收/付双线均由平台落地支付动作）。
@@ -109,8 +111,8 @@ public class PaymentRequestM9Controller {
         // 事务内逐笔 FOR UPDATE 行锁校验未结（BR-M9-12a 手动组单）。
         // BLOCKER-2·OUT 付佣按到账归属快照：OUT 线要求所选 line 全部属本商快照(provider_id_at_repay==orgId)，
         //   与已修的 Recon OUT 汇总口径一致（不按 batch.provider_id——单案再派后到账归属不漂移）。IN 线不受此约束。
-        Long providerSnapshot = SIDE_OUT.equals(side) ? orgIdLong(s) : null;
-        List<LineRow> lines = lockAndValidateLines(lineIds, batchId, providerSnapshot); // 不存在→404/已占→409/越权(批次/快照不符)→403
+        // OUT 归属由明细快照推导(平台代所有服务商组单,不能再拿生成者 org 当归属)
+        List<LineRow> lines = lockAndValidateLines(lineIds, batchId, SIDE_OUT.equals(side)); // 不存在→404/已占→409/归属不一致→403
 
         // HIGH-2·SE 写端范围复核：受限 SE 不得创建范围外单（锁定 selected lines 后做 count-equality，
         //   所选 lines 须全部落 SE data_range 内，否则 403）。SA 放行；非 SE 平台/物业/服务商既有口径不动。
@@ -358,53 +360,25 @@ public class PaymentRequestM9Controller {
 
     /**
      * 生成方线别校验（create 用；send/revoke 走 assertOperatorSide）。
-     * IN 须平台。OUT（BLOCKER-2）：只校验主体 orgType=PROVIDER——归属完全交给逐 line 的
-     *   provider_id_at_repay 快照校验（lockAndValidateLines 已做），不再用 batch.provider_id 预门，
-     *   否则单案再派后 provider_id_at_repay 属新服务商但 batch.provider_id 仍旧 → 新服务商建不了单。
+     * 2026-07 统一支付逻辑：**双线均仅平台生成**——收佣=平台发起、物业确认、平台标记；
+     * 付佣=平台选批次案件明细形成付款单、平台支付后标记完成。服务商对支付申请单只读
+     * （可见性走 listPaymentRequests 的 side 规则，未收窄）。
+     * OUT 归属不再取生成者 org（生成者是平台），改由 lockAndValidateLines 从所选明细的
+     * provider_id_at_repay 快照推导并强制一致——一张付款单只付一个服务商。
      */
     private void assertGeneratorSide(CurrentSubject s, String side, BatchRow batch) {
-        if (SIDE_IN.equals(side)) {
-            if (!s.isPlatform()) {
-                throw new ApiException(BizError.BIZ_WRONG_SETTLE_SIDE, "收佣线(IN)仅平台可生成/操作");
-            }
-        } else { // OUT
-            if (!"PROVIDER".equals(s.orgType()) || orgIdLong(s) == null) {
-                throw new ApiException(BizError.BIZ_WRONG_SETTLE_SIDE, "付佣线(OUT)仅承接服务商可生成/操作");
-            }
+        if (!s.isPlatform()) {
+            throw new ApiException(BizError.BIZ_WRONG_SETTLE_SIDE,
+                    SIDE_IN.equals(side) ? "收佣线(IN)仅平台可生成/操作" : "付佣线(OUT)仅平台可生成/操作(2026-07 统一支付逻辑·服务商只读)");
         }
     }
 
     /**
-     * 既有单的写操作方校验（send/revoke）。IN：仅平台（同 generatorSide）。
-     * OUT（BLOCKER-2·到账归属快照）：须 PROVIDER 且该单含本商快照(provider_id_at_repay==orgId)绑定明细，
-     *   不再按 batch.provider_id——单案再派后到账归属不漂移。错线/越权→403。
+     * 既有单的写操作方校验（send/revoke）。2026-07 统一支付逻辑：双线均仅平台
+     * （撤回方==生成方==平台；服务商对支付申请单只读）。scope 由拦截器与 side 可见性另行把关。
      */
     private void assertOperatorSide(CurrentSubject s, PrRow pr, BatchRow batch) {
-        if (SIDE_IN.equals(pr.side)) {
-            assertGeneratorSide(s, pr.side, batch);
-            return;
-        }
-        // OUT
-        Long orgId = orgIdLong(s);
-        if (!"PROVIDER".equals(s.orgType()) || orgId == null) {
-            throw new ApiException(BizError.BIZ_WRONG_SETTLE_SIDE, "付佣线(OUT)仅承接服务商可操作");
-        }
-        // A1·count-equality 加固（抗历史脏数据·混合 provider 的 OUT 单）：旧实现 EXISTS-any（count>0）——
-        //   只要任一绑定 line 属本商即放行 send/revoke，混合 provider 的脏 OUT 单会被本商越权操作。
-        //   改为「整单在范围内」：该单**全部**绑定 lines 的 provider_id_at_repay 均==本商，且至少一条绑定 line
-        //   （越本商绑定数  owned!=total ⇒ 403）。与读侧 appendOrgScope OUT 分支同口径。
-        Long total = jdbc.queryForObject(
-                "SELECT count(*) FROM repay_line rl WHERE rl.payment_request_id = ?",
-                Long.class, pr.id);
-        Long owned = jdbc.queryForObject(
-                "SELECT count(*) FROM repay_line rl"
-                        + " WHERE rl.payment_request_id = ? AND rl.provider_id_at_repay = ?",
-                Long.class, pr.id, orgId);
-        long totalN = total == null ? 0L : total;
-        long ownedN = owned == null ? 0L : owned;
-        if (ownedN == 0 || ownedN != totalN) {
-            throw new ApiException(BizError.PERM_403, "付佣单到账归属非本服务商（含他商/越范围明细），无权操作");
-        }
+        assertGeneratorSide(s, pr.side, batch);
     }
 
     /** 读端点：主体线别可见性（与生成方区分——读侧 IN 物业可见、OUT 服务商可见）。跨线主体→403。 */
@@ -663,8 +637,9 @@ public class PaymentRequestM9Controller {
      *  (c) OUT 线（providerSnapshot 非空）须 provider_id_at_repay==本商快照（BLOCKER-2·到账归属）。
      * 不存在→404；批次/快照不符（越权占用别批/别商明细）→403；已占（结算/已纳入其他单/已冲正）→409 BIZ_LINE_LOCKED(用 STATE_409 承载)。
      */
-    private List<LineRow> lockAndValidateLines(List<Long> lineIds, long batchId, Long providerSnapshot) {
+    private List<LineRow> lockAndValidateLines(List<Long> lineIds, long batchId, boolean sideOut) {
         List<LineRow> out = new ArrayList<>();
+        Long uniformProvider = null;   // OUT：所有明细的到账归属须非空且一致
         for (Long lineId : lineIds) {
             RepayLineLock rl;
             try {
@@ -686,10 +661,16 @@ public class PaymentRequestM9Controller {
             if (rl.batchId != batchId) {
                 throw new ApiException(BizError.PERM_403, "明细不属于该批次: " + lineId);
             }
-            // OUT 付佣按到账归属快照：所选 line 须全部属本商（provider_id_at_repay==orgId）。
-            if (providerSnapshot != null
-                    && (rl.providerIdAtRepay == null || !rl.providerIdAtRepay.equals(providerSnapshot))) {
-                throw new ApiException(BizError.PERM_403, "明细到账归属非本服务商，不可组单: " + lineId);
+            // OUT 付佣按到账归属快照：所选 lines 须全部非空且**同一服务商**（一张付款单只付一家；
+            // 单案再派后 provider_id_at_repay 已属新服务商，混选两家会在这里被拒）。
+            if (sideOut) {
+                if (rl.providerIdAtRepay == null) {
+                    throw new ApiException(BizError.PERM_403, "明细无到账归属快照，不可组付佣单: " + lineId);
+                }
+                if (uniformProvider == null) uniformProvider = rl.providerIdAtRepay;
+                else if (!uniformProvider.equals(rl.providerIdAtRepay)) {
+                    throw new ApiException(BizError.PERM_403, "所选明细分属不同服务商，一张付款单只付一家: " + lineId);
+                }
             }
             if (rl.reversed) {
                 throw new ApiException(BizError.STATE_409, "明细已冲正不可组单: " + lineId);

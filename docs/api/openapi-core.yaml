@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 有证慧催 · API 契约（全模块·已冻结）
-  version: 1.8.0   # v1.8.0(additive·VL 团队即时看板 US-M10-03): CollectorCapacity +todayActions/todayRepayCents(工作台看板与指派弹窗共用同端点) | v1.7.0(additive·公海可见性收敛 BR-M3-29): listSea/listSeaEvents 补 x-permission=sea.view(全契约最后两个无权限点业务读端点;PL/PC 无此点→403·公海概念消失);平台方对 pool=provider 改返回空集(不看服务商公海明细,明细归 VL/CO;平台靠 T1/T2 预警与聚合) | v1.6.0(additive·App 多角色): listCases +holderId(私海过滤;催收员端「我持有的」——不传时 range scope 对 CO 返回本服务商全部案件,并非本人持有) | v1.5.0(additive·契约外端点回写): +录音回听 audio(V921)/佣金三端点 comm-status·comm-in-rate·commission-rates(V922)/附件四端点 attachments·upload-sessions(V923)/存证证书 certificate;rebindOrgOwner 200 补 ownerSetupToken;escalate 补 note;sms-code 补 502(未启用拒发·废 000000 后门) | v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
+  version: 1.9.0   # v1.9.0(语义收敛·统一支付逻辑): 付佣线(OUT)生成/发送/撤回改为仅平台(服务商对支付申请单只读,批次结算标记照常可见;OUT 归属由明细 provider_id_at_repay 快照推导且须一致);佣金线(服务商→催收员 co-pay-docs)不变 | v1.8.0(additive·VL 团队即时看板 US-M10-03): CollectorCapacity +todayActions/todayRepayCents(工作台看板与指派弹窗共用同端点) | v1.7.0(additive·公海可见性收敛 BR-M3-29): listSea/listSeaEvents 补 x-permission=sea.view(全契约最后两个无权限点业务读端点;PL/PC 无此点→403·公海概念消失);平台方对 pool=provider 改返回空集(不看服务商公海明细,明细归 VL/CO;平台靠 T1/T2 预警与聚合) | v1.6.0(additive·App 多角色): listCases +holderId(私海过滤;催收员端「我持有的」——不传时 range scope 对 CO 返回本服务商全部案件,并非本人持有) | v1.5.0(additive·契约外端点回写): +录音回听 audio(V921)/佣金三端点 comm-status·comm-in-rate·commission-rates(V922)/附件四端点 attachments·upload-sessions(V923)/存证证书 certificate;rebindOrgOwner 200 补 ownerSetupToken;escalate 补 note;sms-code 补 502(未启用拒发·废 000000 后门) | v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
   contact: { name: 契约 Owner（架构师）, email: api-owner@youzheng.example }
   description: |
     从高保真原型 + PRD(BR/US) + 报告14口径抽取的全模块契约（单一事实源 SSOT）。**v1.0 已冻结（2026-06-24）**：经 codex×2 + 人工×2 共四轮独立审计、openapi-generator Spring 桩 mvn compile、Flyway 真库迁移三重验证，0 阻断/0 高。破坏性变更须升 major + 双 approve。
@@ -1292,10 +1292,13 @@ paths:
       tags: [settlement]
       summary: 生成支付申请单(收款方勾选案件回款明细组单 BR-M9-12a/b)
       description: |
-        **线别—生成方绑定(可验证鉴权)**：body.side=IN(收佣) 仅**平台**可生成、side=OUT(付佣) 仅**服务商**可生成；
+        **线别—生成方绑定(可验证鉴权·2026-07 统一支付逻辑)**：IN(收佣)与 OUT(付佣) 均仅**平台**可生成——
+        收佣线=平台发起、物业确认支付、平台标记完成；付佣线=平台选择批次案件明细形成付款单、平台支付后标记完成，
+        **服务商不再生成支付申请单**，只读可见本商单据与批次内哪些明细已结算(settled)。
+        OUT 单的服务商归属从**明细快照推导**：所选 lines 的 provider_id_at_repay 须全部非空且一致(一张付款单只付一个服务商)；
         `generatedBy` 由**服务端从当前主体派生**(不接受前端传)。错线访问 → **403 BIZ_WRONG_SETTLE_SIDE**。
       x-permission: payreq.create
-      x-settlement-side-rule: 'IN→platform only; OUT→provider(own-org) only; generatedBy server-derived'
+      x-settlement-side-rule: 'IN→platform only; OUT→platform only(2026-07 统一·provider 只读·归属由 lines 快照推导); generatedBy server-derived'
       x-data-scope: own-org
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentRequestInput' } } } }
@@ -1338,9 +1341,9 @@ paths:
       operationId: revokePaymentRequest
       tags: [settlement]
       summary: 撤销(收佣线·平台)/撤回(付佣线·服务商)支付申请单——仅 PENDING 可做→VOIDED、明细释放重组 BR-M9-12d
-      description: '仅本单生成方可撤：IN→平台、OUT→服务商(本商)；错线/越权 → 403。已 PAID → 409。'
+      description: '仅本单生成方可撤：双线均平台(2026-07 统一支付逻辑·服务商对支付申请单只读)；错线/越权 → 403。已 PAID → 409。'
       x-permission: payreq.create
-      x-settlement-side-rule: 'revoker == generator: IN→platform, OUT→provider(own-org)'
+      x-settlement-side-rule: 'revoker == generator: IN→platform, OUT→platform(2026-07 统一)'
       x-data-scope: own-org
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RevokePayReqInput' } } } }
@@ -2218,7 +2221,7 @@ components:
     ReduceStateEnum: { type: string, enum: [EFFECTIVE, OFFLINE_TRACE] }
     DispatchModeEnum: { type: string, enum: [WHOLE, SPLIT] }
     ChannelEnum: { type: string, enum: [WECHAT_QR, BANK_TRANSFER, CASH] }
-    ReconSideEnum: { type: string, enum: [IN, OUT], description: 'IN=收佣(平台生成) OUT=付佣(服务商生成)' }
+    ReconSideEnum: { type: string, enum: [IN, OUT], description: 'IN=收佣(平台生成·物业确认·平台标记) OUT=付佣(平台生成·平台支付·平台标记；服务商只读 2026-07 统一)' }
     PaymentRequestStatusEnum: { type: string, enum: [PENDING, PAID, VOIDED], description: 'PENDING待付可撤/PAID完成锁定/VOIDED作废明细释放' }
     CoPayDocStatusEnum: { type: string, enum: [PENDING_PAY, SETTLED] }
     PayLinkStatusEnum: { type: string, enum: [ACTIVE, EXPIRED] }

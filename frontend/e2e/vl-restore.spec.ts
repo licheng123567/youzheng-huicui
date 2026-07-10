@@ -28,11 +28,21 @@ test.describe('服务商负责人 UI 还原', () => {
     await loginRole(page, 'VL')
     await page.getByRole('menuitem', { name: '收佣对账' }).click()
     await expect(page).toHaveURL(/\/settlement-out/)
+    // BR-M9-12e 统一支付逻辑：支付申请单由**平台**生成,VL 只读——生成入口对 VL 不渲染
+    await expect(page.getByRole('button', { name: /生成支付申请单/ })).toHaveCount(0)
+    await expect(page.getByText('支付申请单由平台生成')).toBeVisible()
     // 对账汇总行的两个下钻按钮——此前是 () => {} 空函数
     await page.locator('tbody tr').first().getByRole('button', { name: '回款明细' }).click()
     await expect(page.getByText('缴款日期').first()).toBeVisible()
     await page.keyboard.press('Escape')
     await page.locator('tbody tr').first().getByRole('button', { name: '支付申请单' }).click()
     await expect(page.getByText(/单号|暂无支付申请单/).first()).toBeVisible()
+  })
+
+  test('对照：平台(SA)在付佣线有「生成支付申请单」入口（BR-M9-12e 平台组单）', async ({ page }) => {
+    await loginRole(page, 'SA')
+    await page.goto('/settlement-out')
+    await expect(page.getByText('对账汇总')).toBeVisible()
+    await expect(page.getByRole('button', { name: /生成支付申请单/ })).toBeVisible()
   })
 })
