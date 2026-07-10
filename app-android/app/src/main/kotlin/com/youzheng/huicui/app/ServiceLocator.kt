@@ -18,6 +18,12 @@ import com.youzheng.huicui.app.data.case.NotificationRepository
 import com.youzheng.huicui.app.data.case.SeaRepository
 import com.youzheng.huicui.app.data.case.WorkbenchRepository
 import com.youzheng.huicui.app.api.apis.CollectionApi
+import com.youzheng.huicui.app.api.apis.EvidenceApi
+import com.youzheng.huicui.app.data.delivery.DeliveryApiPort
+import com.youzheng.huicui.app.data.delivery.DeliverySubmitter
+import com.youzheng.huicui.app.data.delivery.DeliveryUploadApi
+import com.youzheng.huicui.app.data.delivery.PhotoCompressor
+import com.youzheng.huicui.app.data.delivery.RetrofitDeliveryApiPort
 import com.youzheng.huicui.app.data.db.HuicuiDb
 import com.youzheng.huicui.app.data.db.MIGRATION_1_2
 import com.youzheng.huicui.app.data.net.RecordingUploadApi
@@ -68,6 +74,10 @@ object ServiceLocator {
         private set
     lateinit var settings: AppSettings
         private set
+    lateinit var deliverySubmitter: DeliverySubmitter
+        private set
+    lateinit var photoCompressor: PhotoCompressor
+        private set
 
     val isInitialized: Boolean get() = ::recordingRepository.isInitialized
 
@@ -116,6 +126,14 @@ object ServiceLocator {
             collectionApi = retrofit.create(CollectionApi::class.java),
             store = LocalRecordingStore(app),
         )
+
+        val deliveryPort: DeliveryApiPort = RetrofitDeliveryApiPort(
+            upload = retrofit.create(DeliveryUploadApi::class.java),
+            collection = retrofit.create(CollectionApi::class.java),
+            evidence = retrofit.create(EvidenceApi::class.java),
+        )
+        deliverySubmitter = DeliverySubmitter(deliveryPort)
+        photoCompressor = PhotoCompressor(app)
 
         // 兜底：FileObserver 被 ROM 杀掉、上传一直失败时，靠周期任务把队列推完
         UploadScheduler.schedulePeriodic(app)
