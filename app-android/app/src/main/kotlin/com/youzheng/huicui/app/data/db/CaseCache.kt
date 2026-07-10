@@ -59,7 +59,20 @@ interface CaseDao {
     }
 }
 
-@Database(entities = [CaseEntity::class], version = 1, exportSchema = false)
+/**
+ * v2：加入通话会话与上传队列。
+ *
+ * 注意 `case` 表是**可再生的缓存**，丢了重拉即可；但 `call_session` / `upload_item` **不是**——
+ * 里面是还没传上去的录音。所以数据库整体不能再用「毁灭式迁移」了，
+ * 见 `ServiceLocator` 里的 migration 说明。
+ */
+@Database(
+    entities = [CaseEntity::class, CallSessionEntity::class, UploadItemEntity::class],
+    version = 2,
+    exportSchema = false,
+)
 abstract class HuicuiDb : RoomDatabase() {
     abstract fun caseDao(): CaseDao
+    abstract fun callSessionDao(): CallSessionDao
+    abstract fun uploadDao(): UploadDao
 }

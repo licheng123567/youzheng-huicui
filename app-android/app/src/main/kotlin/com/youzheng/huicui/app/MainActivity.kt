@@ -20,6 +20,7 @@ import com.youzheng.huicui.app.ui.login.LoginScreen
 import com.youzheng.huicui.app.ui.login.LoginStep
 import com.youzheng.huicui.app.ui.login.LoginViewModel
 import com.youzheng.huicui.app.ui.main.MainScreen
+import com.youzheng.huicui.app.ui.onboarding.OnboardingScreen
 import com.youzheng.huicui.app.ui.theme.HuicuiTheme
 import kotlinx.coroutines.launch
 
@@ -43,6 +44,7 @@ private fun AppRoot() {
     val scope = rememberCoroutineScope()
 
     var forcedChangePwd by remember { mutableStateOf(false) }
+    var onboardingDone by remember { mutableStateOf(ServiceLocator.settings.onboardingDone) }
 
     fun logout() {
         scope.launch {
@@ -82,6 +84,14 @@ private fun AppRoot() {
                 loading = state.loading,
                 onPick = { accountId -> vm.chooseAccount(step.loginTicket, accountId) },
                 onBack = vm::backToInput,
+            )
+
+        // 首登引导：录音自动回传是这个 App 的立身之本，进主界面前先把它设好。
+        // 可跳过 —— 跳过后作业功能照常，但录音不会自动回传。
+        step is LoginStep.Done && !onboardingDone ->
+            OnboardingScreen(
+                onDone = { onboardingDone = true },
+                onSkip = { onboardingDone = true },
             )
 
         step is LoginStep.Done -> MainScreen(onLogout = ::logout)
