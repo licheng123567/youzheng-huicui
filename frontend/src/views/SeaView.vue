@@ -6,13 +6,16 @@ import { useAuth } from '../stores/auth'
 import DsDrawer from '../components/DsDrawer.vue'
 
 // M3 公海：GET /sea(SeaCase 含竞争态/来源徽标/正在查看N人)。动作按 /me 权限点门控(FE authz)。
+// 池分段按**侧别**收（BR-M3-29）：平台侧(SA/SE)=平台公海+开放池——服务商公海明细是服务商内务，
+// 平台不看（后端对平台的 pool=provider 也已改为空集）；服务商侧(VL/CO)=本商公海+开放池——
+// 平台公海对他们从来是空集，留着分段只是暴露一个永远为空的概念。物业(PL/PC)无 sea.view，进不了本页。
 const auth = useAuth()
-const isCO = computed(() => auth.me?.role === 'CO')
+const isPlatformSide = computed(() => auth.me?.role === 'SA' || auth.me?.role === 'SE')
 const items = ref<any[]>([])
 const total = ref(0)
 const loading = ref(false)
 const acting = ref('')
-const pool = ref<'platform' | 'provider' | 'open'>('provider') // /sea 必填池筛选
+const pool = ref<'platform' | 'provider' | 'open'>('provider') // /sea 必填池筛选；平台侧 onMounted 落到 platform
 const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
 const poolName = (p: string) => ({ PLATFORM_SEA: '平台公海', PROVIDER_SEA: '服务商公海', OPEN_POOL: '开放抢单池', PRIVATE: '私海' } as any)[p] ?? p
 // T2 倒计时（基于 t2DeadlineAt）：剩余天/时；<24h 标红(BR-M3-13a 预警提前量)
@@ -141,7 +144,12 @@ async function loadEvents() {
   const { data } = await api.GET('/sea/events', { params: { query: { page: 1, size: 15 } } as any })
   events.value = (data as any)?.items ?? []
 }
-onMounted(() => { load(); loadEvents() })
+onMounted(() => {
+  // 路由守卫已按角色放行到这里，auth.me 必已就位。平台侧默认落平台公海——
+  // 它进来要干的活(再派/开放抢单)都在平台公海行上,而 provider 池对平台已是空集。
+  if (isPlatformSide.value) pool.value = 'platform'
+  load(); loadEvents()
+})
 
 // ===== 纯展示辅助（不改数据流）=====
 // 竞争态 → ds-admin .tag 配色 + 文案
@@ -180,12 +188,12 @@ const evTag = (ev: string) => EV_TAG[ev] ?? 'inf'
       <div class="ops"><span class="note" style="margin:0">GET /sea · 共 {{ total }} · 动作按 /me 权限门控</span></div>
     </div>
 
-    <!-- 池筛选分段（/sea 必填 pool · CO 仅见服务商公海+开放抢单池） -->
+    <!-- 池筛选分段（/sea 必填 pool · 平台侧=平台公海+开放池 / 服务商侧=本商公海+开放池 BR-M3-29） -->
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
       <span class="segctrl">
-        <span :class="{ on: pool === 'provider' }" @click="pool = 'provider'; load()">服务商公海</span>
+        <span v-if="isPlatformSide" :class="{ on: pool === 'platform' }" @click="pool = 'platform'; load()">平台公海</span>
+        <span v-if="!isPlatformSide" :class="{ on: pool === 'provider' }" @click="pool = 'provider'; load()">服务商公海</span>
         <span :class="{ on: pool === 'open' }" @click="pool = 'open'; load()">开放抢单池</span>
-        <span v-if="!isCO" :class="{ on: pool === 'platform' }" @click="pool = 'platform'; load()">平台公海</span>
       </span>
     </div>
 

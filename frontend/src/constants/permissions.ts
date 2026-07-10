@@ -17,6 +17,7 @@ export const PERM_LABEL: Record<string, string> = {
   'case.assign': '案件分配',
   'case.accept': '案件承接',
   'case.claim': '案件抢单',
+  'sea.view': '公海查看',
   'case.open': '开放抢单',
   'case.release': '释放回公海',
   'case.return': '退回平台',
