@@ -44,7 +44,7 @@ public class NotificationController {
             (rs, i) -> new NotificationDto(String.valueOf(rs.getLong("id")), rs.getString("type"),
                 rs.getString("title"), rs.getString("body"), rs.getString("ref_type"),
                 rs.getObject("ref_id") == null ? null : String.valueOf(rs.getLong("ref_id")),
-                rs.getBoolean("read"), String.valueOf(rs.getObject("created_at"))),
+                rs.getBoolean("read"), com.youzheng.huicui.common.Timestamps.iso(rs, "created_at")),
             me, size, offset);
         return Map.of("items", items, "meta", meta(page, size, total == null ? 0 : total));
     }

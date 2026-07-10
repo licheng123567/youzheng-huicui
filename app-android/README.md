@@ -1,7 +1,9 @@
-# 有证慧催 · Android App（M-A1 骨架）
+# 有证慧催 · Android App（M-A1）
 
-催收员端。**本 PR（PR-A1）只做：工程骨架 + 契约客户端 + 登录三态。**
-拨号跳转、读系统录音目录、录音自动上传属于 **M-A2**，本仓库此刻**没有**这些代码，别到处找。
+催收员端。当前进度：**M-A1 完成**（骨架 + 契约客户端 + 登录三态 + 工作台/案件/公海/消息四屏 + 离线读）。
+
+**尚未实现（M-A2）**：读系统录音目录、录音自动上传。案件详情里的「拨号」只是跳转到系统拨号盘
+（`ACTION_DIAL`），**通话结束后不会有任何录音被采集**。别把它当成录音链路已经通了。
 
 ---
 
@@ -61,7 +63,39 @@ e: .../apis/CollectionApi.kt:529:203 Unresolved reference 'Source'.
 
 ---
 
-## 二、工程结构
+## 二、M-A2（PR-A2）新增：四屏 + 离线读
+
+- **工作台**：`GET /workbench` 的 KPI + 待办；带 `filterKey` 的 KPI 可点击过滤待办（契约定义的交互）。
+- **案件**：两个 Tab。「我的案件」`GET /cases`，**可离线读**；「公海」`GET /sea?pool=provider`，可抢单。
+- **案件详情**：只读 + 拨号。跟进/承诺/缴费链接/释放属于后续，**不放灰按钮冒充**。
+- **消息**：`GET /notifications`，点开即已读，未读数画在底部 Tab 角标上。
+
+### 实测澄清的三条语义（勿凭直觉改）
+
+| 以为 | 实际 |
+|---|---|
+| `Case.redacted` = 「你不是持有人」 | = **「案件已关闭」**（SETTLED/WITHDRAWN）。未持有的公海案件 `redacted=false`，但 `contacts` 是空数组 |
+| 能否拨号看 `holderId` | 看 `availableActions` 是否含 `call`（实测取值 follow/promise/payLink/call/release/ticket/claim） |
+| 公海脱敏要客户端处理 | 后端已经把 `ownerName` 换成 `***` 并给 `contactMasked=true`；`Case` 里**根本没有电话字段** |
+
+### 离线缓存的边界
+
+Room 只缓存**列表级**字段（户号/业主/房号/金额/状态）。联系人电话、时间线、话术**不入库**——
+它们是敏感数据，且离线也打不了电话。详情页断网时退回展示缓存的基本信息，并明说「离线」。
+
+「网络失败」只认 `IOException`。**HTTP 4xx/5xx 不读缓存**：服务端明确说了「你没权限」，
+再拿旧数据糊弄用户，等于把权限收回这件事悄悄延迟了。
+
+退出登录会清空缓存 —— 一号多账号的手机上，上一个账号的案件不能留给下一个人看。
+
+### 不引 Hilt
+
+M-A2 因 Room 引入了 KSP，但对象图仍只有十来个节点、零多绑定场景，`ServiceLocator` 够用。
+Hilt 换来的只是更多构建期活动件。
+
+---
+
+## 三、工程结构
 
 ```
 app-android/
@@ -80,7 +114,7 @@ app-android/
 
 ---
 
-## 三、本机联调
+## 四、本机联调
 
 ```bash
 # 1) 后端（dev profile，端口 9091，绑 0.0.0.0，真机可直连）
@@ -113,15 +147,19 @@ cd app-android && ./gradlew :app:installDebug
 
 ---
 
-## 四、验证边界（诚实标注）
+## 五、验证边界（诚实标注）
 
 **CI / 本机可机器证明：**
 - `:api-client:assemble` —— 契约能生成 Kotlin 客户端并编译（**实测通过**）。
-- `:app:testDebugUnitTest` —— 登录三态 + 401/403/502/429 + 畸形响应，14 个纯 JVM 用例（**实测 14 passed / 0 failed**）。
-- `:app:lintDebug`、`:app:assembleDebug` —— 产出可装的 debug APK（**实测通过**）。
-- 真后端报文核对：四种响应形状与 `LoginResponseMapper` 的期望逐一对上（**已用 curl 实测**）。
+- `:app:testDebugUnitTest` —— **35 个纯 JVM 用例，0 失败**：
+  登录三态 + 401/403/429/502 + 畸形响应（14）；公海脱敏 + 拨号/抢单权限门控 + 金额格式（13）；
+  离线读 + 403 不读缓存 + 搜索不污染缓存 + 登出清缓存（8）。
+- `:app:lintDebug`、`:app:assembleDebug`、`:app:assembleRelease`（R8）—— 均通过。
+- 真后端报文核对：登录四态、`/workbench`、`/cases`、`/sea`、`/notifications` 逐一用 curl 打过，
+  并用**生成的客户端真去反序列化**了 `NotificationPage` 与 `WorkbenchData`。
 
 **必须真机、CI 与我都做不了：**
 - 在真手机上走通三种登录（口令 / 短信 / 一号多账号选账号）。
+- 待办点进案件、公海抢单、断网后仍能读缓存案件 —— 逻辑有单测，**真机手感没有**。
 - 首登强制改密的完整体感（`must_change_password` 的种子账号需另行准备）。
-- 任何与拨号、录音、上传相关的行为 —— **本 PR 里根本没有这些代码**。
+- 录音相关的一切 —— **本仓库还没有这些代码**。

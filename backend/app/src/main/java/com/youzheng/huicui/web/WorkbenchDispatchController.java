@@ -2,6 +2,7 @@ package com.youzheng.huicui.web;
 
 import com.youzheng.huicui.error.ApiException;
 import com.youzheng.huicui.error.BizError;
+import com.youzheng.huicui.common.Timestamps;
 import com.youzheng.huicui.security.CurrentSubject;
 import com.youzheng.huicui.security.RequirePermission;
 import com.youzheng.huicui.security.SubjectContext;
@@ -53,7 +54,7 @@ public class WorkbenchDispatchController {
                         + " WHERE c.holder_id = ? AND pi.state = 'PENDING' AND pi.due_date <= now() + interval '7 days'"
                         + " ORDER BY pi.due_date", (rs, i) -> new Todo("PROMISE_DUE",
                             rs.getBoolean("hot") ? "HIGH" : "MED", String.valueOf(rs.getLong("case_id")),
-                            "承诺到期：" + rs.getString("owner_name"), String.valueOf(rs.getObject("due_date")),
+                            "承诺到期：" + rs.getString("owner_name"), Timestamps.isoFromDate(rs, "due_date"),
                             "promise_installment", String.valueOf(rs.getLong("inst_id"))), me));
                 // RELEASE_WARN：本人持有、临近自动释放（t_collector_deadline 2 日内）
                 todos.addAll(jdbc.query(
@@ -62,7 +63,7 @@ public class WorkbenchDispatchController {
                         + " AND t_collector_deadline <= now() + interval '2 days'"
                         + " ORDER BY t_collector_deadline", (rs, i) -> new Todo("RELEASE_WARN", "HIGH",
                             String.valueOf(rs.getLong("case_id")), "临近自动释放：" + rs.getString("owner_name"),
-                            String.valueOf(rs.getObject("t_collector_deadline")), "case", String.valueOf(rs.getLong("case_id"))), me));
+                            Timestamps.iso(rs, "t_collector_deadline"), "case", String.valueOf(rs.getLong("case_id"))), me));
                 // TICKET_RECEIPT：本人持有案件、已被协调员处理（回执待看）
                 todos.addAll(jdbc.query(
                     "SELECT t.id, t.case_id, c.owner_name FROM ticket t JOIN \"case\" c ON c.id = t.case_id"
@@ -110,7 +111,7 @@ public class WorkbenchDispatchController {
                         + " AND c.t2_deadline IS NOT NULL AND c.t2_deadline > now() AND c.t2_deadline < now() + (? || ' seconds')::interval"
                         + " ORDER BY c.t2_deadline", (rs, i) -> new Todo("T2_RETURN_WARN", "HIGH",
                             String.valueOf(rs.getLong("id")), "即将退回平台公海：" + rs.getString("owner_name"),
-                            String.valueOf(rs.getObject("t2_deadline")), "case", String.valueOf(rs.getLong("id"))), org, warn));
+                            Timestamps.iso(rs, "t2_deadline"), "case", String.valueOf(rs.getLong("id"))), org, warn));
             }
         } else if (s.isPlatform()) {
             // T1_DISPATCH_WARN：待派单(平台公海未派)超 CFG-T1 仍未派（BR-M3-01，向平台预警）
