@@ -25,7 +25,9 @@ const router = createRouter({
         { path: 'cases/:id/call/:callId', name: 'call-record', component: () => import('../views/CallRecordView.vue') },
         { path: 'batches/:id', name: 'batch-detail', component: () => import('../views/BatchDetailView.vue') },
         { path: 'settlement', name: 'settlement', component: () => import('../views/SettlementView.vue') },
-        { path: 'settlement-out', name: 'settlement-out', component: () => import('../views/SettlementOutView.vue') },
+        // 付佣对账与收佣对账是同一个组件：SettlementView 按角色/路由定线别(IN/OUT)并各自门控组单/撤回。
+        // 曾经指向 SettlementOutView 存根——「回款明细/支付申请单」按钮绑的是空函数,VL 点了毫无反应。
+        { path: 'settlement-out', name: 'settlement-out', component: () => import('../views/SettlementView.vue') },
         { path: 'co-commission', name: 'co-commission', component: () => import('../views/CoCommissionView.vue') },
         { path: 'recharge', name: 'recharge', component: () => import('../views/RechargeView.vue') },
         { path: 'sms', name: 'sms', component: () => import('../views/SmsView.vue') },

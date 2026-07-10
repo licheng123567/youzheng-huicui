@@ -34,7 +34,7 @@ async function load() {
   wb.value = data
 }
 function openTodo(t: any) { if (t.caseId) router.push(`/cases/${t.caseId}`) }
-onMounted(load)
+onMounted(() => { load(); loadVlTeam() })
 
 // ===== cockpit master-detail（选中案件→内嵌 CaseThreeColumn，对标原型 <case-three-col> 复用）=====
 // 选中态：本地 ref；与 KPI 筛选(filterKey)、tab 解耦。案件详情本身由 CaseThreeColumn 内部拉取，
@@ -264,6 +264,19 @@ const scopeLabel = computed(() => {
 })
 
 // PL 协调员督导概览（演示态静态数据，API 暂未提供）
+// ── VL 团队即时看板（US-M10-03·原型 lines 150-168）──
+// 数据源复用 GET /providers/{id}/collector-capacity（own-org·case.assign 门控，指派弹窗同款端点）：
+// v1.8.0 起该端点带 todayActions/todayRepayCents，工作台不必再立新端点。
+const vlTeam = ref<any[]>([])
+const vlHoldCap = ref(0)
+async function loadVlTeam() {
+  const orgId = auth.me?.org?.id
+  if (auth.me?.role !== 'VL' || !orgId) return
+  const { data } = await api.GET('/providers/{id}/collector-capacity', { params: { path: { id: String(orgId) } } } as any)
+  vlTeam.value = (data as any)?.items ?? []
+  vlHoldCap.value = (data as any)?.holdCap ?? 0
+}
+
 const superviseRows = computed(() => {
   if (me.value?.role !== 'PL') return []
   return [
@@ -548,6 +561,33 @@ const cockpitChips = computed<Array<ChipDef & { n: string | number }>>(() => {
           </div>
         </div>
       </div>
+
+      <!-- VL 团队即时看板（US-M10-03·原型 lines 150-168）：每个催收员的实时作业状态，仅 VL 工作台 -->
+      <template v-if="me.role === 'VL'">
+        <div class="card" style="margin-top:16px">
+          <div class="card-h">
+            <div class="t"><span class="bar"></span>团队即时看板（US-M10-03）</div>
+            <div class="ops"><button class="btn txt sm" @click="loadVlTeam">刷新</button></div>
+          </div>
+          <table>
+            <thead>
+              <tr><th>催收员</th><th style="width:110px">持有案件数</th><th style="width:100px">今日动作</th><th style="width:110px">容量余量</th><th style="width:120px">今日回款</th><th style="width:90px">状态</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="m in vlTeam" :key="m.collectorId">
+                <td>{{ m.name }}</td>
+                <td class="num">{{ m.holding }}</td>
+                <td class="num">{{ m.todayActions ?? 0 }}</td>
+                <td><span class="tag" :class="m.remaining <= 0 ? 'dan' : (m.remaining <= 5 ? 'war' : 'suc')">余{{ m.remaining }}件</span></td>
+                <td class="num">{{ m.todayRepayCents != null ? '¥' + (m.todayRepayCents / 100).toLocaleString('zh-CN') : '—' }}</td>
+                <td><span class="tag" :class="m.remaining <= 0 ? 'dan' : 'suc'">{{ m.remaining <= 0 ? '满员' : '在线' }}</span></td>
+              </tr>
+              <tr v-if="!vlTeam.length"><td colspan="6" style="text-align:center;color:var(--sec);padding:24px 0">本商暂无在职催收员</td></tr>
+            </tbody>
+          </table>
+          <div class="note">持有数=当前在催案件；今日动作=通话+标注等跟进动作；容量余量=可接收新案件数（上限 {{ vlHoldCap }}）；今日回款=其持有案件当日确认回款。</div>
+        </div>
+      </template>
 
       <!-- PL 协调员督导概览（原型 lines 171-187） -->
       <template v-if="me.role === 'PL' && superviseRows.length">

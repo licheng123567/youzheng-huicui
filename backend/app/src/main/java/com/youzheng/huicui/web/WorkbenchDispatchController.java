@@ -31,7 +31,8 @@ public class WorkbenchDispatchController {
     public record Todo(String category, String urgency, String caseId, String title, String deadline, String refType, String refId) {}
     public record WorkbenchData(String role, String layout, List<Kpi> kpis, List<Todo> todos) {}
     public record ProviderMetric(String providerId, String providerName, int activeCases, int collectorCount, double avgHolding, Double recentRepayRate) {}
-    public record CollectorCapacity(String collectorId, String name, int holding, int remaining, boolean recommended) {}
+    public record CollectorCapacity(String collectorId, String name, int holding, int remaining, boolean recommended,
+                                    long todayActions, long todayRepayCents) {}
 
     // ── GET /workbench ──────────────────────────────────────────────────────
     @GetMapping("/workbench")
@@ -185,14 +186,21 @@ public class WorkbenchDispatchController {
             if (myOrg == null || !myOrg.equals(org)) throw new ApiException(BizError.PERM_403, "仅可查看本服务商催收员余量");
         }
         int holdCap = holdCap();
+        // todayActions/todayRepay：VL 工作台「团队即时看板」(US-M10-03)复用本端点——
+        // 今日动作=当日 activity 条数(通话/标注/跟进等)；今日回款按 collector_id_at_repay 记账
+        // (回款归属回款时点的持有人，案件释放/改派后历史回款不漂移)。
         List<CollectorCapacity> raw = jdbc.query(
             "SELECT a.id, a.name,"
-                + " (SELECT count(*) FROM \"case\" c WHERE c.holder_id = a.id AND c.pool = 'PRIVATE' AND c.closed_at IS NULL) AS holding"
+                + " (SELECT count(*) FROM \"case\" c WHERE c.holder_id = a.id AND c.pool = 'PRIVATE' AND c.closed_at IS NULL) AS holding,"
+                + " (SELECT count(*) FROM activity t WHERE t.actor_id = a.id AND t.created_at >= date_trunc('day', now())) AS today_actions,"
+                + " (SELECT COALESCE(sum(rl.amount_cents), 0) FROM repay_line rl WHERE rl.collector_id_at_repay = a.id"
+                + "   AND rl.reversed = FALSE AND rl.paid_at >= CURRENT_DATE) AS today_repay"
                 + " FROM account a WHERE a.org_id = ? AND a.role_template = 'CO' AND a.status = 'ACTIVE' ORDER BY a.id",
             (rs, i) -> {
                 int holding = rs.getInt("holding");
                 return new CollectorCapacity(String.valueOf(rs.getLong("id")), rs.getString("name"),
-                        holding, Math.max(0, holdCap - holding), false);
+                        holding, Math.max(0, holdCap - holding), false,
+                        rs.getLong("today_actions"), rs.getLong("today_repay"));
             }, org);
         // 推荐：余量最大者（≥1 才推荐）
         int maxRemain = raw.stream().mapToInt(CollectorCapacity::remaining).max().orElse(0);
@@ -201,7 +209,8 @@ public class WorkbenchDispatchController {
         for (CollectorCapacity c : raw) {
             boolean rec = !picked && maxRemain > 0 && c.remaining() == maxRemain;
             if (rec) picked = true;
-            items.add(new CollectorCapacity(c.collectorId(), c.name(), c.holding(), c.remaining(), rec));
+            items.add(new CollectorCapacity(c.collectorId(), c.name(), c.holding(), c.remaining(), rec,
+                    c.todayActions(), c.todayRepayCents()));
         }
         return java.util.Map.of("holdCap", holdCap, "items", items);
     }

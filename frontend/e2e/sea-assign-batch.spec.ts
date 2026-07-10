@@ -32,12 +32,29 @@ async function discoverCollectorId(page: Page): Promise<string> {
 test.describe('US-M3-05 服务商批量分配(VL)', () => {
   test.beforeEach(async ({ page }) => {
     await loginRole(page, 'VL')
-    await page.getByRole('menuitem', { name: '服务商公海' }).click()
+    await page.getByRole('menuitem', { name: '案件公海' }).click()
     await expect(page).toHaveURL(/\/sea/)
     // 点池切换 radio 的可见 label span（el-radio 真 input 隐藏、点它被 __inner 拦截；
     // 且 "服务商公海" 文案也出现在表格"来源池"列 .el-tag，故限定在池分段控件 .segctrl 内）。
     await page.locator('.segctrl span', { hasText: '服务商公海' }).click()
     await expect(page.locator('table').first()).toBeVisible()
+
+    // 待接单/已接单分家(BR-M3-03a)后，服务商公海只剩**已承接(S2)**案件——
+    // 种子里平台派来的批次还停在待接单(S1)，先把它承接进来，批量分配才有料。
+    // 这也顺带把「待接单→接单→进服务商公海」的真实链路纳入 e2e。
+    if ((await page.locator('tbody tr input[type="checkbox"]').count()) < 2) {
+      const acceptTab = page.locator('.segctrl span', { hasText: '待接单' })
+      if (await acceptTab.count()) {
+        await acceptTab.click()
+        const acceptBtn = page.getByRole('button', { name: '接单（承接）' }).first()
+        if (await acceptBtn.count()) {
+          await acceptBtn.click()
+          await expect(page.getByText(/已承接 \d+ 件/)).toBeVisible()
+        }
+        await page.locator('.segctrl span', { hasText: '服务商公海' }).click()
+        await expect(page.locator('table').first()).toBeVisible()
+      }
+    }
   })
 
   test('多选批量分配给同一催收员', async ({ page }) => {

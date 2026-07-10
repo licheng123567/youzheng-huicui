@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
@@ -192,7 +193,9 @@ async function openCoDocDetail(row: any) {
   if (error) { ElMessage.error('佣金单详情加载失败（可能已删除）'); return }
   coDetail.value = data; codDlg.value = true
 }
-onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
+const route = useRoute()
+// /settlement-out 进来锁 OUT 线(SA/SE 两条菜单各进各线;VL 只有 OUT,PL/PC 只有 IN,与 sides 口径自洽)
+onMounted(() => { side.value = route.path.includes('settlement-out') ? 'OUT' : (sides.value[0] as any); load(); loadCoComm() })
 </script>
 
 <template>
@@ -210,7 +213,7 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
     <div class="toolbar">
       <span class="segctrl">
         <!-- 物业(PL/PC)视角 IN 线即付佣（物业付平台），对标原型 navLabel/§对账 relabel -->
-        <span v-for="s in sides" :key="s" :class="{ on: side === s }" @click="side = s; load()">{{ s==='IN'?(isReadonlyProperty?'付佣对账(IN)':'收佣线(IN)'):'付佣线(OUT)' }}</span>
+        <span v-for="s in sides" :key="s" :class="{ on: side === s }" @click="side = s; load()">{{ s==='IN'?(isReadonlyProperty?'付佣对账(IN)':'收佣线(IN)'):(isProvider?'收佣对账(OUT)':'付佣线(OUT)') }}</span>
       </span>
       <button v-if="canGenerate" class="btn sm" @click="openGenerate">勾选明细生成支付申请单</button>
     </div>

@@ -4093,7 +4093,7 @@ export interface components {
             avgHolding?: number;
             recentRepayRate?: components["schemas"]["Rate"];
         };
-        /** @description 催收员持仓余量(BR-M3-23·按余量推荐分配) */
+        /** @description 催收员持仓余量(BR-M3-23·按余量推荐分配)。v1.8.0 起兼任 VL 工作台「团队即时看板」(US-M10-03)数据源——同一批人、同一 own-org 裁剪，不另立端点 */
         CollectorCapacity: {
             collectorId: string;
             name: string;
@@ -4103,6 +4103,10 @@ export interface components {
             remaining: number;
             /** @description 余量最大者推荐 */
             recommended?: boolean;
+            /** @description 今日动作数=该催收员当日 activity 条数(通话/标注/跟进等,US-M10-03 团队即时看板) */
+            todayActions?: number;
+            /** @description 今日确认回款(其持有案件当日未冲正回款合计,US-M10-03) */
+            todayRepayCents?: components["schemas"]["Money"];
         };
         /** @description 经营报表(角色口径:物业本物业/服务商本商/平台全局;能力用量只量不金额) */
         ReportData: {

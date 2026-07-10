@@ -16,7 +16,7 @@ test.describe('BR-M3-29 公海可见性收敛', () => {
 
   test('VL 服务商侧:分段不含「平台公海」', async ({ page }) => {
     await loginRole(page, 'VL')
-    await page.getByRole('menuitem', { name: '服务商公海' }).click()
+    await page.getByRole('menuitem', { name: '案件公海' }).click()
     await expect(page).toHaveURL(/\/sea/)
     await expect(page.locator('.segctrl span', { hasText: '服务商公海' })).toHaveClass(/on/)
     await expect(page.locator('.segctrl span', { hasText: '平台公海' })).toHaveCount(0)
@@ -24,7 +24,7 @@ test.describe('BR-M3-29 公海可见性收敛', () => {
 
   test('CO 催收员:分段同服务商侧,不含「平台公海」', async ({ page }) => {
     await loginAs(page, 'jx_co1')
-    await page.getByRole('menuitem', { name: '服务商公海' }).click()
+    await page.getByRole('menuitem', { name: '案件公海' }).click()
     await expect(page.locator('.segctrl span', { hasText: '平台公海' })).toHaveCount(0)
   })
 
