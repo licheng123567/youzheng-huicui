@@ -26,6 +26,7 @@ import com.youzheng.huicui.app.data.db.UploadItemEntity
 import com.youzheng.huicui.app.recording.CallSession
 import com.youzheng.huicui.app.recording.PendingConfirmations
 import com.youzheng.huicui.app.recording.RecordingCandidate
+import com.youzheng.huicui.app.recording.RecordingWatchService
 import com.youzheng.huicui.app.recording.UploadScheduler
 import com.youzheng.huicui.app.recording.UploadStatus
 import kotlinx.coroutines.launch
@@ -61,7 +62,7 @@ fun UploadQueueScreen(modifier: Modifier = Modifier) {
                             candidate = candidate,
                             durationSec = null,
                             phone = session.number,
-                            source = "APP_AUTO",
+                            source = RecordingWatchService.SOURCE_APP_AUTO,
                         )
                         PendingConfirmations.remove(candidate.path)
                         UploadScheduler.enqueueNow(context)

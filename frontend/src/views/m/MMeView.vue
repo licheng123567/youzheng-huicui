@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAuth } from '../../stores/auth'
 import { api } from '../../api/client'
 import { roleName } from '../../constants/roles'
-import { APP_DOWNLOAD_URL } from '../../constants/app'
+import { APP_DOWNLOAD_URL, canUseApp } from '../../constants/app'
 
 // 移动「我的」:主体信息 + 我的结算(CO 自查 /me/settlement) + 账号与安全(改密 /me/password) + 退出。
 const auth = useAuth()
@@ -77,17 +77,17 @@ onMounted(async () => { if (auth.isAuthed && !me.value) await auth.fetchMe(); lo
 
     <!-- 催收员 App：移动网页端是「App 不可用时的救济路径」，
          用户已经在手机上了，这里给安装入口最顺手。非催收员看到的是转发提示。 -->
-    <div class="sec">催收员 App（Android）</div>
+    <div class="sec">外勤作业 App（Android）</div>
     <div class="mc">
       <div class="row" style="margin-bottom:8px">
-        <b v-if="me?.role === 'CO'">装 App 才能自动回传通话录音</b>
-        <b v-else>App 仅催收员可用</b>
+        <b v-if="canUseApp(me?.role)">装 App 才能自动回传通话录音</b>
+        <b v-else>App 仅催收员与物业协调员可用</b>
       </div>
-      <div class="mini" v-if="me?.role === 'CO'">
+      <div class="mini" v-if="canUseApp(me?.role)">
         当前网页版无法读取系统通话录音。装上 App 并走完首登引导，挂断后录音会自动匹配案件并上传。
       </div>
       <div class="mini" v-else>
-        你的账号登录 App 不会进入作业界面。把下面的链接发给手下的催收员。
+        你的账号登录 App 不会进入作业界面。把下面的链接发给手下的作业人员。
       </div>
       <button class="mbtn pri" style="margin-top:10px" @click="downloadApp">下载安装包</button>
       <button class="mbtn gho" style="margin-top:8px" @click="copyAppUrl">复制下载链接</button>

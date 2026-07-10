@@ -12,13 +12,19 @@ import retrofit2.Response
  *   ② 生成物的方法签名变了，只有这一个适配类需要改。
  */
 interface CaseApiPort {
-    suspend fun listCases(q: String?, page: Int, size: Int): Response<CasePage>
+    suspend fun listCases(
+        q: String?,
+        holderId: String?,
+        page: Int,
+        size: Int,
+    ): Response<CasePage>
+
     suspend fun getCase(id: String): Response<CaseDetail>
 }
 
 class RetrofitCaseApiPort(private val api: CasesApi) : CaseApiPort {
-    override suspend fun listCases(q: String?, page: Int, size: Int): Response<CasePage> =
-        api.listCases(q = q, page = page, size = size)
+    override suspend fun listCases(q: String?, holderId: String?, page: Int, size: Int): Response<CasePage> =
+        api.listCases(q = q, holderId = holderId, page = page, size = size)
 
     override suspend fun getCase(id: String): Response<CaseDetail> = api.getCase(id)
 }

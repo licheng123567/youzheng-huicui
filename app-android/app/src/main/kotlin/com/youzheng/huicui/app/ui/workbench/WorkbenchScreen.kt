@@ -30,7 +30,13 @@ import com.youzheng.huicui.app.ui.common.LoadStateBox
 import kotlinx.coroutines.launch
 
 /**
- * 催收员驾驶舱（`layout=cockpit`）。KPI 一栏、待办一列，待办点进案件。
+ * 工作台。`WorkbenchData.layout` 是契约定义的两种形态：
+ *   · `cockpit`   一线驾驶舱（催收员 CO / 物业协调员 PC）：KPI 一栏 + 待办一列，待办点进案件。
+ *   · `dashboard` 管理看板（PL/VL/SA/SE）：只有 KPI，没有待办队列。
+ *
+ * 入口门禁只放 CO/PC 进来，所以实际恒为 cockpit。但仍显式分支 ——
+ * 把管理者的看板硬套成驾驶舱、再渲染一个永远空的「待办」标题，是种沉默的谎言。
+ *
  * KPI 的 `filterKey` 非空时按该 category 过滤待办 —— 这是契约定义的交互，不是我们发明的。
  */
 @Composable
@@ -48,6 +54,7 @@ fun WorkbenchScreen(modifier: Modifier = Modifier, onOpenCase: (String) -> Unit)
     LaunchedEffect(Unit) { load() }
 
     LoadStateBox(state, modifier, onRetry = { scope.launch { load() } }) { data ->
+        val isCockpit = data.layout == WorkbenchData.Layout.cockpit
         val todos = data.todos.orEmpty().filter { filter == null || it.category.value == filter }
 
         LazyColumn(
@@ -72,6 +79,20 @@ fun WorkbenchScreen(modifier: Modifier = Modifier, onOpenCase: (String) -> Unit)
                     // 补齐末行，避免剩下的卡片被拉成整行宽（用 Spacer 而非空 Card，否则会画出一张空卡）
                     repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                 }
+            }
+
+            if (!isCockpit) {
+                // 管理看板：后端本就不给待办，别渲染一个永远空的队列
+                item {
+                    Text(
+                        "本角色没有待办队列，日常工作请在网页端进行。",
+                        modifier = Modifier.fillMaxWidth().padding(24.dp),
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                }
+                return@LazyColumn
             }
 
             item {

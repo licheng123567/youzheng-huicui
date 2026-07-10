@@ -27,6 +27,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.youzheng.huicui.app.data.auth.AccountChoice
+import com.youzheng.huicui.app.data.session.AppRoles
 
 @Composable
 fun LoginScreen(state: LoginUiState, vm: LoginViewModel) {
@@ -149,13 +150,8 @@ fun ChooseAccountScreen(
     }
 }
 
-/** 角色对外一律显示中文名（与 Web 端一致，不露 PC/CO/PL 裸码）。 */
-fun roleLabel(role: String): String = when (role) {
-    "SA" -> "平台超管"
-    "SE" -> "平台运营"
-    "PL" -> "物业负责人"
-    "PC" -> "物业协调员"
-    "VL" -> "服务商负责人"
-    "CO" -> "催收员"
-    else -> role
-}
+/**
+ * 角色对外一律显示中文名（与 Web 端一致，不露 PC/CO/PL 裸码）。
+ * 映射的单一真源在 [AppRoles.label]，这里只是个转发，避免两处漂移。
+ */
+fun roleLabel(role: String): String = AppRoles.label(role)
