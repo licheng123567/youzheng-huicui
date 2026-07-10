@@ -1,0 +1,4 @@
+# prod 启动硬护栏：必须抢在任何 bean 创建之前校验生产必填配置，
+# 否则 JwtService 构造器会先抛 JJWT WeakKeyException，掩盖掉可操作的错误信息。
+org.springframework.boot.env.EnvironmentPostProcessor=\
+com.youzheng.huicui.config.ProdEnvironmentGuard

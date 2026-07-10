@@ -26,6 +26,10 @@ frontend/playwright-report/
 
 test-results/
 
+# 生产密钥：只入库 deploy/.env.example，真值文件绝不入库
+deploy/.env
+deploy/backup/
+
 # Android App（app-android/）
 # 注意：gradle/wrapper/gradle-wrapper.jar 必须入库，CI 靠它跑；勿被 *.jar 之类的规则误伤。
 app-android/.gradle/

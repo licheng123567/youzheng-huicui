@@ -1,0 +1,60 @@
+# 有证慧催 · 生产/预发编排（单机 compose 形态）
+#
+#   cp deploy/.env.example deploy/.env   # 然后填真值，.env 不入库
+#   docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --build
+#
+# 注意：backend 不带任何默认凭据。少配一个环境变量它就拒绝启动（ProdGuard），
+# 这是刻意的——宁可起不来，也不要悄悄用 dev 口径跑生产。
+
+services:
+  db:
+    image: pgvector/pgvector:pg16       # pgvector：M5 话术库 RAG 的 embedding 列需要
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?必须设置}
+      POSTGRES_USER: ${POSTGRES_USER:?必须设置}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?必须设置}
+    volumes:
+      - huicui-pgdata:/var/lib/postgresql/data
+      - ./backup:/backup                # pg_dump 落盘处，见 deploy/backup.sh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # 不对宿主暴露端口：只允许 compose 内网访问。需要外部连库时用 SSH 隧道。
+
+  backend:
+    build:
+      context: ..                        # 构建上下文 = 仓库根
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy       # 等库真就绪，Flyway 才不会在启动竞态里失败
+    environment:
+      # ── 必填：缺一个就拒绝启动 ──
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      HUICUI_JWT_SECRET: ${HUICUI_JWT_SECRET:?必须设置且 ≥32 字节}
+      # ── 短信通道（启用时下列全部必填，且 PUBLIC_BASE 不能是 localhost）──
+      HUICUI_SMS_ENABLED: ${HUICUI_SMS_ENABLED:-false}
+      HUICUI_PUBLIC_BASE: ${HUICUI_PUBLIC_BASE:-http://localhost:5173}
+      HUICUI_SMS_SECRET_NAME: ${HUICUI_SMS_SECRET_NAME:-}
+      HUICUI_SMS_SECRET_KEY: ${HUICUI_SMS_SECRET_KEY:-}
+      HUICUI_SMS_BASE: ${HUICUI_SMS_BASE:-}
+      HUICUI_SMS_SIGN: ${HUICUI_SMS_SIGN:-【有证慧催】}
+      HUICUI_SMS_TPL_VERIFY: ${HUICUI_SMS_TPL_VERIFY:-}
+      HUICUI_SMS_TPL_PAYLINK: ${HUICUI_SMS_TPL_PAYLINK:-}
+      # ── 存证通道（启用时 appKey/secret 必填，且 URL 不能是 sandbox）──
+      HUICUI_EBQ_ENABLED: ${HUICUI_EBQ_ENABLED:-false}
+      HUICUI_EBQ_URL: ${HUICUI_EBQ_URL:-https://bs.sandbox.ebaoquan.org}
+      HUICUI_EBQ_APPKEY: ${HUICUI_EBQ_APPKEY:-}
+      HUICUI_EBQ_SECRET: ${HUICUI_EBQ_SECRET:-}
+    ports:
+      - "${BACKEND_PORT:-9091}:9091"
+    # SPRING_PROFILES_ACTIVE 不设 → 基础 yml 默认 prod（fail-closed）
+
+volumes:
+  huicui-pgdata:

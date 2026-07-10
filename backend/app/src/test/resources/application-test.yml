@@ -8,7 +8,8 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: false
-    locations: filesystem:../db/migration
+    # 迁移已归位 classpath（打进 jar）；测试不含 dev 种子 classpath:db/seed。
+    locations: classpath:db/migration
 
 huicui:
   jwt:

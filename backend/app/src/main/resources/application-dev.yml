@@ -1,17 +1,23 @@
 # 仅 dev profile 生效的配置（本地开发 / CI）
+# 由 spring-boot-maven-plugin 在 `mvn spring-boot:run` 时自动激活（见 pom.xml），
+# 或显式 SPRING_PROFILES_ACTIVE=dev。基础 yml 的默认 profile 已是 prod（fail-closed）。
 spring:
+  datasource:
+    # dev 默认值只在此处。本机 homebrew postgres 常占 5432 → 容器映射到 5455。
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5455/huicui}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:test}
   flyway:
-    # C-1：真迁移(V901-V916)在 classpath:db/migration；dev种子(V900/V910)移至 classpath:db/seed。
-    # filesystem:../db/migration 为外部共享迁移占位（目录不存在时 fail-on-missing-locations=false 忽略）。
-    locations: filesystem:../db/migration,classpath:db/migration,classpath:db/seed
-    fail-on-missing-locations: false
+    # 全部迁移已归位到 classpath（打进 jar）；dev 额外叠加 dev 种子 V900/V910。
+    locations: classpath:db/migration,classpath:db/seed
+    # dev 历史库里 V9xx 与 V1-V7 曾乱序应用过，且种子会改已应用脚本 → 放宽这两项，仅限 dev。
+    out-of-order: true
+    validate-on-migrate: false
 
 huicui:
   jwt:
     secret: "dev-only-secret-change-in-prod-至少32字节用于HS256签名0123456789"
   dev-password: "Admin@123"    # DevSeeder（@Profile("dev")）给种子账号设此口令的 BCrypt 哈希
-  auth:
-    dev-sms-code: "000000"     # dev 固定短信验证码；prod 此键不存在，sms-code 端点拒绝服务
   # 易保全 sandbox 联调：填入平台下发的测试 appKey/appKeySecret 并置 enabled=true 即可真调
   # （也可用环境变量 HUICUI_EBQ_ENABLED/HUICUI_EBQ_APPKEY/HUICUI_EBQ_SECRET 注入，避免入库）
   ebaoquan:
