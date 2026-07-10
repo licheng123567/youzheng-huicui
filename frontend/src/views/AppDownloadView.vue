@@ -1,25 +1,20 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import QRCode from 'qrcode'
 import { ElMessage } from 'element-plus'
-import DsDrawer from './DsDrawer.vue'
 import { useAuth } from '../stores/auth'
 import { APP_DOWNLOAD_URL, canUseApp } from '../constants/app'
 
-// 催收员 App 下载与使用说明。所有角色都能打开 ——
-// 但 App 只对催收员开放（BR-APP-01），管理角色打开它是为了**把链接发给手下的催收员**，
+// 催收员 App 下载与使用说明。菜单对所有角色开放 ——
+// 但 App 只对催收员开放（BR-APP-01），管理角色来这里是为了**把链接发给手下的催收员**，
 // 不是自己装。文案按角色分，避免让物业负责人装完发现进不去。
-const model = defineModel<boolean>({ required: true })
-
 const auth = useAuth()
 const qr = ref('')
 const isCollector = computed(() => canUseApp(auth.me?.role))
 
-watch(model, async (open) => {
-  if (open && !qr.value) {
-    qr.value = await QRCode.toDataURL(APP_DOWNLOAD_URL, { margin: 1, width: 180 })
-  }
-}, { immediate: true })
+onMounted(async () => {
+  qr.value = await QRCode.toDataURL(APP_DOWNLOAD_URL, { margin: 1, width: 200 })
+})
 
 function copyUrl() {
   navigator.clipboard.writeText(APP_DOWNLOAD_URL)
@@ -29,8 +24,10 @@ function copyUrl() {
 </script>
 
 <template>
-  <DsDrawer v-model="model" title="催收员 App（Android）" :width="520">
-    <div class="app-dl">
+  <div class="app-dl">
+    <div class="card">
+      <div class="t">催收员 App（Android）</div>
+
       <!-- 角色决定这一屏是「给你装的」还是「给你转发的」 -->
       <div v-if="isCollector" class="lead">
         用手机扫码安装，然后用你现在这个账号登录。
@@ -51,15 +48,19 @@ function copyUrl() {
           <div class="hint">手机需与本系统在同一网络才能打开这个地址。</div>
         </div>
       </div>
+    </div>
 
-      <h4>安装</h4>
+    <div class="card">
+      <div class="t">安装</div>
       <ol>
         <li>扫码或用手机浏览器打开上面的链接，下载 APK。</li>
         <li>系统提示「未知来源」时选择允许 —— 本 App <b>不上应用商店</b>，只走企业内部分发。</li>
         <li>安装后用平台账号登录（口令登录 / 短信验证码 / 一号多账号选择均支持）。</li>
       </ol>
+    </div>
 
-      <h4>首次登录必须走完引导四步</h4>
+    <div class="card">
+      <div class="t">首次登录必须走完引导四步</div>
       <ol>
         <li><b>授予权限</b>：通话状态、通话记录、拨号、通知。每一项都会说明拒绝后会怎样。</li>
         <li><b>开启系统「通话自动录音」</b>：在系统「电话」应用的设置里。
@@ -68,8 +69,10 @@ function copyUrl() {
         <li><b>打一通测试电话</b>：<b>这是唯一能证明整条链路通了的检验。</b>
           前三步全绿也不代表你的手机真的录到了音。</li>
       </ol>
+    </div>
 
-      <h4>日常怎么用</h4>
+    <div class="card">
+      <div class="t">日常怎么用</div>
       <ul>
         <li>在案件详情点<b>拨号</b> → 跳到系统拨号盘 → 正常通话。平台不替你外呼。</li>
         <li>挂断后 App 自动去录音目录找这通电话的录音，匹配到案件后传回平台做转写与质检。</li>
@@ -77,8 +80,10 @@ function copyUrl() {
         <li>录音归属不明时（比如连续拨了两个号码），App <b>不会瞎猜</b>，会让你二选一。</li>
         <li>没检测到录音时，可以在案件详情手动选一个音频文件上传。</li>
       </ul>
+    </div>
 
-      <h4>需要知道的边界</h4>
+    <div class="card">
+      <div class="t">需要知道的边界</div>
       <ul class="caveat">
         <li><b>只有 Android。</b>iOS 从系统层面禁止任何第三方应用读取通话录音，做不了。</li>
         <li><b>录音是你手机的系统功能录的，不是 App 录的。</b>系统「通话自动录音」没开，就不会有录音。</li>
@@ -87,15 +92,20 @@ function copyUrl() {
         <li>退出登录会清空还没传上去的录音队列（会先提示），但<b>不会动你手机里的原始录音文件</b>。</li>
       </ul>
     </div>
-  </DsDrawer>
+  </div>
 </template>
 
 <style scoped>
-.app-dl { font-size: 13px; line-height: 1.75; color: #33383e; }
+.app-dl { max-width: 760px; font-size: 13px; line-height: 1.75; color: #33383e; }
+.card {
+  background: #fff; border: 1px solid #e6e8eb; border-radius: 8px;
+  padding: 16px 18px; margin-bottom: 14px;
+}
+.t { font-size: 14px; font-weight: 600; color: #1f2429; margin-bottom: 10px; }
 .lead { padding: 10px 12px; border-radius: 6px; background: #eef3ff; margin-bottom: 14px; }
 .lead.warn { background: #fff7e6; }
-.qr-row { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 6px; }
-.qr { width: 180px; height: 180px; border: 1px solid #e6e8eb; border-radius: 6px; flex: none; }
+.qr-row { display: flex; gap: 18px; align-items: flex-start; }
+.qr { width: 200px; height: 200px; border: 1px solid #e6e8eb; border-radius: 6px; flex: none; }
 .qr-side { flex: 1; min-width: 0; }
 .url {
   font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #5a6068;
@@ -108,7 +118,6 @@ function copyUrl() {
 }
 .btn.ghost { background: #fff; color: var(--brand, #1e5eff); }
 .hint { font-size: 12px; color: #8492a6; }
-h4 { margin: 18px 0 6px; font-size: 13px; font-weight: 600; color: #1f2429; }
 ol, ul { margin: 0; padding-left: 20px; }
 li { margin: 3px 0; }
 .caveat li { color: #7a5a1e; }

@@ -5,16 +5,12 @@ import { useAuth } from '../stores/auth'
 import { api } from '../api/client'
 import { roleName } from '../constants/roles'
 import { KEY2PATH, PATH2LABEL, NAV_BY_ROLE, navLabel } from '../constants/nav'
-import AppDownloadDrawer from '../components/AppDownloadDrawer.vue'
 
 const auth = useAuth()
 const route = useRoute()
 const router = useRouter()
 const unread = ref(0)   // 消息中心未读红点(BR-M4-23)
 const q = ref('')       // 全局搜索
-// App 下载入口对所有角色可见：App 本身只对催收员开放(BR-APP-01)，
-// 但管理角色需要把安装链接转发给手下的催收员。抽屉内文案按角色分。
-const showAppDownload = ref(false)
 function doSearch() { if (q.value.trim()) router.push({ path: '/search', query: { q: q.value.trim() } }) }
 
 async function loadUnread() {
@@ -72,6 +68,7 @@ const ICONS: Record<string, string> = {
   '/legal': 'M12 3 4 7v6c0 5 8 8 8 8s8-3 8-8V7z M9 12l2 2 4-4',
   '/my-stats': 'M3 3v18h18 M7 14l3-3 3 3 5-6',
   '/my-links': 'M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1 M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1',
+  '/app-download': 'M7 2h10a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z M11 18h2',
 }
 function iconPaths(path: string): string {
   const d = ICONS[path] ?? 'M4 6h16 M4 12h16 M4 18h16'
@@ -128,7 +125,6 @@ function logout() {
             style="min-width:220px"
             @keyup.enter="doSearch"
           />
-          <span class="link" @click="showAppDownload = true" title="催收员 Android App 下载与使用说明">App</span>
           <span class="link" style="position:relative" @click="router.push('/notifications')">
             消息<span v-if="unread > 0" style="position:absolute;top:-8px;right:-14px;background:var(--danger);color:#fff;font-size:11px;border-radius:9px;padding:1px 7px;line-height:1.4">{{ unread > 99 ? '99+' : unread }}</span>
           </span>
@@ -144,8 +140,5 @@ function logout() {
         <router-view />
       </main>
     </div>
-
-    <!-- 抽屉挂在布局根，不受 body 滚动/层级影响 -->
-    <AppDownloadDrawer v-model="showAppDownload" />
   </div>
 </template>
