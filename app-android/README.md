@@ -1,6 +1,10 @@
 # 有证慧催 · Android App
 
-催收员端。当前进度：**M-A1 + M-A2 代码完成**，等待真机验收。
+外勤作业端。当前进度：**M-A1 + M-A2 + 多角色适配 代码完成**，等待真机验收。
+
+**谁能进（BR-APP-01）**：催收员（CO）与物业协调员（PC）。其余四个角色登录会停在「请用网页端」。
+这是**产品规则，不是权限规则** —— 物业负责人（PL）其实也有 `case.call`（BR-M4-01a 允许他给关联案件打电话），
+但他是管理岗。所以入口按**角色**判（`AppRoles.canEnter`），不按 `permissions[]` 判；界面内部仍然只按权限门控。
 
 M-A2 = 录音管线：拨号 → 通话结束检测系统录音 → 匹配案件 → 自动上传 → 查解析状态。
 详见 [§六 录音管线](#六录音管线m-a2)。**代码完成不等于在你的手机上跑通** —— 见 §五 的诚实边界。
@@ -66,7 +70,10 @@ e: .../apis/CollectionApi.kt:529:203 Unresolved reference 'Source'.
 ## 二、M-A2（PR-A2）新增：四屏 + 离线读
 
 - **工作台**：`GET /workbench` 的 KPI + 待办；带 `filterKey` 的 KPI 可点击过滤待办（契约定义的交互）。
-- **案件**：两个 Tab。「我的案件」`GET /cases`，**可离线读**；「公海」`GET /sea?pool=provider`，可抢单。
+- **案件**：Tab 由权限决定，不由角色硬编码。
+  - 催收员（有 `case.claim`）：「我持有的」`GET /cases?holderId={自己}` +「公海」`GET /sea?pool=provider`（可抢单）。
+  - 物业协调员（无 `case.claim`）：只有「我协调的案件」`GET /cases`，**无公海 Tab**。
+  两者都**可离线读**、都支持滚到底加载下一页。
 - **案件详情**：只读 + 拨号。跟进/承诺/缴费链接/释放属于后续，**不放灰按钮冒充**。
 - **消息**：`GET /notifications`，点开即已读，未读数画在底部 Tab 角标上。
 
@@ -77,6 +84,8 @@ e: .../apis/CollectionApi.kt:529:203 Unresolved reference 'Source'.
 | `Case.redacted` = 「你不是持有人」 | = **「案件已关闭」**（SETTLED/WITHDRAWN）。未持有的公海案件 `redacted=false`，但 `contacts` 是空数组 |
 | 能否拨号看 `holderId` | 看 `availableActions` 是否含 `call`（实测取值 follow/promise/payLink/call/release/ticket/claim） |
 | 公海脱敏要客户端处理 | 后端已经把 `ownerName` 换成 `***` 并给 `contactMasked=true`；`Case` 里**根本没有电话字段** |
+| 不传 `holderId` 的 `GET /cases` = 「我持有的」 | **不是**。对催收员它返回**本服务商全部案件**（含他人持有、待派单）。「我持有的」必须显式传 `holderId`（契约 v1.6.0 新增）。这个 Tab 曾经在撒谎 |
+| `call_recording.collector_id` = 催收员 | 多角色后它存的是**上传者**。物业协调员上传的录音，这个字段是协调员的 account id。字段名是历史包袱，未改（改了破契约） |
 
 ### 离线缓存的边界
 

@@ -79,6 +79,7 @@ public class CasesM2Controller {
             @RequestParam(required = false) String batchId,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String q,
+            @RequestParam(required = false) String holderId,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size) {
         CurrentSubject s = SubjectContext.get();
@@ -99,6 +100,16 @@ public class CasesM2Controller {
         if (status != null && !status.isBlank()) {
             where.append(" AND c.status = ?");
             args.add(status);
+        }
+        // holderId：按持有催收员过滤（私海 BR-M3-04）。
+        // App 催收员端的「我持有的」靠它 —— 不传时 range scope 对催收员返回的是**本服务商全部案件**
+        // （含他人持有、待派单），并不是本人持有的那几件。
+        // 它只是叠加一个过滤条件，**不放宽 scope**：scope 裁剪仍在 WHERE 末尾无条件追加，
+        // 传别人的 holderId 也只能看到自己 scope 内本就可见的案件。
+        if (holderId != null && !holderId.isBlank()) {
+            // 与 projectId/batchId 同范式：非数字不抛 NumberFormatException（避免 5xx/非契约错误），置为不可命中条件。
+            try { args.add(Long.valueOf(holderId.trim())); where.append(" AND c.holder_id = ?"); }
+            catch (NumberFormatException e) { where.append(" AND 1 = 0"); }
         }
         // q 关键字：ILIKE 命中 手机号/户号(acct_no)/业主名(owner_name)。
         // 防侧信道(BR-M8-09)：结案脱敏行(非平台/非物业看 SETTLED/WITHDRAWN/BAD_DEBT/VOIDED)不得被明文 q 命中，

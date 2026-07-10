@@ -12,10 +12,19 @@ export const APP_DOWNLOAD_URL: string =
   (import.meta.env.VITE_APP_DOWNLOAD_URL as string | undefined)?.trim() ||
   `${window.location.origin}/app/huicui.apk`
 
-/** App 只对催收员开放（BR-APP-01）。其它角色装了也进不去作业界面。 */
-export const APP_ROLE = 'CO'
+/**
+ * App 只对**外勤作业角色**开放（BR-APP-01）：催收员（CO）与物业协调员（PC）。
+ *
+ * 催收员：拨号 → 系统录音 → 自动回传。
+ * 物业协调员：同上，外加上门送达的拍照存证。
+ *
+ * 其它四个角色登录 App 会被门禁拦下，看到「请使用网页端」——**包括物业负责人（PL）**。
+ * 他其实有 `case.call` 权限（BR-M4-01a 允许他给关联案件打电话），但他是管理岗，
+ * 日常在网页端作业。这是产品规则，不是权限规则，所以按角色判而不是按权限判。
+ */
+export const APP_ROLES = ['CO', 'PC'] as const
 
 /** 当前登录角色能不能用这个 App。 */
 export function canUseApp(role?: string | null): boolean {
-  return role === APP_ROLE
+  return !!role && (APP_ROLES as readonly string[]).includes(role)
 }

@@ -14,7 +14,9 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.youzheng.huicui.app.data.session.AppRoles
 import com.youzheng.huicui.app.ui.changepwd.ChangePasswordScreen
+import com.youzheng.huicui.app.ui.gate.UnsupportedRoleScreen
 import com.youzheng.huicui.app.ui.login.ChooseAccountScreen
 import com.youzheng.huicui.app.ui.login.LoginScreen
 import com.youzheng.huicui.app.ui.login.LoginStep
@@ -85,6 +87,11 @@ private fun AppRoot() {
                 onPick = { accountId -> vm.chooseAccount(step.loginTicket, accountId) },
                 onBack = vm::backToInput,
             )
+
+        // 入口门禁（BR-APP-01）必须排在首登引导前面：
+        // 被拦下的管理角色不该先被拉着走一遍「开系统通话录音」的四步引导，那对他们毫无意义。
+        step is LoginStep.Done && !AppRoles.canEnter(step.me?.role?.value) ->
+            UnsupportedRoleScreen(me = step.me, onLogout = ::logout)
 
         // 首登引导：录音自动回传是这个 App 的立身之本，进主界面前先把它设好。
         // 可跳过 —— 跳过后作业功能照常，但录音不会自动回传。

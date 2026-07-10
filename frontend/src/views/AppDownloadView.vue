@@ -5,12 +5,13 @@ import { ElMessage } from 'element-plus'
 import { useAuth } from '../stores/auth'
 import { APP_DOWNLOAD_URL, canUseApp } from '../constants/app'
 
-// 催收员 App 下载与使用说明。菜单对所有角色开放 ——
-// 但 App 只对催收员开放（BR-APP-01），管理角色来这里是为了**把链接发给手下的催收员**，
-// 不是自己装。文案按角色分，避免让物业负责人装完发现进不去。
+// App 下载与使用说明。菜单对所有角色开放 ——
+// 但 App 只对外勤作业角色开放（BR-APP-01：催收员 CO + 物业协调员 PC）。
+// 管理角色来这里是为了**把链接发给手下的作业人员**，不是自己装。
+// 文案按角色分，避免让物业负责人装完发现进不去（他有 case.call 权限，但是管理岗）。
 const auth = useAuth()
 const qr = ref('')
-const isCollector = computed(() => canUseApp(auth.me?.role))
+const isFieldWorker = computed(() => canUseApp(auth.me?.role))
 
 onMounted(async () => {
   qr.value = await QRCode.toDataURL(APP_DOWNLOAD_URL, { margin: 1, width: 200 })
@@ -26,15 +27,15 @@ function copyUrl() {
 <template>
   <div class="app-dl">
     <div class="card">
-      <div class="t">催收员 App（Android）</div>
+      <div class="t">外勤作业 App（Android）</div>
 
       <!-- 角色决定这一屏是「给你装的」还是「给你转发的」 -->
-      <div v-if="isCollector" class="lead">
+      <div v-if="isFieldWorker" class="lead">
         用手机扫码安装，然后用你现在这个账号登录。
       </div>
       <div v-else class="lead warn">
-        App 只对<b>催收员</b>开放，你的账号登录后不会进入作业界面。
-        这个链接是给你转发给手下催收员的。
+        App 只对<b>催收员</b>与<b>物业协调员</b>开放，你的账号登录后不会进入作业界面。
+        这个链接是给你转发给手下作业人员的。
       </div>
 
       <div class="qr-row">
@@ -80,6 +81,10 @@ function copyUrl() {
         <li>录音归属不明时（比如连续拨了两个号码），App <b>不会瞎猜</b>，会让你二选一。</li>
         <li>没检测到录音时，可以在案件详情手动选一个音频文件上传。</li>
       </ul>
+      <p class="role-note">
+        <b>催收员</b>看到的是「我持有的」案件与「公海」抢单页；
+        <b>物业协调员</b>看到的是「我协调的案件」，没有公海（协调员不抢单）。
+      </p>
     </div>
 
     <div class="card">
@@ -121,4 +126,5 @@ function copyUrl() {
 ol, ul { margin: 0; padding-left: 20px; }
 li { margin: 3px 0; }
 .caveat li { color: #7a5a1e; }
+.role-note { margin: 10px 0 0; padding: 8px 10px; background: #f6f7f9; border-radius: 4px; font-size: 12px; color: #5a6068; }
 </style>

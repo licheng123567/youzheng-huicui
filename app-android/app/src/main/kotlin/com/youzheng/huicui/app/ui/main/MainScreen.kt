@@ -42,8 +42,8 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 }
 
 /**
- * 底部四 Tab。案件详情不是第五个 Tab，而是压在当前 Tab 之上的一层——
- * 从工作台待办点进案件，再返回时要回到工作台，而不是跳到案件 Tab。
+ * 底部五 Tab（工作台/案件/录音/消息/我的）。案件详情不是第六个 Tab，
+ * 而是压在当前 Tab 之上的一层——从工作台待办点进案件，再返回时要回到工作台，而不是跳到案件 Tab。
  */
 @Composable
 fun MainScreen(onLogout: () -> Unit) {

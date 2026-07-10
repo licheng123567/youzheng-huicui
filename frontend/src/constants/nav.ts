@@ -15,8 +15,8 @@ export const KEY2PATH: Record<string, string | null> = {
   members: '/members', orgMgmt: '/org-mgmt', settings: '/settings', playbookLib: '/script-lib',
   reports: '/reports', audit: '/audit-log', inbox: '/notifications',
   legal: '/legal', myStats: '/my-stats', myLinks: '/my-links',
-  // 催收员 App 下载与使用说明：菜单对所有角色开放（管理角色需要把安装链接转发给手下催收员），
-  // 但 App 本身只对催收员开放（BR-APP-01），页面内文案按角色分叉。
+  // 外勤作业 App 下载与使用说明：菜单对所有角色开放（管理角色需要把安装链接转发给手下作业人员），
+  // 但 App 本身只对催收员(CO)与物业协调员(PC)开放（BR-APP-01），页面内文案按角色分叉。
   appDownload: '/app-download',
 }
 
@@ -28,7 +28,7 @@ export const PATH2LABEL: Record<string, string> = {
   '/members': '成员管理', '/org-mgmt': '组织管理', '/settings': '参数配置', '/script-lib': '平台话术库',
   '/reports': '经营报表', '/audit-log': '操作日志', '/notifications': '消息中心',
   '/legal': '送达管理', '/my-stats': '我的业绩', '/my-links': '缴费链接',
-  '/app-download': '催收员 App',
+  '/app-download': '外勤作业 App',
 }
 
 export const NAV_BY_ROLE: Record<string, NavItem[]> = {

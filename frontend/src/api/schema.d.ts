@@ -5397,6 +5397,8 @@ export interface operations {
                 status?: components["schemas"]["CaseStatusEnum"];
                 /** @description 关键字(手机号/户号/业主名)；受脱敏与 scope 裁剪，排除结案脱敏行以防侧信道 */
                 q?: string;
+                /** @description 按持有催收员过滤(私海 BR-M3-04)。App 催收员端「我持有的」用它——不传时 x-data-scope=range 对催收员返回的是本服务商全部案件(含他人持有/待派单)，并非本人持有。仅叠加过滤、不放宽 scope；非数字与 projectId/batchId 同范式返回空集(不抛 5xx) */
+                holderId?: string;
                 page?: components["parameters"]["Page"];
                 size?: components["parameters"]["Size"];
             };
