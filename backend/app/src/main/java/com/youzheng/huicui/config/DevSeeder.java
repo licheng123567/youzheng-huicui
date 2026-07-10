@@ -7,6 +7,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+
 /**
  * 【仅 dev】启动种子：给账号设 BCrypt 口令；种两个物业组织/PL/项目，
  * 用于演示 x-data-scope 跨租户隔离（SA 见全量、PL 仅见本组织项目）。生产 profile 应禁用。
@@ -92,6 +94,11 @@ public class DevSeeder implements CommandLineRunner {
         // 一号多账号(BR-M1-11)：同一手机 13900009000 关联 翠湖PC + 捷信CO 两个账号，演示多账号登录选择
         seedMultiAccount(cuihu, provider, hash);
 
+        // 平台运营 SE：六角色里唯一没有种子账号的一个，导致它长期无法被测试。
+        // 权限留 NULL（走角色模板 11 项 = 平台超管 SA 的 15 项减去平台管理四权：
+        //   org.manage / settings.manage / billing.recharge / ai.config，见 Permissions.java）。
+        seedPlatformOperator(hash);
+
         // 4) ROTATION 配置（CFG-HOLDCAP）：holdCap=50
         ensureRotationSettings(50);
         // 4b) TIMERS 配置（CFG-T1/T2/TC/MAXCYCLE + 预警提前量·已定稿值）
@@ -161,6 +168,10 @@ public class DevSeeder implements CommandLineRunner {
                 "UPDATE \"case\" c SET provider_id = b.provider_id FROM batch b "
                         + "WHERE c.batch_id = b.id AND b.provider_id IS NOT NULL "
                         + "AND c.provider_id IS NULL AND c.pool NOT IN ('PLATFORM_SEA', 'OPEN_POOL')");
+
+        // ── 最后种：这两项依赖前面已经种好的 ticket / risk_record / batch ──
+        seedNotifications();
+        seedBatchCoordinators(proj);
     }
 
     // ── M9-B 计费流水种子（recharge_log 充值/扣减流水）─────────────────────────
@@ -1264,11 +1275,89 @@ public class DevSeeder implements CommandLineRunner {
         ensureAccountWithRole(cuihuOrg, "duo_pc", "多账号·翠湖协调员", phone, "PC", hash);
         ensureAccountWithRole(providerOrg, "duo_co", "多账号·捷信催收员", phone, "CO", hash);
     }
+
+    /**
+     * 平台运营（SE）账号。V900 种子只种平台组织 + 平台超管（SA），SE 一直是空缺，
+     * 于是六角色里唯一没人测过的就是它。放在这里而不是 SQL 种子里，
+     * 是遵循 V900 定下的单轨原则（账号统一由 DevSeeder 种，避免双轨漂移）。
+     */
+    private void seedPlatformOperator(String hash) {
+        Long platformOrg = jdbc.query("SELECT id FROM org WHERE type = 'PLATFORM' ORDER BY id LIMIT 1",
+                rs -> rs.next() ? rs.getLong(1) : null);
+        if (platformOrg == null) return;   // V900 未跑（理论上不可能），静默跳过而非炸掉启动
+        ensureAccountWithRole(platformOrg, "plat_se", "平台运营", "13800000001", "SE", hash);
+    }
     private void ensureAccountWithRole(Long orgId, String username, String name, String phone, String role, String hash) {
         Long aid = jdbc.query("SELECT id FROM account WHERE username = ?", rs -> rs.next() ? rs.getLong(1) : null, username);
         if (aid != null) return;
         jdbc.update("INSERT INTO account(org_id, username, name, phone, role_template, status, is_owner, password_hash)"
                 + " VALUES (?, ?, ?, ?, ?, 'ACTIVE', FALSE, ?)", orgId, username, name, phone, role, hash);
+    }
+
+    // ── 消息中心 / 批次协调员 ────────────────────────────────────────────────
+
+    /**
+     * 消息中心种子（BR-M4-23 互推闭环）。
+     *
+     * `notification` 表原本恒为空 —— 里面的行只在「转工单 / 工单回执 / 质检处理 / 整改回执」
+     * 这四个动作发生时由控制器写入。于是重置数据库后消息中心是一片空白，
+     * 谁也没法确认这一屏到底渲染成什么样。
+     *
+     * `type` 只取代码里真实存在的四个值：`TICKET_NEW`(FollowUpM4Controller)、
+     * `TICKET_RECEIPT`(同上)、`QC_HANDLING` / `QC_RECTIFIED`(QcM5Controller)。
+     * **别拿 WorkbenchDispatchController 里的 PROMISE_DUE / RELEASE_WARN 来填** ——
+     * 那些是「待办」的分类枚举，根本不写 notification 表。
+     */
+    private void seedNotifications() {
+        Long co1 = accountIdOf("jx_co1");
+        Long pc = accountIdOf("cuihu_pc");
+        if (co1 == null || pc == null) return;
+
+        // 有真实 ticket / risk 就挂上去，让「点消息跳详情」也能测；没有就留空（列可空）
+        Long ticketId = jdbc.query("SELECT id FROM ticket ORDER BY id LIMIT 1", rs -> rs.next() ? rs.getLong(1) : null);
+        Long riskId = jdbc.query("SELECT id FROM risk_record ORDER BY id LIMIT 1", rs -> rs.next() ? rs.getLong(1) : null);
+
+        ensureNotification(pc, "TICKET_NEW", "待处理工单：业主要求上门核对费用明细",
+                "催收员甲转来一张工单，请在 48 小时内处理。", "ticket", ticketId);
+        ensureNotification(co1, "TICKET_RECEIPT", "工单回执：上门核对已完成",
+                "协调员已于昨日上门核对，业主认可欠费金额。", "ticket", ticketId);
+        ensureNotification(co1, "QC_HANDLING", "质检处理决定（本人）",
+                "本次通话被判定存在风险话术，处理决定：确认风险，请查看整改要求。", "risk", riskId);
+        ensureNotification(pc, "QC_RECTIFIED", "整改回执已提交",
+                "催收员甲已提交整改回执，请复核。", "risk", riskId);
+    }
+
+    /** 幂等锚点用 (收件人, type, title) 三元组：同一条消息不会因反复启动而堆积。 */
+    private void ensureNotification(Long recipientId, String type, String title, String body,
+                                    String refType, Long refId) {
+        Integer n = jdbc.queryForObject(
+                "SELECT count(*) FROM notification WHERE recipient_account_id = ? AND type = ? AND title = ?",
+                Integer.class, recipientId, type, title);
+        if (n != null && n > 0) return;
+        jdbc.update("INSERT INTO notification(recipient_account_id, type, title, body, ref_type, ref_id, read)"
+                + " VALUES (?, ?, ?, ?, ?, ?, FALSE)", recipientId, type, title, body, refType, refId);
+    }
+
+    /**
+     * 批次级协调员（`batch_coordinators`）。原本一行都没有，
+     * 导致物业协调员（PC）的批次维度作业无从测起（项目级只指派了 1 个）。
+     * 给翠湖一期最早的两个批次挂上 cuihu_pc。
+     */
+    private void seedBatchCoordinators(Long projId) {
+        Long pc = accountIdOf("cuihu_pc");
+        if (pc == null || projId == null) return;
+        List<Long> batches = jdbc.query("SELECT id FROM batch WHERE project_id = ? ORDER BY id LIMIT 2",
+                (rs, i) -> rs.getLong(1), projId);
+        for (Long b : batches) {
+            // 复合主键天然幂等
+            jdbc.update("INSERT INTO batch_coordinators(batch_id, coordinator_id) VALUES (?, ?)"
+                    + " ON CONFLICT DO NOTHING", b, pc);
+        }
+    }
+
+    private Long accountIdOf(String username) {
+        return jdbc.query("SELECT id FROM account WHERE username = ?",
+                rs -> rs.next() ? rs.getLong(1) : null, username);
     }
 
     private Long ensureCollector(Long orgId, String username, String name, String phone, String hash) {

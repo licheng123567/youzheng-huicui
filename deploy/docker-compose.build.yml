@@ -1,0 +1,16 @@
+# 从源码构建的 override，仅供本地调试 / 没有 registry 时的应急路径。
+#
+#   docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.build.yml up -d --build
+#
+# 生产**不要**用它：现场构建出的镜像没有 tag、没有溯源 label，出事时无法回退到确定的版本。
+# 正常路径是 release.yml 推到 GHCR，compose 用 image: 引用。
+#
+# 用它时 HUICUI_IMAGE_TAG 仍需给个值（compose 会先解析 image:），随便填 local 即可。
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        HUICUI_VERSION: local-build
+        HUICUI_REVISION: local-build

@@ -36,3 +36,14 @@ management:
       show-details: never
       probes:
         enabled: true    # /actuator/health/liveness、/readiness（K8s/compose 探针）
+  info:
+    env:
+      enabled: true      # 允许把下面的 info.* 暴露到 /actuator/info
+
+# 回退演练/事故排查时的第一个问题永远是「现在跑的到底是哪个构建」。
+# 这两个值由 release.yml 在构建镜像时注入（同时也写进镜像的 OCI label）。
+# 不设时显示 unknown —— 那说明这个镜像不是走发布流水线出来的，值得警惕。
+info:
+  app:
+    version: ${HUICUI_VERSION:unknown}
+    revision: ${HUICUI_REVISION:unknown}

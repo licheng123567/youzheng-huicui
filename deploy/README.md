@@ -25,13 +25,17 @@
 ```bash
 # 1. 准备环境变量
 cp deploy/.env.example deploy/.env
-vi deploy/.env          # 至少填 POSTGRES_PASSWORD 与 HUICUI_JWT_SECRET
+vi deploy/.env          # 至少填 HUICUI_IMAGE_TAG、POSTGRES_PASSWORD、HUICUI_JWT_SECRET
 
 # 生成强密钥
 openssl rand -base64 48
 
+# 可用的镜像 tag：
+#   https://github.com/licheng123567/youzheng-huicui/pkgs/container/huicui-backend
+
 # 2. 起库 + 起后端（后端会自动跑 Flyway 建表）
-docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --build
+#    注意是 up -d，不带 --build：生产用 GHCR 上的不可变镜像，不现场构建。
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d
 
 # 3. 验证
 curl -fsS http://localhost:9091/v1/actuator/health/readiness    # {"status":"UP"}
@@ -73,17 +77,35 @@ Successfully applied 24 migrations
 
 ---
 
-## 三、升级
+## 三、升级与回退
+
+升级 = 改一行 `.env`，回退也是。**发布之前先备份**，否则 [ROLLBACK.md](./ROLLBACK.md) 的第 3 节对你不存在。
 
 ```bash
-git pull
-docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --build
+# 1. 先备份（文件名会自动带上当前正在跑的镜像 tag）
+deploy/backup.sh
+
+# 2. 换镜像 tag
+vi deploy/.env          # HUICUI_IMAGE_TAG=v1.10.0
+
+# 3. 只重启后端，数据库不动
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d backend
+
+# 4. 验证跑的确实是那个构建
+curl -s localhost:9091/v1/actuator/info       # {"app":{"version":"v1.10.0","revision":"..."}}
 ```
+
+**回退就是把第 2 步的 tag 改回上一个版本再跑第 3 步。** 完整决策树（什么时候必须连数据库一起回、
+为什么不能用 `flyway repair`、扩展-收缩纪律）见 **[ROLLBACK.md](./ROLLBACK.md)**。
 
 Flyway 只会应用新增迁移。`validate-on-migrate: true` 已开启：若已应用脚本的校验和被改动，启动会失败——
 这是好事，说明有人改了历史迁移，**不要**用 `flyway repair` 绕过，先搞清楚为什么。
 
 `out-of-order: false` 也已开启：新迁移的版本号必须大于库里最大的。
+
+> 回退到旧镜像时，启动日志会出现一条 `Schema "public" has a version (…) that is newer than the
+> latest available migration (…)` 的 WARN。**那是正常的**：Flyway 把版本更高的迁移当作 future
+> migration 并忽略（已实测）。详见 ROLLBACK.md 第 2 节。
 
 ---
 
@@ -130,3 +152,5 @@ zcat deploy/backup/huicui-XXXX.sql.gz | docker compose -f deploy/docker-compose.
 - **对象存储**：录音/附件仍是 PG `bytea`。
 - **监控**：仅有 `/actuator/health`，无指标采集与告警。
 - **幂等键与登录票据仍是单机内存实现**：多实例部署前必须换 Redis。
+- **前端与 App 尚未镜像化**：本次只把后端做成了不可变镜像。前端是静态资源（重建代价低），
+  App 走侧载分发。真要做「整站回退」，前端也得有对应的产物版本。

@@ -25,9 +25,11 @@ services:
     # 不对宿主暴露端口：只允许 compose 内网访问。需要外部连库时用 SSH 隧道。
 
   backend:
-    build:
-      context: ..                        # 构建上下文 = 仓库根
-      dockerfile: deploy/Dockerfile
+    # 用不可变镜像，不现场构建 —— 这是「能回退」的物理前提。
+    # 回退就是把 .env 里的 HUICUI_IMAGE_TAG 改成上一个版本，再 `docker compose up -d backend`。
+    # 镜像由 .github/workflows/release.yml 推到 GHCR（public 仓库，拉取无需登录）。
+    # 想从源码构建（本地调试）：docker compose -f docker-compose.prod.yml -f docker-compose.build.yml up
+    image: ${HUICUI_IMAGE:-ghcr.io/licheng123567/huicui-backend}:${HUICUI_IMAGE_TAG:?必须指定镜像 tag，如 v1.10.0 或 sha-abc1234}
     restart: unless-stopped
     depends_on:
       db:
