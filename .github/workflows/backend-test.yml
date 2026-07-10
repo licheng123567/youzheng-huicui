@@ -1,0 +1,73 @@
+name: backend-test
+
+# 此前**没有任何 CI 作业跑过后端单测** —— api-contract.yml 与 e2e.yml 都用 `mvn -DskipTests compile`
+# 只为把服务拉起来。于是 src/test 下的用例（含短信网关「不泄露上游文案」的回归断言）
+# 永远不会在 PR 上被执行，改坏了也没人知道。这个作业补上这条防线。
+#
+# 只跑 surefire（*Test.java），不跑 failsafe（*IT.java —— 那些要 Testcontainers）。
+# 已实测：停掉本地 Postgres 后 `mvn test` 仍 23/23 通过，故本作业不需要任何数据库服务。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-test.yml'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-test.yml'
+
+jobs:
+  unit-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend/app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: mvn test（surefire）
+        run: mvn -B test
+
+      # 「0 个用例也算 BUILD SUCCESS」是这类 gate 的经典失效方式：
+      # 测试类被误改名/误排除时构建照样绿。这里对实际执行数做下界断言。
+      - name: 断言用例真的跑了（防止 0 个用例的假绿）
+        run: |
+          cat > /tmp/count_tests.py <<'PY'
+          import glob, sys, xml.etree.ElementTree as ET
+          n = fail = 0
+          for f in glob.glob('target/surefire-reports/*.xml'):
+              r = ET.parse(f).getroot()
+              n += int(r.get('tests', 0))
+              fail += int(r.get('failures', 0)) + int(r.get('errors', 0))
+          print(f"{n} {fail}")
+          PY
+          out=$(python3 /tmp/count_tests.py)
+          total=${out% *}
+          failed=${out#* }
+          echo "surefire 执行用例数=$total 失败=$failed"
+          if [ "$total" -lt 20 ]; then
+            echo "::error::后端单测只跑了 $total 个（期望 ≥20）。是不是测试类被排除或改名了？"
+            exit 1
+          fi
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::有 $failed 个用例失败"
+            exit 1
+          fi
+
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-surefire-reports
+          path: backend/app/target/surefire-reports/**
+          if-no-files-found: warn
