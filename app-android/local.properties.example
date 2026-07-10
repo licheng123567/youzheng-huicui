@@ -1,0 +1,9 @@
+# 拷贝为 local.properties（该文件已在 .gitignore，不入库）
+#
+# sdk.dir      Android SDK 路径。装了 Android Studio 的话通常就是下面这个。
+# huicui.devHost  debug 变体要连的后端主机：
+#                   - 模拟器：省略即可（默认 10.0.2.2 = 宿主机）
+#                   - 真机：填开发机的局域网 IP（后端绑 0.0.0.0:9091）
+
+sdk.dir=/Users/<你的用户名>/Library/Android/sdk
+huicui.devHost=10.0.2.2
