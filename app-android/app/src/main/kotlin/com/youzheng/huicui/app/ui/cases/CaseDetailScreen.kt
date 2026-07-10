@@ -20,6 +20,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -29,7 +30,8 @@ import com.youzheng.huicui.app.api.models.CaseDetail
 import com.youzheng.huicui.app.data.case.CaseActions
 import com.youzheng.huicui.app.data.case.formatCents
 import com.youzheng.huicui.app.data.db.CaseEntity
-import com.youzheng.huicui.app.ui.dial.dial
+import kotlinx.coroutines.launch
+import com.youzheng.huicui.app.ui.dial.startCall
 
 /**
  * 案件详情（只读 + 拨号）。跟进、承诺、缴费链接、释放等写操作留到 M-A2 与录音管线一起做，
@@ -91,6 +93,7 @@ fun CaseDetailScreen(caseId: String, onBack: () -> Unit) {
 @Composable
 private fun DetailBody(d: CaseDetail) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val permissions = ServiceLocator.session.permissions()
     val c = d.case
 
@@ -127,9 +130,20 @@ private fun DetailBody(d: CaseDetail) {
                     )
                 }
                 if (CaseActions.canCall(d, permissions) && dialable) {
-                    TextButton(onClick = { dial(context, contact.phone!!) }) { Text("拨号") }
+                    TextButton(
+                        onClick = {
+                            // 先落库会话再拨号：拨出去之后 App 随时可能被系统杀掉
+                            scope.launch { startCall(context, c?.id.orEmpty(), contact.phone!!) }
+                        },
+                    ) { Text("拨号") }
                 }
             }
+        }
+
+        // 通话结束回到 App，第一眼要看到「录音上来没有」
+        if (CaseActions.canCall(d, permissions)) {
+            HorizontalDivider()
+            RecordingStatusCard(caseId = c?.id.orEmpty())
         }
 
         HorizontalDivider()

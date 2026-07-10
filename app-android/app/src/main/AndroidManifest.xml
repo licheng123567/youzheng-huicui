@@ -1,8 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- 录音管线（PRD §4.1）。每一项在首登引导里都有中文用途说明，合规要求。 -->
+    <!-- 直接拨出，免去手输号码；拒绝后降级 ACTION_DIAL 跳拨号盘 -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <!-- 感知通话起止（OFFHOOK/IDLE），触发录音检测 -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- 接通判定与通话时长的主信号；拒绝后退化为「有无录音文件」 -->
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+
+    <!-- 读系统录音目录。Android 11+ 只能靠「所有文件访问」：
+         SAF 授权的目录挂不了 FileObserver，而 FileObserver 是「一挂断就拿到录音」的唯一途径。
+         PRD §4.2 已决定不上 Google Play、走 B2B 企业侧载，故该权限可用。 -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
+    <!-- 通话结束后的录音检测窗口 + 上传，都要前台服务 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 引导用户豁免电池优化，防国产 ROM 杀掉检测/上传进程 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
     <application
         android:name=".HuicuiApp"
@@ -10,6 +38,7 @@
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:networkSecurityConfig="@xml/network_security_config"
+        android:requestLegacyExternalStorage="true"
         android:supportsRtl="true"
         android:theme="@style/Theme.Huicui">
 
@@ -22,5 +51,20 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 只在「通话结束 → 匹配 → 入队」窗口期拉起，完成即自杀。不做 7×24 常驻监听：
+             那既费电，又是国产 ROM 的头号杀进程目标（PRD §3.2）。 -->
+        <service
+            android:name=".recording.RecordingWatchService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <receiver
+            android:name=".recording.CallStateReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PHONE_STATE" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

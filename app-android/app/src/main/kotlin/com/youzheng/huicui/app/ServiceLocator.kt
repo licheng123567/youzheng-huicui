@@ -17,7 +17,15 @@ import com.youzheng.huicui.app.data.case.RetrofitCaseApiPort
 import com.youzheng.huicui.app.data.case.NotificationRepository
 import com.youzheng.huicui.app.data.case.SeaRepository
 import com.youzheng.huicui.app.data.case.WorkbenchRepository
+import com.youzheng.huicui.app.api.apis.CollectionApi
 import com.youzheng.huicui.app.data.db.HuicuiDb
+import com.youzheng.huicui.app.data.db.MIGRATION_1_2
+import com.youzheng.huicui.app.data.net.RecordingUploadApi
+import com.youzheng.huicui.app.recording.AppSettings
+import com.youzheng.huicui.app.recording.LocalRecordingStore
+import com.youzheng.huicui.app.recording.RecordingRepository
+import com.youzheng.huicui.app.recording.RetrofitRecordingUploadPort
+import com.youzheng.huicui.app.recording.UploadScheduler
 import com.youzheng.huicui.app.data.net.AuthEdgeApi
 import com.youzheng.huicui.app.data.net.RetrofitFactory
 import com.youzheng.huicui.app.data.net.SessionListener
@@ -56,6 +64,12 @@ object ServiceLocator {
         private set
     lateinit var notificationRepository: NotificationRepository
         private set
+    lateinit var recordingRepository: RecordingRepository
+        private set
+    lateinit var settings: AppSettings
+        private set
+
+    val isInitialized: Boolean get() = ::recordingRepository.isInitialized
 
     fun init(context: Context) {
         if (::authRepository.isInitialized) return
@@ -76,10 +90,14 @@ object ServiceLocator {
             debug = BuildConfig.DEBUG,
         )
 
+        // v2 起**不能**再用毁灭式迁移：upload_item 里躺着还没传上去的通话录音，
+        // 丢了就永远找不回来（服务端也没有）。cached_case 丢了倒无所谓，但它俩在同一个库里。
         val db = Room.databaseBuilder(app, HuicuiDb::class.java, "huicui.db")
-            // 缓存是可再生的派生数据：schema 变了直接丢弃重建，不值得写 migration。
-            .fallbackToDestructiveMigration(dropAllTables = true)
+            .addMigrations(MIGRATION_1_2)
             .build()
+
+        settings = AppSettings(app)
+        settings.restore()
 
         authRepository = AuthRepository(
             edge = retrofit.create(AuthEdgeApi::class.java),
@@ -91,12 +109,27 @@ object ServiceLocator {
         workbenchRepository = WorkbenchRepository(retrofit.create(WorkbenchApi::class.java))
         seaRepository = SeaRepository(retrofit.create(DispatchApi::class.java))
         notificationRepository = NotificationRepository(retrofit.create(NotificationApi::class.java))
+        recordingRepository = RecordingRepository(
+            sessions = db.callSessionDao(),
+            uploads = db.uploadDao(),
+            port = RetrofitRecordingUploadPort(retrofit.create(RecordingUploadApi::class.java)),
+            collectionApi = retrofit.create(CollectionApi::class.java),
+            store = LocalRecordingStore(app),
+        )
+
+        // 兜底：FileObserver 被 ROM 杀掉、上传一直失败时，靠周期任务把队列推完
+        UploadScheduler.schedulePeriodic(app)
     }
 
-    /** 退出登录：令牌与内存中的主体信息都要清；缓存的案件属于上一个账号，绝不能留给下一个人看。 */
+    /**
+     * 退出登录：令牌、主体信息、案件缓存**以及未上传的录音队列**都要清 ——
+     * 它们属于上一个账号的案件，换人登录后既传不上去（403），也不该留在这台手机上。
+     * 队列非空时界面必须先警示用户（[com.youzheng.huicui.app.ui.me.MeScreen]）。
+     */
     suspend fun logout() {
         authRepository.logout()
         session.clear()
         runCatching { caseRepository.clearCache() }
+        runCatching { recordingRepository.clearOnLogout() }
     }
 }
