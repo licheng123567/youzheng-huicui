@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 有证慧催 · API 契约（全模块·已冻结）
-  version: 1.6.0   # v1.6.0(additive·App 多角色): listCases +holderId(私海过滤;催收员端「我持有的」——不传时 range scope 对 CO 返回本服务商全部案件,并非本人持有) | v1.5.0(additive·契约外端点回写): +录音回听 audio(V921)/佣金三端点 comm-status·comm-in-rate·commission-rates(V922)/附件四端点 attachments·upload-sessions(V923)/存证证书 certificate;rebindOrgOwner 200 补 ownerSetupToken;escalate 补 note;sms-code 补 502(未启用拒发·废 000000 后门) | v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
+  version: 1.7.0   # v1.7.0(additive·公海可见性收敛 BR-M3-29): listSea/listSeaEvents 补 x-permission=sea.view(全契约最后两个无权限点业务读端点;PL/PC 无此点→403·公海概念消失);平台方对 pool=provider 改返回空集(不看服务商公海明细,明细归 VL/CO;平台靠 T1/T2 预警与聚合) | v1.6.0(additive·App 多角色): listCases +holderId(私海过滤;催收员端「我持有的」——不传时 range scope 对 CO 返回本服务商全部案件,并非本人持有) | v1.5.0(additive·契约外端点回写): +录音回听 audio(V921)/佣金三端点 comm-status·comm-in-rate·commission-rates(V922)/附件四端点 attachments·upload-sessions(V923)/存证证书 certificate;rebindOrgOwner 200 补 ownerSetupToken;escalate 补 note;sms-code 补 502(未启用拒发·废 000000 后门) | v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
   contact: { name: 契约 Owner（架构师）, email: api-owner@youzheng.example }
   description: |
     从高保真原型 + PRD(BR/US) + 报告14口径抽取的全模块契约（单一事实源 SSOT）。**v1.0 已冻结（2026-06-24）**：经 codex×2 + 人工×2 共四轮独立审计、openapi-generator Spring 桩 mvn compile、Flyway 真库迁移三重验证，0 阻断/0 高。破坏性变更须升 major + 双 approve。
@@ -564,6 +564,8 @@ paths:
       operationId: listSea
       tags: [dispatch]
       summary: 公海列表(平台全局公海 / 服务商待接单·公海，按 scope)
+      description: '可见矩阵(BR-M3-29 收敛)：platform=仅平台方(SA/SE)；provider=仅本商 VL/CO(**平台方返回空集——平台不查看服务商公海明细，仅靠 T1/T2 预警与聚合**)；open=平台方+VL/CO(全平台开放抢单池 BR-M3-15)。物业角色(PL/PC)无 sea.view 权限点，公海对其不存在(403)。有权限但池不可见时返回空页而非 403(权限点在门口、scope 裁剪在池内)。'
+      x-permission: sea.view
       x-data-scope: range
       parameters:
         - { name: pool, in: query, required: true, schema: { type: string, enum: [platform, provider, open] } }
@@ -1864,6 +1866,8 @@ paths:
       operationId: listSeaEvents
       tags: [dispatch]
       summary: 公海实时事件日志·近期流转(入池/抢/释放/退回/再派/开放 BR-M3-22·轮询非SSE)
+      description: '可见口径与 listSea 一致(BR-M3-29)：平台方不含 PROVIDER_SEA 事件(显式 pool=provider 对平台返回空页)；服务商仅本商；物业角色无 sea.view → 403。'
+      x-permission: sea.view
       x-data-scope: range
       parameters: [ { name: pool, in: query, schema: { $ref: '#/components/schemas/PoolEnum' } }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Size' } ]
       responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/SeaEventPage' } } } } }

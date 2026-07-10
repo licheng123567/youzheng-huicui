@@ -500,7 +500,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 公海列表(平台全局公海 / 服务商待接单·公海，按 scope) */
+        /**
+         * 公海列表(平台全局公海 / 服务商待接单·公海，按 scope)
+         * @description 可见矩阵(BR-M3-29 收敛)：platform=仅平台方(SA/SE)；provider=仅本商 VL/CO(**平台方返回空集——平台不查看服务商公海明细，仅靠 T1/T2 预警与聚合**)；open=平台方+VL/CO(全平台开放抢单池 BR-M3-15)。物业角色(PL/PC)无 sea.view 权限点，公海对其不存在(403)。有权限但池不可见时返回空页而非 403(权限点在门口、scope 裁剪在池内)。
+         */
         get: operations["listSea"];
         put?: never;
         post?: never;
@@ -2238,7 +2241,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 公海实时事件日志·近期流转(入池/抢/释放/退回/再派/开放 BR-M3-22·轮询非SSE) */
+        /**
+         * 公海实时事件日志·近期流转(入池/抢/释放/退回/再派/开放 BR-M3-22·轮询非SSE)
+         * @description 可见口径与 listSea 一致(BR-M3-29)：平台方不含 PROVIDER_SEA 事件(显式 pool=provider 对平台返回空页)；服务商仅本商；物业角色无 sea.view → 403。
+         */
         get: operations["listSeaEvents"];
         put?: never;
         post?: never;

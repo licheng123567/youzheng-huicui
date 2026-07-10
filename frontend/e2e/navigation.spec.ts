@@ -7,7 +7,7 @@ import { loginAs } from './helpers'
 const SCREENS: { label: string; url: RegExp }[] = [
   { label: '项目管理', url: /\/projects/ },
   { label: '撮合派单', url: /\/batches/ },
-  { label: '案件公海', url: /\/sea/ },
+  { label: '平台公海', url: /\/sea/ },
   { label: '案件管理', url: /\/cases/ },
   { label: '收佣对账', url: /\/settlement/ },
   { label: '质检/风控', url: /\/risks/ },

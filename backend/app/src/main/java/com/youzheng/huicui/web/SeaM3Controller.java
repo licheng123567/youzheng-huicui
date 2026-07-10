@@ -2,6 +2,7 @@ package com.youzheng.huicui.web;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.youzheng.huicui.security.RequirePermission;
 import com.youzheng.huicui.common.Page;
 import com.youzheng.huicui.common.Pageable;
 import com.youzheng.huicui.dispatch.CaseStateService;
@@ -59,7 +60,10 @@ public class SeaM3Controller {
     private static final DateTimeFormatter ISO = DateTimeFormatter.ISO_INSTANT;
     private static final String REDACTED_NAME = "***";
 
+    // x-permission=sea.view（BR-M3-29）：物业角色(PL/PC)没有这个点 → 拦截器直接 PERM_403。
+    // 收权前这里没有权限点、物业调过来拿 200 空集——「有公海页面但永远是空的」，概念本身就是错的。
     @GetMapping("/sea")
+    @RequirePermission("sea.view")
     public Page<SeaCaseDto> listSea(
             @RequestParam(required = false) String pool,
             @RequestParam(required = false) Integer page,
@@ -130,8 +134,10 @@ public class SeaM3Controller {
                 return s.isPlatform();
             }
             case CaseStateService.POOL_PROVIDER_SEA -> {
-                // 服务商公海：平台见全量；服务商见本商；其余不可见。
-                if (s.isPlatform()) return true;
+                // 服务商公海：仅本商 VL/CO 可见（BR-M3-29 收权）。
+                // 平台**不看服务商公海明细**——明细是服务商的内务；平台的抓手是
+                // T1/T2 预警（Workbench）与聚合，滞留超 T2 的案件会自动退回平台公海（BR-M3-13）。
+                if (s.isPlatform()) return false;
                 if ("PROVIDER".equals(s.orgType())) {
                     // 案件级归属唯一权威（不 COALESCE 回落 batch）。
                     where.append(" AND c.provider_id = ?");
@@ -159,17 +165,26 @@ public class SeaM3Controller {
      * 降级说明：非实时 SSE 推送，前端定时刷新；脱敏不返完整姓名。
      */
     @GetMapping("/sea/events")
+    @RequirePermission("sea.view")
     public Page<SeaEventDto> listSeaEvents(
             @RequestParam(required = false) String pool,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size) {
         CurrentSubject s = SubjectContext.get();
         Pageable pg = Pageable.of(page, size);
-        StringBuilder where = new StringBuilder(" WHERE c.pool IN ('PLATFORM_SEA','PROVIDER_SEA','OPEN_POOL','PRIVATE')");
+        // 事件可见口径与 listSea 一致（BR-M3-29）：平台不含 PROVIDER_SEA 事件——
+        // 服务商公海内的抢单/分配动态属于服务商内务，与列表明细同一收权。
+        StringBuilder where = new StringBuilder(s.isPlatform()
+                ? " WHERE c.pool IN ('PLATFORM_SEA','OPEN_POOL','PRIVATE')"
+                : " WHERE c.pool IN ('PLATFORM_SEA','PROVIDER_SEA','OPEN_POOL','PRIVATE')");
         List<Object> args = new ArrayList<>();
         if (pool != null && !pool.isBlank()) {           // 可选过滤具体池（非法值→不命中而非 5xx）
+            String physical = mapPoolSafe(pool);
+            if (s.isPlatform() && "PROVIDER_SEA".equals(physical)) {
+                return Page.of(List.of(), pg, 0);        // 平台显式点名服务商公海 → 空页，与列表口径一致
+            }
             where.append(" AND c.pool = ?");
-            args.add(mapPoolSafe(pool));
+            args.add(physical);
         }
         if (!s.isPlatform()) {                            // range：服务商仅本商
             Long org = parseLongOrNull(s.orgId());
