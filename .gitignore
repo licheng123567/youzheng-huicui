@@ -26,5 +26,6 @@ frontend/playwright-report/
 
 test-results/
 
-# 部署密钥：只跟踪 deploy/.env.example，绝不入库真凭据
+# 生产密钥：只入库 deploy/.env.example，真值文件绝不入库
 deploy/.env
+deploy/backup/

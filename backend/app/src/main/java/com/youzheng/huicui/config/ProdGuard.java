@@ -1,71 +1,55 @@
 package com.youzheng.huicui.config;
 
 import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 
 /**
- * prod profile 启动护栏：校验生产必填凭据，缺失则 IllegalStateException 阻止启动。
- * 宁可启动失败，不可退化到 dev 弱口径运行。
+ * prod profile 启动软告警。**硬校验不在这里**——见 {@link ProdEnvironmentGuard}，
+ * 它作为 EnvironmentPostProcessor 抢在任何 bean 创建之前跑（否则 JwtService 构造器会先抛
+ * JJWT 的 WeakKeyException，运维只看得到天书，看不到可操作的中文提示）。
  *
- * <ul>
- *   <li>HUICUI_JWT_SECRET 未注入（空串）→ 拒绝启动</li>
- *   <li>HUICUI_JWT_SECRET 与 dev 内置串相同 → 拒绝启动（防意外泄漏 dev 串到生产）</li>
- *   <li>数据源仍是 dev 默认（localhost:5455 / 口令 test）→ 拒绝启动</li>
- * </ul>
- * 短信固定码 000000 的防线在 AuthController.smsCode：非 dev profile 且 sms 未启用 → 502 拒绝下发，
- * 不依赖本护栏（此前校验的 huicui.auth.dev-sms-code 属性早已无代码读取，属失效护栏，已移除）。
+ * <p>本类只做一件事：把「不配置也能跑」这个最大的风险面，在启动日志里吼出来。
+ * 短信不通 → 验证码与缴费链接触达不了业主；存证不通 → 发起存证只落占位记录、出的证没有法律效力。
+ * 短信开着但处于 dry-run → 更坏：看起来一切正常，其实一条都没发出去。
+ * 三者都不硬失败（允许先上内网灰度 / 预发演练），但绝不能悄无声息。
  */
 @Profile("prod")
 @Configuration
 public class ProdGuard {
 
-    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ProdGuard.class);
-
-    private static final String DEV_SECRET =
-            "dev-only-secret-change-in-prod-至少32字节用于HS256签名0123456789";
-
-    @Value("${huicui.jwt.secret:}")
-    private String jwtSecret;
-
-    @Value("${spring.datasource.url:}")
-    private String datasourceUrl;
-
-    @Value("${spring.datasource.password:}")
-    private String datasourcePassword;
-
-    @Value("${huicui.sms.dry-run:false}")
-    private boolean smsDryRun;
+    private static final Logger log = LoggerFactory.getLogger(ProdGuard.class);
 
     @Value("${huicui.sms.enabled:false}")
     private boolean smsEnabled;
 
+    @Value("${huicui.sms.dry-run:false}")
+    private boolean smsDryRun;
+
+    @Value("${huicui.ebaoquan.enabled:false}")
+    private boolean ebqEnabled;
+
     @PostConstruct
-    public void validate() {
-        // dry-run 是预发演练开关：不触网关、且把验证码写进日志。生产长期开着 = 短信永远发不出去。
-        // 不硬失败（允许预发用 prod profile 演练），但必须刺眼。
-        if (smsEnabled && smsDryRun) {
+    public void announce() {
+        if (!smsEnabled) {
+            log.warn("[ProdGuard] ⚠ 短信通道未启用（HUICUI_SMS_ENABLED=false）："
+                    + "验证码与缴费链接无法触达业主，/auth/sms-code 将返回 502。仅适用于内网灰度。");
+        } else if (smsDryRun) {
+            // 「以为在发短信、其实一条没发」是最贵的静默失败，比压根没启用还危险。
             log.warn("======================================================================");
-            log.warn("[ProdGuard] 短信处于 DRY-RUN：不会真的发出任何短信，且验证码会被写入日志！");
+            log.warn("[ProdGuard] ⚠ 短信处于 DRY-RUN：不会真的发出任何短信，且验证码会被写入日志！");
             log.warn("[ProdGuard] 若这是正式生产环境，请立刻设置 HUICUI_SMS_DRY_RUN=false 并重启。");
             log.warn("======================================================================");
         }
-        if (jwtSecret == null || jwtSecret.isBlank()) {
-            throw new IllegalStateException(
-                    "[ProdGuard] HUICUI_JWT_SECRET 未配置：生产环境必须通过环境变量注入 JWT 密钥，拒绝启动。");
+        if (!ebqEnabled) {
+            log.warn("[ProdGuard] ⚠ 存证通道未启用（HUICUI_EBQ_ENABLED=false）："
+                    + "发起存证只落占位记录，出的证没有法律效力。仅适用于内网灰度。");
         }
-        if (DEV_SECRET.equals(jwtSecret)) {
-            throw new IllegalStateException(
-                    "[ProdGuard] HUICUI_JWT_SECRET 使用了 dev 内置串：生产环境禁止使用开发密钥，拒绝启动。");
-        }
-        if (datasourceUrl != null && datasourceUrl.contains("localhost:5455")) {
-            throw new IllegalStateException(
-                    "[ProdGuard] 数据源仍指向 dev 默认库 localhost:5455：生产必须注入 SPRING_DATASOURCE_URL，拒绝启动。");
-        }
-        if ("test".equals(datasourcePassword)) {
-            throw new IllegalStateException(
-                    "[ProdGuard] 数据源使用 dev 默认口令：生产必须注入 SPRING_DATASOURCE_PASSWORD，拒绝启动。");
-        }
+        log.info("[ProdGuard] ✅ 生产启动自检通过（数据源/JWT 已注入；短信={}，存证={}）",
+                smsEnabled ? (smsDryRun ? "启用·DRY-RUN" : "启用") : "未启用",
+                ebqEnabled ? "启用" : "未启用");
     }
 }

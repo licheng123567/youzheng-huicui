@@ -17,9 +17,9 @@
 
 视频短信地址 `HUICUI_SMS_VIDEO_BASE` 默认 `http://api.028lk.com`，本期**无任何调用点**，不必配。
 
-## 二、需要报备的签名与模板
+## 二、签名与模板
 
-签名 `【有证慧催】`（`HUICUI_SMS_SIGN`）须先在后台审核通过。
+签名 `【有证慧催】`（`HUICUI_SMS_SIGN`）**已报备通过**，配置好即可发送。
 
 模板变量顺序**必须与 `SmsService` 一致**，否则填充错位：
 
@@ -30,7 +30,8 @@
 
 `payUrl` = `HUICUI_PUBLIC_BASE` + `/pay/{token}`。
 
-> 模板未报备时可留空模板 ID 走明文 `Content`；但多数网关对明文长短信有额外审核，实际能否发通须与对接方确认。
+> 若模板尚未报备，可留空模板 ID 走明文 `Content`；但多数网关对明文长短信有额外审核，实际能否发通须与对接方确认。
+> 一旦模板报备完成，填入模板 ID 即自动切到模板方式（`SmsService` 按「模板 ID 非空」分支）。
 
 ---
 
@@ -44,6 +45,10 @@ HUICUI_SMS_SECRET_KEY=stub \
 mvn spring-boot:run          # dev profile
 ```
 
+> **dev 与 prod 的 dry-run 门槛不同**：dev 下 `HUICUI_SMS_BASE` 可以留空（dry-run 在拼 URL 之前就返回了）；
+> 但 **prod profile 下 `ProdEnvironmentGuard` 仍会硬校验** `SECRET_NAME`/`SECRET_KEY`/`SMS_BASE` 三者非空，
+> 缺一即拒绝启动。这是有意的：预发演练要跑在与生产**同样完整**的配置上，否则演练过了、真上线才发现 `SMS_BASE` 忘了填。
+
 行为：
 
 - **不触网关、不产生费用**；`sendSms`/`sendVideoSms` 直接返回 `DRYRUN-<uuid>`。
@@ -51,7 +56,7 @@ mvn spring-boot:run          # dev profile
   这是有意的：预发演练时人得能真的登录一次。
 - 冷却、`sms_record`、pay-link 状态机、`/sms-records` **全部按真实路径走**。
 - 落流水的 `template` 带 `DRY_RUN:` 前缀（如 `DRY_RUN:VERIFY_CODE`），不污染计费口径。
-- prod profile 下开 dry-run，`ProdGuard` 会打一段刺眼 WARN（不硬失败，允许预发演练）。
+- prod profile 下开 dry-run，`ProdGuard.announce()` 会打一段刺眼 WARN（不硬失败，允许预发演练）。
   它只在 `enabled=true && dryRun=true` 时出现 —— 「以为在发短信、其实一条没发」是最贵的静默失败。
 
 **已实测**（dev + dry-run，净室验证）：
@@ -62,10 +67,6 @@ mvn spring-boot:run          # dev profile
 ---
 
 ## 四、切到真实通道
-
-> 前置：本节假定「部署形态」PR（`deploy/` 目录 + `ProdEnvironmentGuard` 启动硬护栏）已合入。
-> 在它合入之前，本分支的 `ProdGuard` **只校验 JWT 与数据源**，不校验短信配置完整性 ——
-> 那时 `HUICUI_SMS_BASE` 忘了填的话，服务能起来，但每一条短信都在运行期 502。
 
 1. 填 `deploy/.env`（**该文件不入库**，`.gitignore` 已拦）：
    ```
@@ -79,8 +80,9 @@ mvn spring-boot:run          # dev profile
    HUICUI_SMS_TPL_PAYLINK=<模板id 或留空>
    HUICUI_PUBLIC_BASE=https://<真实域名>
    ```
-2. 重启。部署形态 PR 合入后，`ProdEnvironmentGuard` 会替你把关：短信启用但 `PUBLIC_BASE` 仍是
-   localhost、或 `SECRET_NAME`/`SECRET_KEY`/`SMS_BASE` 为空 → **拒绝启动**。
+2. 重启。`ProdEnvironmentGuard` 会替你把关：短信启用但 `PUBLIC_BASE` 仍是 localhost、
+   或 `SECRET_NAME`/`SECRET_KEY`/`SMS_BASE` 为空 → **拒绝启动**（它是 EnvironmentPostProcessor，
+   抢在任何 bean 创建之前跑，报错是可操作的中文提示）。
 3. 用真号收一条验证码、一条缴费链接短信。
 
 > 一旦 `HUICUI_SMS_ENABLED=true`，dev 固定码 `000000` 即失效（`AuthController` 优先走真实通道）。
