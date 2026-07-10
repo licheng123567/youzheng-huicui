@@ -145,7 +145,38 @@ zcat deploy/backup/huicui-XXXX.sql.gz | docker compose -f deploy/docker-compose.
 
 ---
 
-## 六、尚未纳入（已知缺口）
+## 六、App 安装包的托管位置
+
+网页端每个角色的顶栏都有「App」入口（催收员看到的是安装指引，管理角色看到的是转发提示）。
+它默认去同源的 **`/app/huicui.apk`** 取安装包 —— 也就是说：
+
+**把 APK 放到前端静态资源目录下的 `app/huicui.apk`。**
+
+```
+/var/www/huicui/
+├── index.html          # 前端构建产物
+├── assets/
+└── app/
+    └── huicui.apk      # ← 放这里
+```
+
+APK 从 CI 的 `app-android` workflow 产出（artifact `huicui-app-debug`）。
+**注意 CI 构建的 APK 里烧的后端地址是 `10.0.2.2:9091`（Android 模拟器专用）**，
+真机用的包必须在构建时通过 `app-android/local.properties` 的 `huicui.devHost`
+或 release buildType 指定真实域名。
+
+需要放到别处（对象存储、内网文件服务器）时，前端构建期设环境变量覆盖：
+
+```bash
+VITE_APP_DOWNLOAD_URL=https://cdn.example.com/huicui-v1.0.apk npm run build
+```
+
+App **不上应用商店**（`MANAGE_EXTERNAL_STORAGE` + `READ_CALL_LOG` 在通话录音场景基本必被拒审，
+见 PRD 11-移动App §4.2），只走企业侧载，所以必须自己托管这个文件。
+
+---
+
+## 七、尚未纳入（已知缺口）
 
 - **反向代理 / TLS**：当前 compose 直接暴露 9091。生产应在前面放 nginx/Caddy 终结 TLS，
   并把前端静态资源与 `/v1` 反代到同源（后端未配置 CORS，隐含同源部署假设）。

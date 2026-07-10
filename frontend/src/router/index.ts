@@ -35,6 +35,9 @@ const router = createRouter({
         { path: 'legal', name: 'legal', component: () => import('../views/LegalView.vue') },
         { path: 'my-stats', name: 'my-stats', component: () => import('../views/MyStatsView.vue') },
         { path: 'my-links', name: 'my-links', component: () => import('../views/MyLinksView.vue') },
+        // 催收员 App 下载与使用说明。已进 nav.ts 的六角色菜单 → allowedPaths 自动放行，
+        // 无需加进 UNIVERSAL_PATHS（那是「不在任何角色菜单里的账户/工具页」）。
+        { path: 'app-download', name: 'app-download', component: () => import('../views/AppDownloadView.vue') },
         { path: 'risks', name: 'risks', component: () => import('../views/RisksView.vue') },
         { path: 'reports', name: 'reports', component: () => import('../views/ReportsView.vue') },
         { path: 'evidence', name: 'evidence', component: () => import('../views/EvidenceView.vue') },

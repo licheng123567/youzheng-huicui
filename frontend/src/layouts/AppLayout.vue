@@ -68,6 +68,7 @@ const ICONS: Record<string, string> = {
   '/legal': 'M12 3 4 7v6c0 5 8 8 8 8s8-3 8-8V7z M9 12l2 2 4-4',
   '/my-stats': 'M3 3v18h18 M7 14l3-3 3 3 5-6',
   '/my-links': 'M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1 M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1',
+  '/app-download': 'M7 2h10a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z M11 18h2',
 }
 function iconPaths(path: string): string {
   const d = ICONS[path] ?? 'M4 6h16 M4 12h16 M4 18h16'
