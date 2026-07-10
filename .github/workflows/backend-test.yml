@@ -64,6 +64,21 @@ jobs:
             exit 1
           fi
 
+      # 契约的 format:date-time 字段必须是 RFC3339。`String.valueOf(rs.getObject(col))` 会输出
+      # `2026-07-09 07:17:59.579476`（空格分隔、无时区）——浏览器的 new Date() 宽容地接受了它，
+      # 所以这个 bug 藏了很久；Android 客户端按 ISO_OFFSET_DATE_TIME 解析，整个响应直接反序列化失败。
+      # 用 common/Timestamps 代替。
+      - name: 禁止把 SQL 时间戳当字符串直接吐出
+        run: |
+          hits=$(grep -rn 'String.valueOf(rs.getObject(' src/main/java --include='*.java' \
+                   | grep -v '/common/Timestamps.java' || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error::请改用 com.youzheng.huicui.common.Timestamps.iso(rs, \"col\")，否则客户端按 RFC3339 解析会失败"
+            exit 1
+          fi
+          echo "OK：无 String.valueOf(rs.getObject(...)) 写法"
+
       - name: 上传测试报告
         if: always()
         uses: actions/upload-artifact@v4
