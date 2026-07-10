@@ -1,6 +1,6 @@
 # 有证慧催 · Android App
 
-外勤作业端。当前进度：**M-A1 + M-A2 + 多角色适配 代码完成**，等待真机验收。
+外勤作业端。当前进度：**M-A1 + M-A2 + 多角色适配 + 上门送达拍照存证 代码完成**，等待真机验收。
 
 **谁能进（BR-APP-01）**：催收员（CO）与物业协调员（PC）。其余四个角色登录会停在「请用网页端」。
 这是**产品规则，不是权限规则** —— 物业负责人（PL）其实也有 `case.call`（BR-M4-01a 允许他给关联案件打电话），
@@ -74,6 +74,13 @@ e: .../apis/CollectionApi.kt:529:203 Unresolved reference 'Source'.
   - 催收员（有 `case.claim`）：「我持有的」`GET /cases?holderId={自己}` +「公海」`GET /sea?pool=provider`（可抢单）。
   - 物业协调员（无 `case.claim`）：只有「我协调的案件」`GET /cases`，**无公海 Tab**。
   两者都**可离线读**、都支持滚到底加载下一页。
+- **上门送达拍照存证**（BR-APP-10，案件详情内）：拍照/相册 → 压缩（决策在 `ImageShrink` 纯函数，长边 2560/JPEG 85）→
+  三步编排 `DeliverySubmitter`（与网页端 `CaseThreeColumn.submitUpload` 同构）：上传附件(deliveryType) → 记跟进(VISIT) → 可选存证(DELIVERY)。
+  失败是阶梯式的：存证一步失败**不算整体失败**（照片与时间线已成，网页端可补发起）。
+  「同时上链存证」勾选框只对有 `evidence.create` 的角色渲染——催收员能拍照上传但看不到这个勾。
+  `deliveryType` 走手写 multipart（`DeliveryUploadApi`），理由同录音上传：生成物的 `@Part String` 会被
+  kotlinx converter 加引号，后端白名单不认、照片静默降级为普通附件不进送达管理。
+  真后端集成测试 `DeliveryUploadIntegrationTest` 专门钉这颗雷（断言送达管理里真的长出记录）。
 - **案件详情**：只读 + 拨号。跟进/承诺/缴费链接/释放属于后续，**不放灰按钮冒充**。
 - **消息**：`GET /notifications`，点开即已读，未读数画在底部 Tab 角标上。
 

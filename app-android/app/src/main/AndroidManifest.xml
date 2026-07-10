@@ -59,6 +59,19 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- 送达拍照：给系统相机 App 写照片的临时授权出口。
+             manifest 里**不声明 CAMERA 权限**——ACTION_IMAGE_CAPTURE 调的是系统相机，
+             不需要；声明了反而让本 App 背上一个用不着的敏感权限（声明即必须运行时申请）。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <receiver
             android:name=".recording.CallStateReceiver"
             android:exported="true">

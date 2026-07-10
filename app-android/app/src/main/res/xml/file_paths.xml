@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 只暴露 cacheDir/delivery（送达拍照的落盘目录），不开整个 cache/files -->
+<paths>
+    <cache-path name="delivery" path="delivery/" />
+</paths>

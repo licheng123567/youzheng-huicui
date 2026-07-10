@@ -30,6 +30,7 @@ import com.youzheng.huicui.app.api.models.CaseDetail
 import com.youzheng.huicui.app.data.case.CaseActions
 import com.youzheng.huicui.app.data.case.formatCents
 import com.youzheng.huicui.app.data.db.CaseEntity
+import com.youzheng.huicui.app.data.session.Permissions
 import kotlinx.coroutines.launch
 import com.youzheng.huicui.app.ui.dial.startCall
 
@@ -144,6 +145,17 @@ private fun DetailBody(d: CaseDetail) {
         if (CaseActions.canCall(d, permissions)) {
             HorizontalDivider()
             RecordingStatusCard(caseId = c?.id.orEmpty())
+        }
+
+        // 上门送达拍照存证：入口 = 有 case.follow 且案件还活着（availableActions 含 follow）。
+        // 已结案案件 actions 为空数组，这块整个不出现。
+        val actions = d.availableActions.orEmpty()
+        if ("follow" in actions && Permissions.CASE_FOLLOW in permissions) {
+            HorizontalDivider()
+            DeliveryEvidenceSection(
+                caseId = c?.id.orEmpty(),
+                canEvidence = "evidence" in actions && Permissions.EVIDENCE_CREATE in permissions,
+            )
         }
 
         HorizontalDivider()
