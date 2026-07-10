@@ -25,3 +25,16 @@ frontend/test-results/
 frontend/playwright-report/
 
 test-results/
+
+# Android App（app-android/）
+# 注意：gradle/wrapper/gradle-wrapper.jar 必须入库，CI 靠它跑；勿被 *.jar 之类的规则误伤。
+app-android/.gradle/
+app-android/build/
+app-android/**/build/
+app-android/local.properties
+app-android/.cxx/
+app-android/captures/
+*.apk
+*.aab
+*.keystore
+*.jks

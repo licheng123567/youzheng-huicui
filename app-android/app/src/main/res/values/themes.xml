@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose 自绘全部界面，宿主 Activity 只需一个无 ActionBar 的平台主题，
+         故不引入 com.google.android.material 依赖。 -->
+    <style name="Theme.Huicui" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
