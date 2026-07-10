@@ -18,7 +18,12 @@ set -a; source "$ENV_FILE"; set +a
 RETAIN_DAYS="${BACKUP_RETAIN_DAYS:-14}"
 OUT_DIR="deploy/backup"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-OUT="$OUT_DIR/huicui-$STAMP.sql.gz"
+
+# 备份文件名带上「当时跑的镜像 tag」。回退时（deploy/ROLLBACK.md 第 3 节）
+# 第一件事就是找「升级到新版本之前」的那份备份 —— 只有时间戳的话，你得靠记忆去猜。
+TAG_SUFFIX=""
+[ -n "${HUICUI_IMAGE_TAG:-}" ] && TAG_SUFFIX="-${HUICUI_IMAGE_TAG//\//_}"
+OUT="$OUT_DIR/huicui-$STAMP$TAG_SUFFIX.sql.gz"
 
 mkdir -p "$OUT_DIR"
 

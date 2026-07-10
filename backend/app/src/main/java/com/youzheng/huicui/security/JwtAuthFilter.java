@@ -46,10 +46,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 || path.matches("/upload-sessions/[^/]+/file")
                 // 运维探针：容器/编排器的存活与就绪检查必须免鉴权，否则 HEALTHCHECK 恒 401
                 // → 容器永远 unhealthy、depends_on:service_healthy 卡死。
-                // 只放行 health（prod 的 management.endpoints 也只暴露 health,info，
-                // 且 show-details:never，不泄露数据源等内部信息）；env/beans 等一律不放行。
+                // 只放行 health 与 info（prod 的 management.endpoints 也只暴露这两个，
+                // 且 health 的 show-details:never，不泄露数据源等内部信息）；env/beans 一律不放行。
+                //
+                // info 为什么也公开：回退演练与事故排查时，第一个问题永远是「现在跑的到底是哪个构建」。
+                // 那一刻运维手上未必有 docker 权限，但一定能打 HTTP（见 deploy/ROLLBACK.md 第 0 节）。
+                // 代价是版本号与 commit sha 对外可见——本仓库 public、镜像也在公开的 GHCR 上，
+                // 这两个值本就不是秘密。info 里只有 app.version / app.revision（application-prod.yml）。
                 || path.equals("/actuator/health")
-                || path.startsWith("/actuator/health/");
+                || path.startsWith("/actuator/health/")
+                || path.equals("/actuator/info");
     }
 
     /**

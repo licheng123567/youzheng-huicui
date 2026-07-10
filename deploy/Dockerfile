@@ -21,6 +21,18 @@ RUN --mount=type=cache,target=/root/.m2/repository \
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 
+# 构建溯源：由 .github/workflows/release.yml 注入。
+# 既写成 OCI label（docker inspect 可查），又注入环境变量（/actuator/info 可查）——
+# 出事时运维手上未必有 docker 权限，但一定能打 HTTP。
+ARG HUICUI_VERSION=unknown
+ARG HUICUI_REVISION=unknown
+LABEL org.opencontainers.image.title="有证慧催 后端" \
+      org.opencontainers.image.source="https://github.com/licheng123567/youzheng-huicui" \
+      org.opencontainers.image.version="${HUICUI_VERSION}" \
+      org.opencontainers.image.revision="${HUICUI_REVISION}"
+ENV HUICUI_VERSION=${HUICUI_VERSION} \
+    HUICUI_REVISION=${HUICUI_REVISION}
+
 # curl 供 HEALTHCHECK 用（temurin jre 镜像不自带）；非 root 运行
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
  && rm -rf /var/lib/apt/lists/* \

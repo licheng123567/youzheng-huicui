@@ -1,0 +1,95 @@
+name: release
+
+# 「随时回退」的物理前提：**每一个可能被回退到的版本，都得有一个不可变的镜像躺在仓库里。**
+#
+# 在这个 workflow 之前，deploy/docker-compose.prod.yml 用的是 `build:`——每次现场从源码构建。
+# 那意味着回退只能 `git checkout 旧commit` 再重新构建，而重建结果依赖当时的依赖解析，
+# 未必和当初跑的那个二进制一致。CI 里 deploy-shape.yml 构建的 `huicui-backend:ci` 跑完即弃。
+#
+# 现在：push main → :main + :sha-xxxxxxx；打 v* tag → :v1.10.0 + :sha-xxxxxxx。
+# 回退 = 改 deploy/.env 里的 HUICUI_IMAGE_TAG，`docker compose up -d backend`。
+
+# 有意不加 `paths:` 过滤：push 事件同时带 branches 与 tags 时，
+# paths 过滤对 tag 推送的语义不确定（可能出现「打了 tag 却不构建」）。
+# 发布镜像这件事宁可多构建几次，也不能漏掉一个可回退的锚点。BuildKit 的 gha 缓存让重复构建很便宜。
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/huicui-backend
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write        # 推 GHCR 只需要 GITHUB_TOKEN，不必配额外 secret
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 计算镜像 tag
+        id: meta
+        run: |
+          SHA_TAG="sha-$(git rev-parse --short HEAD)"
+          echo "sha_tag=$SHA_TAG" >> "$GITHUB_OUTPUT"
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+            echo "tags=${IMAGE}:${VERSION},${IMAGE}:${SHA_TAG}" >> "$GITHUB_OUTPUT"
+          else
+            VERSION="main-${SHA_TAG}"
+            echo "tags=${IMAGE}:main,${IMAGE}:${SHA_TAG}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "将推送: $VERSION"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            HUICUI_VERSION=${{ steps.meta.outputs.version }}
+            HUICUI_REVISION=${{ steps.meta.outputs.revision }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 推上去的镜像必须真的能跑起来，否则「有镜像可回退」是句空话。
+      # 这里不接数据库——ProdGuard 会因为缺 SPRING_DATASOURCE_URL 拒绝启动，
+      # 而那正是我们要看到的行为（fail-closed）。只验证镜像元数据与 fail-closed。
+      - name: 冒烟：镜像元数据与 fail-closed 行为
+        run: |
+          IMG="${IMAGE}:${{ steps.meta.outputs.sha_tag }}"
+          docker pull "$IMG"
+
+          echo "── OCI label 溯源 ──"
+          REV=$(docker inspect "$IMG" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
+          VER=$(docker inspect "$IMG" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')
+          echo "revision=$REV  version=$VER"
+          test "$REV" = "${{ steps.meta.outputs.revision }}" \
+            || { echo "::error::镜像 label 里的 revision 与本次 commit 不符"; exit 1; }
+
+          echo "── fail-closed：缺凭据必须拒绝启动 ──"
+          set +e
+          OUT=$(docker run --rm "$IMG" 2>&1)
+          RC=$?
+          set -e
+          echo "$OUT" | tail -20
+          test $RC -ne 0 || { echo "::error::缺少 SPRING_DATASOURCE_URL 竟然启动成功了"; exit 1; }
+          echo "$OUT" | grep -q "SPRING_DATASOURCE_URL" \
+            || { echo "::error::拒绝启动了，但没给出可操作的中文提示"; exit 1; }
+          echo "OK：镜像可拉取、label 正确、缺配置时 fail-closed"

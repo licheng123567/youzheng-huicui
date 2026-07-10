@@ -6,7 +6,16 @@ import { api } from '../api/client'
 // 消息中心(GET /notifications · BR-M4-23 互推闭环)：未读列表 + 标已读。
 const items = ref<any[]>([])
 const unreadOnly = ref(false)
-const TYPE_LABEL: Record<string, string> = { TICKET_NEW: '待处理工单', TICKET_RECEIPT: '工单回执' }
+// 后端实际会发四类通知：TICKET_NEW/TICKET_RECEIPT(FollowUpM4Controller)、
+// QC_HANDLING/QC_RECTIFIED(QcM5Controller)。少映射一个，用户就会看到 `QC_HANDLING` 这样的裸码。
+const TYPE_LABEL: Record<string, string> = {
+  TICKET_NEW: '待处理工单',
+  TICKET_RECEIPT: '工单回执',
+  QC_HANDLING: '质检处理决定',
+  QC_RECTIFIED: '整改回执',
+}
+// 待办类(war 橙) vs 回执类(suc 绿)
+const WARN_TYPES = new Set(['TICKET_NEW', 'QC_HANDLING'])
 
 async function load() {
   const { data } = await api.GET('/notifications', { params: { query: { unreadOnly: unreadOnly.value, page: 1, size: 50 } } as any })
@@ -35,7 +44,7 @@ onMounted(load)
     <div class="tl" v-if="items.length">
       <div v-for="n in items" :key="n.id" class="msg-e" :class="{ read: n.read }">
         <div class="msg-line">
-          <span class="tag" :class="n.type === 'TICKET_NEW' ? 'war' : 'suc'">{{ TYPE_LABEL[n.type] || n.type }}</span>
+          <span class="tag" :class="WARN_TYPES.has(n.type) ? 'war' : 'suc'">{{ TYPE_LABEL[n.type] || n.type }}</span>
           <span class="msg-title">{{ n.title }}</span>
           <span class="msg-right">
             <span class="tm">{{ String(n.createdAt).slice(0, 16).replace('T', ' ') }}</span>
