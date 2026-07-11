@@ -63,4 +63,29 @@ test.describe('US-M9-04 计费数据隔离', () => {
     await expect(page).toHaveURL(/\/billing/)
     await expect(page.getByText(/仅记录能力/)).toBeVisible()
   })
+
+  // 服务商计费明细还原(2026-07)：VL 的计费=STT 录音转写分钟(种子已归服务商 org);
+  // 月→日→明细三级下钻,明细行带业主/房号/项目/批次(caseId join·v1.11.0)。
+  test('VL 计费明细：STT 用量月→日→明细下钻,穿透列有真数据', async ({ page }) => {
+    await loginRole(page, 'VL')
+    await page.getByRole('menuitem', { name: '计费明细' }).click()
+    await expect(page).toHaveURL(/\/billing/)
+    const monthTable = page.locator('table').filter({ hasText: '月份' })
+    await expect(monthTable).toBeVisible()
+    // VL 有 STT 用量(种子 5 笔跨两月)——月行存在,STT 列非「—」
+    const firstMonth = monthTable.locator('tbody tr').first()
+    await expect(firstMonth).toBeVisible()
+    await firstMonth.getByText(/按日查看/).click()
+    // 按日 → 明细
+    await expect(page.getByText(/· 按日/)).toBeVisible()
+    await page.getByText(/查看明细/).first().click()
+    await expect(page.getByText(/· 明细/)).toBeVisible()
+    // 明细表头含 业主/房号/项目/批次(原型穿透列)
+    const detailTable = page.locator('table').filter({ hasText: '业主' })
+    await expect(detailTable.locator('thead').getByText('业主')).toBeVisible()
+    await expect(detailTable.locator('thead').getByText('项目')).toBeVisible()
+    await expect(detailTable.locator('thead').getByText('批次')).toBeVisible()
+    // 明细行的类型是 STT解析,且业主列非空占位
+    await expect(detailTable.locator('tbody tr').first().getByText('STT解析')).toBeVisible()
+  })
 })

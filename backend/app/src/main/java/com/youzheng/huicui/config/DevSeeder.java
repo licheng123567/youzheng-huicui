@@ -139,7 +139,7 @@ public class DevSeeder implements CommandLineRunner {
             if (saAcct != null) {
                 seedM9Billing(cuihu, provider, saAcct);
                 // 物业负责人财务演示：收佣线支付申请单(IN) + 逐笔计费用量(billing_usage) + 补充充值/短信流水
-                seedPropertyFinance(cuihu, proj, saAcct, co1);
+                seedPropertyFinance(cuihu, provider, proj, saAcct, co1);
             }
             seedSmsRecords(cuihu, proj, caseS3Id);
 
@@ -234,22 +234,29 @@ public class DevSeeder implements CommandLineRunner {
 
     // ── 物业负责人财务演示（收佣线支付申请单 IN + 逐笔计费用量 billing_usage + 补充充值/短信流水）──
     //   物业只可见收佣线(IN·平台↔物业)。全部幂等、物理隔离；复用 M2 演示批次 B-CH-2026-01 与其已回款明细。
-    private void seedPropertyFinance(Long cuihuOrg, Long projId, Long saAcct, Long coHolder) {
+    private void seedPropertyFinance(Long cuihuOrg, Long providerOrg, Long projId, Long saAcct, Long coHolder) {
         if (cuihuOrg == null || projId == null || saAcct == null) return;
 
         // ① 逐笔计费用量 billing_usage（计费明细页 /billing/usage 主数据）：跨本月/上月，四类计费。
-        //    幂等哨兵：本 org 已有任一 billing_usage 则跳过。
-        Integer buExists = jdbc.queryForObject(
-                "SELECT count(*) FROM billing_usage WHERE org_id = ?", Integer.class, cuihuOrg);
-        if (buExists == null || buExists == 0) {
-            Long caseS3 = caseIdByAcctGlobal("M3-S3-01");
-            Long caseQb = caseIdByAcctGlobal("M5-QB-01");
-            // STT 转写（按分钟 min）——上月 3 笔、本月 2 笔
-            insertUsage(cuihuOrg, "STT", "3.500", "min", caseS3, "-32 days");
-            insertUsage(cuihuOrg, "STT", "5.200", "min", caseS3, "-28 days");
-            insertUsage(cuihuOrg, "STT", "2.800", "min", caseQb, "-20 days");
-            insertUsage(cuihuOrg, "STT", "4.100", "min", caseS3, "-6 days");
-            insertUsage(cuihuOrg, "STT", "3.300", "min", caseQb, "-2 days");
+        //    归属口径对齐扣减写入路径（BillingController: billingOrg = 触发解析的 org）：
+        //      · STT 转写 = 催收员通话触发，记**服务商 org**（case S3/QB 均捷信承接·捷信催收员持有）——
+        //        这也是服务商「计费明细」页的主数据；此前误记物业 org，导致服务商进页空表。
+        //      · SMS/存证/法务 = 物业侧能力，记**物业 org**。
+        Long caseS3 = caseIdByAcctGlobal("M3-S3-01");
+        Long caseQb = caseIdByAcctGlobal("M5-QB-01");
+        Integer sttExists = jdbc.queryForObject(
+                "SELECT count(*) FROM billing_usage WHERE org_id = ? AND type = 'STT'", Integer.class, providerOrg);
+        if (providerOrg != null && (sttExists == null || sttExists == 0)) {
+            // STT 转写（按分钟 min）——上月 3 笔、本月 2 笔，记服务商 org
+            insertUsage(providerOrg, "STT", "3.500", "min", caseS3, "-32 days");
+            insertUsage(providerOrg, "STT", "5.200", "min", caseS3, "-28 days");
+            insertUsage(providerOrg, "STT", "2.800", "min", caseQb, "-20 days");
+            insertUsage(providerOrg, "STT", "4.100", "min", caseS3, "-6 days");
+            insertUsage(providerOrg, "STT", "3.300", "min", caseQb, "-2 days");
+        }
+        Integer propUsageExists = jdbc.queryForObject(
+                "SELECT count(*) FROM billing_usage WHERE org_id = ? AND type <> 'STT'", Integer.class, cuihuOrg);
+        if (propUsageExists == null || propUsageExists == 0) {
             // 短信（按条 count）
             insertUsage(cuihuOrg, "SMS", "1.000", "count", caseS3, "-30 days");
             insertUsage(cuihuOrg, "SMS", "1.000", "count", caseQb, "-15 days");
@@ -308,7 +315,6 @@ public class DevSeeder implements CommandLineRunner {
                             + "VALUES (?, 'SMS', -8.000, 1489.000, NULL, '(演示)批量催缴短信扣减', ?)",
                     cuihuOrg, saAcct);
         }
-        Long caseS3 = caseIdByAcctGlobal("M3-S3-01");
         Integer smsCnt = jdbc.queryForObject("SELECT count(*) FROM sms_record WHERE org_id = ?", Integer.class, cuihuOrg);
         if (smsCnt != null && smsCnt < 6) {
             jdbc.update("INSERT INTO sms_record(org_id, case_id, project_id, template, status, sent_at) "

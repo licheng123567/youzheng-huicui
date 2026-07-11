@@ -88,24 +88,31 @@ public class BillingM9Controller {
         List<Object> args = new ArrayList<>();
         if (type != null && !type.isBlank()) {
             validateBillingType(type);                       // 非法 type→422（优雅，非 5xx）
-            where.append(" AND type = ?");
+            where.append(" AND bu.type = ?");
             args.add(type.trim());
         }
         if (month != null && !month.isBlank()) {
-            where.append(" AND to_char(occurred_at, 'YYYY-MM') = ?");
+            where.append(" AND to_char(bu.occurred_at, 'YYYY-MM') = ?");
             args.add(month.trim());
         }
-        appendRangeScope(s, where, args);                    // 平台无；非平台 AND org_id=?
+        appendRangeScope(s, where, args, "bu.org_id");       // 平台无；非平台 AND bu.org_id=?（join 后限定别名）
 
-        String base = "FROM billing_usage" + where;
+        // 计费明细穿透列（业主/房号/项目/批次）由 case_id LEFT JOIN 补齐（v1.11.0）。
+        // 用量行不一定挂案（case_id 可空，如批量短信）→ LEFT JOIN，缺则列为 null。
+        String base = "FROM billing_usage bu"
+                + " LEFT JOIN \"case\" c ON c.id = bu.case_id"
+                + " LEFT JOIN project p ON p.id = c.project_id"
+                + " LEFT JOIN batch b ON b.id = c.batch_id"
+                + where;
         Long total = jdbc.queryForObject("SELECT count(*) " + base, Long.class, args.toArray());
 
         List<Object> pageArgs = new ArrayList<>(args);
         pageArgs.add(pg.size);
         pageArgs.add(pg.offset);
         List<BillingUsageDto> items = jdbc.query(
-                "SELECT id, type, qty, unit, case_id, occurred_at " + base
-                        + " ORDER BY occurred_at DESC LIMIT ? OFFSET ?",
+                "SELECT bu.id, bu.type, bu.qty, bu.unit, bu.case_id, bu.occurred_at,"
+                        + " c.owner_name, c.room, p.name AS project_name, b.no AS batch_no " + base
+                        + " ORDER BY bu.occurred_at DESC LIMIT ? OFFSET ?",
                 BillingM9Controller::mapUsage, pageArgs.toArray());
 
         return Page.of(items, pg, total == null ? 0 : total);
@@ -194,8 +201,13 @@ public class BillingM9Controller {
 
     /** x-data-scope=range（裸 org_id 列裁剪，不经 project）：平台不限；非平台 AND org_id=s.orgId。 */
     private void appendRangeScope(CurrentSubject s, StringBuilder where, List<Object> args) {
+        appendRangeScope(s, where, args, "org_id");
+    }
+
+    /** join 后 org_id 列可能歧义(project 也有 org_id)——传入限定列名(如 bu.org_id)。 */
+    private void appendRangeScope(CurrentSubject s, StringBuilder where, List<Object> args, String orgCol) {
         if (s.isPlatform()) return;                          // 平台全量
-        where.append(" AND org_id = ?");
+        where.append(" AND ").append(orgCol).append(" = ?");
         args.add(orgIdLong(s));
     }
 
@@ -257,6 +269,10 @@ public class BillingM9Controller {
                 doubleOrNull(rs, "qty"),
                 rs.getString("unit"),
                 idOrNull(rs, "case_id"),
+                rs.getString("owner_name"),
+                rs.getString("room"),
+                rs.getString("project_name"),
+                rs.getString("batch_no"),
                 ts(rs.getTimestamp("occurred_at")));
     }
 

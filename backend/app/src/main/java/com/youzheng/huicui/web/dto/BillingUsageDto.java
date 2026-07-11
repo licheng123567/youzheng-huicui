@@ -14,5 +14,9 @@ public record BillingUsageDto(
         Double qty,
         String unit,
         String caseId,
+        String ownerName,
+        String room,
+        String projectName,
+        String batchNo,
         String occurredAt
 ) {}
