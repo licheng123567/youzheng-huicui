@@ -8,11 +8,19 @@ import { permLabel } from '../constants/permissions'
 import { orgTypeLabel, statusLabel } from '../constants/enums'
 import DsDrawer from '../components/DsDrawer.vue'
 
-// 成员管理(M1·member.manage)：本组织成员 CRUD/停用启用/重置密码。督导为平台功能，PL/PC/VL 不涉及。
+// 成员管理(M1·member.manage)：本组织成员 CRUD/停用启用/重置密码 + 工作督导(BR-M10-10)。
+// 更正旧注释「督导为平台功能 VL 不涉及」——错误：督导端点 x-permission=member.manage、scope=own-org，
+// 负责人(PL 督协调员 / VL 督催收员)对本组织成员完全可督导留痕。
 const auth = useAuth()
+const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
 const members = ref<any[]>([])
 const orgs = ref<any[]>([])
 const isPlatform = () => auth.has('org.manage')
+// 工作督导 tab：仅组织负责人(有 member.manage 且非平台) 可见——VL 督催收员 / PL 督协调员。
+const showSupervise = computed(() => auth.has('member.manage') && !isPlatform())
+const memberTab = ref<'list' | 'supervise'>('list')
+const superviseNoun = computed(() => ((auth.me as any)?.org?.type === 'PROVIDER') ? '催收员' : '协调员')
+
 
 // BR-M1-04a：角色下拉按当前组织类型过滤，与后端 MemberM1Controller 允许范围严格一致。
 // PROPERTY→只建协调员(PC)；PROVIDER→只建催收员(CO)；PLATFORM→建平台员工(SA/SE)。
@@ -32,6 +40,45 @@ async function load() {
   const m = await api.GET('/members', { params: { query: { page: 1, size: 50 } } as any })
   members.value = (m.data as any)?.items ?? []
   if (isPlatform()) orgs.value = ((await api.GET('/orgs', { params: { query: { page: 1, size: 50 } } as any })).data as any)?.items ?? []
+  if (showSupervise.value) loadSupervise()
+}
+
+// ── 工作督导（BR-M10-10）──
+const caps = ref<any[]>([])            // /providers/{id}/collector-capacity（持有/今日动作/今日回款）
+const capHoldCap = ref(0)
+const supervisions = ref<any[]>([])    // /members/supervision（督导记录）
+async function loadSupervise() {
+  const orgId = (auth.me as any)?.org?.id
+  const [cap, sup] = await Promise.all([
+    orgId ? api.GET('/providers/{id}/collector-capacity', { params: { path: { id: String(orgId) } } } as any) : Promise.resolve({ data: null }),
+    api.GET('/members/supervision', { params: { query: { page: 1, size: 50 } } as any }),
+  ])
+  caps.value = (cap.data as any)?.items ?? []
+  capHoldCap.value = (cap.data as any)?.holdCap ?? 0
+  supervisions.value = (sup.data as any)?.items ?? []
+}
+const capOf = (memberId: string) => caps.value.find((c) => String(c.collectorId) === String(memberId))
+const supCountOf = (memberId: string) => supervisions.value.filter((r) => String(r.memberId) === String(memberId)).length
+const SUP_ACTIONS = [
+  { v: 'REMIND', label: '提醒' }, { v: 'TALK', label: '督导谈话' },
+  { v: 'TRAINING', label: '安排培训' }, { v: 'NOTE', label: '记录' },
+]
+const SUP_LABEL: Record<string, string> = { REMIND: '提醒', TALK: '督导谈话', TRAINING: '安排培训', NOTE: '记录' }
+const supDlg = ref(false)
+const supForm = ref<{ memberId: string; memberName: string; action: string; note: string }>({ memberId: '', memberName: '', action: 'REMIND', note: '' })
+function openSupervise(m: any) {
+  supForm.value = { memberId: String(m.id), memberName: m.name, action: 'REMIND', note: '' }
+  supDlg.value = true
+}
+async function submitSupervise() {
+  const { error } = await api.POST('/members/{id}/supervision-actions', {
+    params: { path: { id: supForm.value.memberId } },
+    body: { action: supForm.value.action, note: supForm.value.note || undefined } as any,
+  })
+  if (error) { ElMessage.error('督导留痕失败：' + ((error as any)?.message ?? '')); return }
+  ElMessage.success('已记录督导（' + SUP_LABEL[supForm.value.action] + '）')
+  supDlg.value = false
+  loadSupervise()
 }
 
 // B-04方案A：一次性凭据交付令牌展示（新建组织/改绑重置后服务端返回）
@@ -165,10 +212,54 @@ onMounted(load)
       <div class="t"><span class="bar"></span>成员管理</div>
       <div class="ops">
         <span class="note" style="margin:0">member.manage · 仅本组织成员，平台不可跨组织 BR-M1-04a</span>
-        <button v-if="auth.has('member.manage')" class="btn sm" @click="openCreate">+ 新增成员</button>
+        <button v-if="auth.has('member.manage') && memberTab==='list'" class="btn sm" @click="openCreate">+ 新增成员</button>
       </div>
     </div>
 
+    <!-- 成员列表 / 工作督导 分段（负责人视角·BR-M10-10） -->
+    <div v-if="showSupervise" class="segctrl" style="margin-bottom:12px">
+      <span :class="{ on: memberTab === 'list' }" @click="memberTab = 'list'">成员列表</span>
+      <span :class="{ on: memberTab === 'supervise' }" @click="memberTab = 'supervise'">工作督导</span>
+    </div>
+
+    <!-- ══ 工作督导 tab ══ -->
+    <template v-if="memberTab === 'supervise'">
+      <div class="sec-title">工作督导 — {{ superviseNoun }}</div>
+      <div class="note" style="margin-bottom:8px">按成员统计工作量/质量，对异常发起督导（提醒/谈话/培训/记录），记入督导记录留痕（仅督导本组织成员，BR-M10-10）。</div>
+      <table>
+        <thead><tr><th>成员</th><th>持有案件数</th><th>今日动作</th><th>容量余量</th><th>今日回款</th><th>督导记录</th><th style="width:120px">操作</th></tr></thead>
+        <tbody>
+          <tr v-for="row in members.filter((m:any)=>!m.isOwner)" :key="row.id">
+            <td>{{ row.name }}<span class="mini" style="margin-left:6px;color:var(--sec)">{{ row.username }}</span></td>
+            <td class="num">{{ capOf(row.id)?.holding ?? '—' }}</td>
+            <td class="num">{{ capOf(row.id)?.todayActions ?? '—' }}</td>
+            <td><span v-if="capOf(row.id)" class="tag" :class="(capOf(row.id).remaining<=0)?'dan':(capOf(row.id).remaining<=5?'war':'suc')">余{{ capOf(row.id).remaining }}件</span><span v-else>—</span></td>
+            <td class="num">{{ capOf(row.id) ? yuan(capOf(row.id).todayRepayCents) : '—' }}</td>
+            <td class="num">{{ supCountOf(row.id) || '—' }}</td>
+            <td><button class="btn txt" :disabled="!row.manageable" @click="openSupervise(row)">督导处理</button></td>
+          </tr>
+          <tr v-if="!members.filter((m:any)=>!m.isOwner).length"><td colspan="7" class="note" style="text-align:center">本组织暂无可督导成员</td></tr>
+        </tbody>
+      </table>
+
+      <div class="sec-title" style="margin-top:14px">督导记录（GET /members/supervision）</div>
+      <table>
+        <thead><tr><th>时间</th><th>成员</th><th>方式</th><th>备注</th><th>操作人</th></tr></thead>
+        <tbody>
+          <tr v-for="r in supervisions" :key="r.id">
+            <td class="note">{{ r.createdAt ? String(r.createdAt).slice(0,16).replace('T',' ') : '—' }}</td>
+            <td>{{ r.memberName }}</td>
+            <td><span class="tag inf">{{ SUP_LABEL[r.action] || r.action }}</span></td>
+            <td>{{ r.note || '—' }}</td>
+            <td>{{ r.operatorName || '—' }}</td>
+          </tr>
+          <tr v-if="!supervisions.length"><td colspan="5" class="note" style="text-align:center">暂无督导记录</td></tr>
+        </tbody>
+      </table>
+    </template>
+
+    <!-- ══ 成员列表 tab ══ -->
+    <template v-else>
     <table>
       <thead>
         <tr>
@@ -231,6 +322,8 @@ onMounted(load)
         </tbody>
       </table>
     </template>
+    </template>
+    <!-- ══ /成员列表 tab ══ -->
 
     <!-- B-04方案A：一次性凭据交付 Token 展示弹窗（复制按钮+带外告知说明） -->
     <el-dialog v-model="setupTokenDlg" title="一次性凭据 Token（带外转交）" width="500px" :close-on-click-modal="false">
@@ -246,6 +339,22 @@ onMounted(load)
         <el-button @click="setupTokenDlg=false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- 督导处理弹窗（BR-M10-10·POST /members/{id}/supervision-actions） -->
+    <DsDrawer v-model="supDlg" :title="`督导处理 · ${supForm.memberName}`" :width="460">
+      <div class="note" style="margin-bottom:10px">对成员发起督导并留痕；不直接等同处罚（停权/警告走成员管理的停用/权限）。</div>
+      <el-form label-width="80px">
+        <el-form-item label="督导方式">
+          <el-select v-model="supForm.action" style="width:100%">
+            <el-option v-for="a in SUP_ACTIONS" :key="a.v" :label="a.label" :value="a.v" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="supForm.note" type="textarea" :rows="3" placeholder="督导说明（选填）" />
+        </el-form-item>
+      </el-form>
+      <template #footer><el-button @click="supDlg=false">取消</el-button><el-button type="primary" @click="submitSupervise">提交并留痕</el-button></template>
+    </DsDrawer>
 
     <DsDrawer v-model="oDlg" title="新建组织+绑负责人" :width="440">
       <el-form label-width="100px">

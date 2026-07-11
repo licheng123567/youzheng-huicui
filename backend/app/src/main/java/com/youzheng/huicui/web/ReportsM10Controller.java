@@ -56,7 +56,7 @@ import java.util.UUID;
 public class ReportsM10Controller {
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ISO_INSTANT;
-    private static final Set<String> DIMENSIONS = Set.of("project", "batch", "month");
+    private static final Set<String> DIMENSIONS = Set.of("project", "batch", "month", "collector");
     private static final Set<String> FORMATS = Set.of("xlsx", "csv");
 
     private final JdbcTemplate jdbc;
@@ -81,11 +81,19 @@ public class ReportsM10Controller {
         // dimKey/dimName 表达式按维度切换（列名对齐 DDL）。
         String dimKeyExpr;
         String dimNameExpr;
+        String extraJoin = "";
+        boolean collectorDim = false;
         switch (dim) {
             case "project" -> { dimKeyExpr = "p.id"; dimNameExpr = "p.name"; }
             case "month" -> {
                 dimKeyExpr = "to_char(c.created_at, 'YYYY-MM')";
                 dimNameExpr = "to_char(c.created_at, 'YYYY-MM')";
+            }
+            case "collector" -> {
+                // 按持有催收员聚合（服务商经营报表「催收员产能」）：holder 私海口径。
+                dimKeyExpr = "c.holder_id"; dimNameExpr = "ha.name";
+                extraJoin = " LEFT JOIN account ha ON ha.id = c.holder_id";
+                collectorDim = true;
             }
             default -> { dimKeyExpr = "b.id"; dimNameExpr = "b.no"; }   // batch
         }
@@ -98,6 +106,9 @@ public class ReportsM10Controller {
             where.append(" AND to_char(c.created_at, 'YYYY-MM') = ?");
             args.add(month.trim());
         }
+        if (collectorDim) {
+            where.append(" AND c.holder_id IS NOT NULL");   // 仅统计已被持有(私海)的案件
+        }
 
         // rows：分组聚合。LEFT JOIN repay_line(reversed=false) 防止无回款案件被过滤。
         String rowsSql = "SELECT " + dimKeyExpr + " AS dim_key, " + dimNameExpr + " AS dim_name,"
@@ -107,6 +118,7 @@ public class ReportsM10Controller {
                 + " FROM \"case\" c"
                 + " JOIN batch b ON b.id = c.batch_id"
                 + " JOIN project p ON p.id = c.project_id"
+                + extraJoin
                 + " LEFT JOIN (SELECT case_id, SUM(amount_cents) AS amount_cents"
                 + "            FROM repay_line WHERE reversed = false GROUP BY case_id) r"
                 + " ON r.case_id = c.id"

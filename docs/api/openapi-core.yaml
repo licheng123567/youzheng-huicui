@@ -1768,7 +1768,7 @@ paths:
       tags: [reports]
       summary: 经营报表(物业/服务商/平台各口径·回款率/进度/能力用量·按项目/批次下钻 BR-M10-01/03)
       x-data-scope: range
-      parameters: [ { name: dimension, in: query, schema: { type: string, enum: [project, batch, month] } }, { name: month, in: query, schema: { type: string } } ]
+      parameters: [ { name: dimension, in: query, schema: { type: string, enum: [project, batch, month, collector] } }, { name: month, in: query, schema: { type: string } } ]
       responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/ReportData' } } } } }
   /reports/export:
     post:
