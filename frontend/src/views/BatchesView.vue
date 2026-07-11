@@ -43,6 +43,7 @@ const dlg = ref(false)
 //   提交时先 PUT /batches/{id}/commission-rates 确认双佣（置 comm_in_confirmed=true），再 dispatch/redispatch。
 // 表单比率用百分数（0-100）便于输入，提交按 /100 转分数（全栈 Rate=分数口径）。
 const form = ref<any>({ batchId: '', providerId: '', commInPct: null as number | null, payOutPct: null as number | null, redispatch: false })
+const dispBatch = ref<any>(null)     // 当前派单批次行（抽屉标题/信息条：批次号·项目·户数·应收）
 const commStatus = ref<any>({})      // {commInRate,payOutRate,commInConfirmed}（comm-status 非契约端点）
 const marginPct = computed(() => (form.value.commInPct != null && form.value.payOutPct != null)
   ? Math.round((form.value.commInPct - form.value.payOutPct) * 100) / 100 : null)
@@ -51,8 +52,10 @@ const ratesInvalid = computed(() => form.value.commInPct == null || form.value.p
   || form.value.payOutPct < 0 || form.value.payOutPct > form.value.commInPct)
 // 重派软警示：上一承接段（服务商/结项原因）——结项后重派对象含派回原商由平台裁量，仅提示不拦截（v1.17.0）
 const lastSeg = ref<any>(null)
-function openDispatch(id: string, redispatch = false) {
+function openDispatch(row: any, redispatch = false) {
+  const id = String(row.id)
   form.value = { batchId: id, providerId: '', commInPct: null, payOutPct: null, redispatch }
+  dispBatch.value = row
   commStatus.value = {}; lastSeg.value = null; dlg.value = true
   loadMetrics()                      // 服务商下拉数据源 + 指标决策辅助（BR-M3-24）
   loadCommStatus(id)                 // 预填双佣（物业提案值/既定值）
@@ -358,8 +361,8 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
           <td><span class="tag" :class="statusTag(row.status)" :title="row.status">{{ caseStatusLabel(row.status) }}</span></td>
           <td>
             <!-- 动作按状态互斥（用户定）：未派+无承接史→派单；未派+结项过→重派(带上一段警示)；已派→只有结项 -->
-            <a v-if="auth.has('case.dispatch') && !row.providerId && !(row.engagementCount > 0)" class="btn txt" :class="{ 'is-disabled': acting===row.id }" @click="acting===row.id || openDispatch(row.id)">派单</a>
-            <a v-if="auth.has('case.dispatch') && !row.providerId && row.engagementCount > 0" class="btn txt" @click="openDispatch(row.id, true)">重派</a>
+            <a v-if="auth.has('case.dispatch') && !row.providerId && !(row.engagementCount > 0)" class="btn txt" :class="{ 'is-disabled': acting===row.id }" @click="acting===row.id || openDispatch(row)">派单</a>
+            <a v-if="auth.has('case.dispatch') && !row.providerId && row.engagementCount > 0" class="btn txt" @click="openDispatch(row, true)">重派</a>
             <a v-if="auth.has('case.dispatch') && row.providerId" class="btn txt dgc" @click="openCloseEngagement(row)">结项</a>
             <a v-if="isPlatform && (row.engagementCount ?? 0) > 0" class="btn txt" @click="openEngagements(row)">承接历史</a>
             <a v-if="auth.has('case.void')" class="btn txt dgc" @click="voidBatch(row)">作废</a>
@@ -371,16 +374,32 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
       </tbody>
     </table>
 
-    <!-- 派单/重派 -->
-    <DsDrawer v-model="dlg" :title="(form.redispatch?'重派':'派单')" :width="640">
+    <!-- 派单/重派：① 派单对象 → ② 承接服务商 → ③ 佣金比例（撮合设定） -->
+    <DsDrawer v-model="dlg" :title="(form.redispatch ? '重派' : '派单') + (dispBatch ? ' · ' + dispBatch.code : '')" :width="680">
+      <!-- ① 派单对象：整批派给一个服务商（不拆分） -->
+      <div class="sec-title" style="margin-top:0">
+        派单对象
+        <span style="font-size:12px;color:var(--sec);font-weight:400">整批派给一个服务商（不拆分；部分催不动走「结项 → 重派」）</span>
+      </div>
+      <div v-if="dispBatch" class="kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">
+        <div class="kpi"><div class="n" style="font-size:14px;word-break:break-all">{{ dispBatch.code }}</div><div class="l">批次</div></div>
+        <div class="kpi"><div class="n" style="font-size:14px">{{ dispBatch.projectName || '—' }}</div><div class="l">项目</div></div>
+        <div class="kpi"><div class="n">{{ dispBatch.caseCount ?? '—' }}</div><div class="l">户数</div></div>
+        <div class="kpi"><div class="n">{{ yuan(dispBatch.dueTotalCents) }}</div><div class="l">应收</div></div>
+      </div>
       <!-- v1.17.0 重派软警示：上一承接段（结项后重派对象含派回原商由平台裁量，仅提示不拦截） -->
-      <div v-if="form.redispatch && lastSeg" class="alert warn" style="margin-bottom:10px">
+      <div v-if="form.redispatch && lastSeg" class="alert warn" style="margin-bottom:12px">
         上一承接：<b>{{ lastSeg.providerName }}</b>（第 {{ lastSeg.seq }} 任 · {{ dt(lastSeg.startedAt) }} ~ {{ dt(lastSeg.endedAt) }}）
         <template v-if="lastSeg.endReason">· 结项原因：{{ REASON_LABEL[lastSeg.endReason] ?? lastSeg.endReason }}</template>
         <template v-if="lastSeg.periodRepayRate != null">· 期间回款率 {{ pct(lastSeg.periodRepayRate) }}</template>
       </div>
+
+      <!-- ② 承接服务商（决策辅助：客观指标陈列，不评分/不加权 BR-M3-24） -->
+      <div class="sec-title">
+        承接服务商
+        <span style="font-size:12px;color:var(--sec);font-weight:400">下拉搜索选择；下表仅客观指标陈列，不评分/不加权（BR-M3-24），点行即选中</span>
+      </div>
       <el-form label-width="120px">
-        <!-- 用户定：批次一律整体派给一个服务商（不拆分）；服务商=下拉搜索选择（不手填 id） -->
         <el-form-item label="服务商" required>
           <el-select v-model="form.providerId" filterable placeholder="搜索/选择服务商" style="width:320px">
             <el-option v-for="m in metrics" :key="m.providerId" :value="m.providerId"
@@ -392,26 +411,24 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
             </el-option>
           </el-select>
         </el-form-item>
-        <el-form-item label="服务商指标">
-          <el-table v-if="metrics.length" :data="metrics" border size="small" style="cursor:pointer" @row-click="(r:any)=>form.providerId=r.providerId">
-            <el-table-column prop="providerName" label="服务商" />
-            <el-table-column label="在催"><template #default="{row}">{{ row.activeCases }}</template></el-table-column>
-            <el-table-column label="催收员"><template #default="{row}">{{ row.collectorCount }}</template></el-table-column>
-            <el-table-column label="人均持仓"><template #default="{row}">{{ row.avgHolding?.toFixed(1) }}</template></el-table-column>
-            <el-table-column label="近30天回款率"><template #default="{row}">{{ row.recentRepayRate!=null?(row.recentRepayRate*100).toFixed(1)+'%':'—' }}</template></el-table-column>
-          </el-table>
-          <span style="color:#909399;font-size:12px">仅客观指标陈列，不评分/不加权（BR-M3-24）。点行即选中该服务商。</span>
-        </el-form-item>
       </el-form>
+      <el-table v-if="metrics.length" :data="metrics" border size="small" style="cursor:pointer;margin-bottom:4px"
+        :row-class-name="(o:any) => o.row.providerId === form.providerId ? 'row-picked' : ''"
+        @row-click="(r:any)=>form.providerId=r.providerId">
+        <el-table-column prop="providerName" label="服务商" />
+        <el-table-column label="在催"><template #default="{row}">{{ row.activeCases }}</template></el-table-column>
+        <el-table-column label="催收员"><template #default="{row}">{{ row.collectorCount }}</template></el-table-column>
+        <el-table-column label="人均持仓"><template #default="{row}">{{ row.avgHolding?.toFixed(1) }}</template></el-table-column>
+        <el-table-column label="近30天回款率"><template #default="{row}">{{ row.recentRepayRate!=null?(row.recentRepayRate*100).toFixed(1)+'%':'—' }}</template></el-table-column>
+      </el-table>
 
-      <!-- 佣金比例（撮合设定·平台最终决定权）：一处同定 收佣(物业付平台) + 付佣(平台付服务商) -->
-      <div class="sec-title" style="margin-top:6px">
+      <!-- ③ 佣金比例（撮合设定·平台最终决定权）：一处同定 收佣(物业付平台) + 付佣(平台付服务商) -->
+      <div class="sec-title">
         佣金比例（撮合设定 · 平台最终决定权）
-        <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">派单即确认双方佣金；防倒挂：付佣 ≤ 收佣</span>
+        <span style="font-size:12px;color:var(--sec);font-weight:400">派单即确认双方佣金；防倒挂：付佣 ≤ 收佣</span>
       </div>
       <div class="alert info" style="margin-top:0;margin-bottom:10px">
-        <b>收佣比例</b>=物业公司支付平台（IN 收佣线，物业可先提案、平台最终确认）；
-        <b>付佣比例</b>=平台支付服务商（OUT 付佣线）。平台毛利 = 收佣 − 付佣。
+        <span><b>收佣比例</b> = 物业公司支付平台（IN 收佣线；物业可先提案，平台最终确认）；<b>付佣比例</b> = 平台支付服务商（OUT 付佣线）。平台毛利 = 收佣 − 付佣。</span>
       </div>
       <el-form label-width="120px">
         <el-form-item label="收佣比例(%)" required>
@@ -440,8 +457,7 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
       <div v-loading="ceLoading">
         <template v-if="cePreview">
           <div class="alert info" style="margin-bottom:10px">
-            将终止 <b>{{ cePreview.providerName }}</b> 对本批次的承接：收回其名下全部在催案件回<b>平台公海</b>，
-            批次回「待派单」可重派。已催回的回款与应得付佣按到账时点归属，<b>不受结项影响</b>。
+            <span>将终止 <b>{{ cePreview.providerName }}</b> 对本批次的承接：收回其名下全部在催案件回<b>平台公海</b>，批次回「待派单」可重派。已催回的回款与应得付佣按到账时点归属，<b>不受结项影响</b>。</span>
           </div>
           <el-descriptions :column="4" border size="small" style="margin-bottom:10px">
             <el-descriptions-item label="待接单">{{ cePreview.recallable?.s1 ?? 0 }}</el-descriptions-item>
@@ -450,8 +466,7 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
             <el-descriptions-item label="合计收回">{{ cePreview.recallable?.total ?? 0 }}</el-descriptions-item>
           </el-descriptions>
           <div v-if="cePreview.promisedCases?.length" class="alert danger" style="margin-bottom:8px">
-            <b>承诺警示：</b>以下 {{ cePreview.promisedCases.length }} 件带有效分期承诺，将一并收回——
-            承诺与跟进记录随案保留，重派后新服务商可见完整历史。
+            <span><b>承诺警示：</b>以下 {{ cePreview.promisedCases.length }} 件带有效分期承诺，将一并收回——承诺与跟进记录随案保留，重派后新服务商可见完整历史。</span>
           </div>
           <el-table v-if="cePreview.promisedCases?.length" :data="cePreview.promisedCases" border size="small" max-height="200" style="margin-bottom:10px">
             <el-table-column prop="ownerName" label="业主" width="100" />
@@ -619,4 +634,7 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
 <style scoped>
 /* 派单/导入弹窗内嵌 EL 表格保持原生主题，不受本页 ds-admin 原生 table 规则影响 */
 .btn.txt.is-disabled { opacity: .5; cursor: not-allowed; }
+/* 服务商指标表：点行即选中，选中行高亮（与上方下拉互为镜像，避免"选了没反馈"） */
+:deep(.el-table .row-picked > td) { background: #ecf5ff !important; font-weight: 600; }
+:deep(.el-table .row-picked > td:first-child) { box-shadow: inset 3px 0 0 var(--primary); }
 </style>

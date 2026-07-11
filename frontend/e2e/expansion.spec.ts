@@ -24,7 +24,8 @@ test.describe('v1.1.0 工作台 + 派单决策', () => {
     // v1.17.0 动作按状态互斥：只有未派批次渲染「派单」（不绑定具体批次号——其他 spec 可能已把某批派掉）。
     await page.locator('a.btn.txt').filter({ hasText: /^派单$/ }).first().click()
     // 批次运营表新增「服务商」列后页面到处是服务商名——断言收窄到派单抽屉内
-    const drawer = page.getByRole('dialog').filter({ hasText: '服务商指标' })
+    // （抽屉分栏标题：派单对象 / 承接服务商 / 佣金比例）
+    const drawer = page.getByRole('dialog').filter({ hasText: '承接服务商' })
     await expect(drawer.getByText('近30天回款率')).toBeVisible()        // 指标表头
     await expect(drawer.getByText('捷信催收').first()).toBeVisible()   // 下拉与指标表均含
   })
