@@ -298,8 +298,8 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
           <th style="width:80px">回款率</th>
           <th style="width:130px">状态分布</th>
           <th>服务商</th>
-          <th v-if="showCommInRate" style="width:80px">收佣</th>
-          <th v-if="showPayOutRate" style="width:80px">付佣</th>
+          <th v-if="showCommInRate" style="width:88px">收佣比例</th>
+          <th v-if="showPayOutRate" style="width:88px">付佣比例</th>
           <th style="width:96px">状态</th>
           <th style="width:330px">操作</th>
         </tr>
