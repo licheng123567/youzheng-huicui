@@ -198,6 +198,9 @@ public class ScriptAiController {
                         + " WHERE id = ?",
                 promotedVariant, scriptId);
 
+        // 兑现"以变体实测回填"：晋升后按归因 promise 回填 wilson/rates（此前 docstring 说做而没做）。
+        flywheel.recomputeOne(scriptId);
+
         ScriptDto after = loadScriptOr404(String.valueOf(scriptId));
 
         // 敏感写留痕（支撑可回滚）：before=晋升前行，after=晋升后行。
@@ -493,17 +496,28 @@ public class ScriptAiController {
     // ── GET /script-lib/flywheel —— 话术有效性飞轮（BR-M5-12·平台护城河） ──
     // 漏斗从 call_recording/promise/repay_line 真实聚合；wilsonTrend 按月算承诺兑现率 Wilson 下界。
     @GetMapping("/script-lib/flywheel")
-    public Map<String, Object> getFlywheel() {
+    public Map<String, Object> getFlywheel(
+            @org.springframework.web.bind.annotation.RequestParam(value = "scriptId", required = false) String scriptId) {
         requirePlatform();
-        long connected = countOr0("SELECT count(*) FROM activity WHERE type = 'CALL'"); // 通话接通=通话动作总量(漏斗首段)
-        long signal = countOr0("SELECT count(*) FROM promise");                       // 命中承诺信号=登记的承诺
-        long registered = countOr0("SELECT count(*) FROM promise WHERE state <> 'BROKEN'"); // 有效承诺(未违约)
-        long fulfilled = countOr0("SELECT count(*) FROM promise WHERE state = 'FULFILLED'"); // 承诺兑现
+        // 单条话术漏斗:scriptId 命中则各段加 script_id 过滤;否则全库归因 promise。
+        Long sid = null;
+        if (scriptId != null && !scriptId.isBlank()) { try { sid = Long.valueOf(scriptId.trim()); } catch (NumberFormatException ignore) {} }
+        String sidFilter = sid == null ? "" : " AND script_id = " + sid;
+        // 单一总体单调子集(修正原口径:接通用 activity/无 repay/两不相干总体相除可>100%):
+        //   通话接通(有归因通话) ⊇ 登记承诺(有归因 promise) ⊇ 承诺兑现(FULFILLED) ⊇ 兑现回款(case 有非冲正回款)
+        long calls = countOr0("SELECT count(*) FROM call_recording WHERE case_id IN"
+                + " (SELECT DISTINCT case_id FROM promise WHERE script_id IS NOT NULL" + sidFilter + ")");
+        long registered = countOr0("SELECT count(*) FROM promise WHERE script_id IS NOT NULL" + sidFilter);
+        long fulfilled = countOr0("SELECT count(*) FROM promise WHERE script_id IS NOT NULL AND state = 'FULFILLED'" + sidFilter);
+        long repaid = countOr0("SELECT count(*) FROM promise p WHERE p.script_id IS NOT NULL AND p.state = 'FULFILLED'" + sidFilter
+                + " AND EXISTS (SELECT 1 FROM repay_line r WHERE r.case_id = p.case_id AND r.reversed = false)");
+        // 首段基数取"通话接通"与"登记承诺"较大者,保证漏斗单调不倒挂(一通电话可含多次承诺时以承诺为准)。
+        long base = Math.max(calls, registered);
         List<Map<String, Object>> funnel = new ArrayList<>();
-        funnel.add(stage("通话接通", connected, connected));
-        funnel.add(stage("命中承诺信号", signal, connected));
-        funnel.add(stage("登记承诺", registered, connected));
-        funnel.add(stage("承诺兑现回款", fulfilled, connected));
+        funnel.add(stage("通话接通", base, base));
+        funnel.add(stage("登记承诺", registered, base));
+        funnel.add(stage("承诺兑现", fulfilled, base));
+        funnel.add(stage("兑现回款", repaid, base));
 
         // wilsonTrend：近 4 个月，按月对「当月承诺的兑现率」算 Wilson 95% 置信下界。
         List<Map<String, Object>> trend = jdbc.query(
@@ -511,7 +525,8 @@ public class ScriptAiController {
                         + " count(*) AS total,"
                         + " count(*) FILTER (WHERE state = 'FULFILLED') AS ok"
                         + " FROM promise"
-                        + " WHERE created_at >= date_trunc('month', now()) - interval '3 months'"
+                        + " WHERE script_id IS NOT NULL" + sidFilter
+                        + "   AND created_at >= date_trunc('month', now()) - interval '3 months'"
                         + " GROUP BY date_trunc('month', created_at) ORDER BY date_trunc('month', created_at)",
                 (rs, i) -> {
                     long total = rs.getLong("total");

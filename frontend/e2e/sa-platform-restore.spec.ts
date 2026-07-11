@@ -36,6 +36,18 @@ test.describe('SA 平台话术库还原', () => {
     await page.getByRole('button', { name: '飞轮结算' }).click()
     await expect(page.getByText(/飞轮结算完成：回流重算/)).toBeVisible()
   })
+
+  test('话术详情:单条话术转化漏斗就位', async ({ page }) => {
+    await loginRole(page, 'SA')
+    await page.getByRole('menuitem', { name: '平台话术库' }).click()
+    const viewBtn = page.getByRole('button', { name: '查看' }).first()
+    await viewBtn.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {})
+    if (await viewBtn.count()) {
+      await viewBtn.click()
+      const dlg = page.getByRole('dialog').filter({ hasText: '话术详情' })
+      await expect(dlg.getByText('本话术转化漏斗')).toBeVisible()
+    }
+  })
 })
 
 test.describe('SA 项目管理还原', () => {

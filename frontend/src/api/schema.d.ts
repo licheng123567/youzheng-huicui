@@ -2321,7 +2321,7 @@ export interface paths {
         };
         /**
          * 话术有效性飞轮(承诺·回款转化漏斗 + Wilson 下界趋势 BR-M5-12·平台护城河)
-         * @description 飞轮可视化数据源:漏斗从 call_recording/promise/repay_line 真实聚合;wilsonTrend 按月算承诺兑现率的 Wilson 置信下界。仅平台可见(platform scope)。v1.13.0
+         * @description 漏斗从归因 promise 单调子集聚合(通话接通⊇登记承诺⊇承诺兑现⊇兑现回款);wilsonTrend 按月算兑现率 Wilson 下界。scriptId 命中则看单条话术漏斗。仅平台。v1.14.0
          */
         get: operations["getScriptFlywheel"];
         put?: never;
@@ -8224,7 +8224,10 @@ export interface operations {
     };
     getScriptFlywheel: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 单条话术漏斗(缺省=全库归因聚合;v1.14.0) */
+                scriptId?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;

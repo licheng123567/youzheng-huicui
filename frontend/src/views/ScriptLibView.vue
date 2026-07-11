@@ -45,9 +45,13 @@ function resetFilter() { filter.value = { scene: '', source: '', status: '' }; l
 // 场景选项从当前数据去重
 const scenes = computed(() => [...new Set(items.value.map((r) => r.scene).filter(Boolean))])
 
-// 查看详情
-const vDlg = ref(false); const vRow = ref<any>(null)
-function viewScript(row: any) { vRow.value = row; vDlg.value = true }
+// 查看详情(含单条话术漏斗 GET /script-lib/flywheel?scriptId)
+const vDlg = ref(false); const vRow = ref<any>(null); const vFunnel = ref<any[]>([])
+async function viewScript(row: any) {
+  vRow.value = row; vFunnel.value = []; vDlg.value = true
+  const { data } = await api.GET('/script-lib/flywheel', { params: { query: { scriptId: String(row.id) } } as any })
+  vFunnel.value = (data as any)?.funnel ?? []
+}
 
 // 话术有效性飞轮（GET /script-lib/flywheel）：转化漏斗 + Wilson 下界趋势
 const flywheel = ref<any>({ funnel: [], wilsonTrend: [], note: '' })
@@ -199,6 +203,15 @@ onMounted(() => { load(); loadFlywheel() })
           <el-descriptions-item label="回款转化">{{ pctRate(vRow.repayRate) }}</el-descriptions-item>
           <el-descriptions-item label="Wilson">{{ vRow.wilson != null ? vRow.wilson.toFixed(3) : '—' }}</el-descriptions-item>
         </el-descriptions>
+        <div class="sec-title" style="margin-top:12px">本话术转化漏斗</div>
+        <div v-for="f in vFunnel" :key="f.stage" style="display:flex;align-items:center;gap:8px;margin:4px 0">
+          <span style="width:80px;font-size:12px">{{ f.stage }}</span>
+          <div style="flex:1;height:12px;background:#e4e7ed;border-radius:6px;overflow:hidden">
+            <div :style="{ width: Math.min(f.pct,100) + '%', height:'100%', background:'var(--primary,#2563EB)', borderRadius:'6px' }"></div>
+          </div>
+          <span style="width:56px;font-size:12px;text-align:right">{{ f.n }} / {{ f.pct }}%</span>
+        </div>
+        <div v-if="!vFunnel.length" class="note">该话术暂无归因承诺（未被采纳或结果未回流）</div>
         <div class="sec-title" style="margin-top:12px">现行话术</div>
         <div style="white-space:pre-wrap;padding:8px;background:#f6f8fc;border-radius:6px">{{ vRow.variant?.text || '（正文在变体中·此条为 AI 挖掘种子）' }}</div>
         <template v-if="vRow.variant">
