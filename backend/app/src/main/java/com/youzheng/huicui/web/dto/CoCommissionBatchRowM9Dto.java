@@ -10,6 +10,8 @@ public record CoCommissionBatchRowM9Dto(
         String batchId,
         String batchName,
         java.math.BigDecimal rate,
+        Integer caseCount,
+        Long baseCents,
         Long dueCents,
         Long unsettledCents,
         Integer unsettledLineCount) {}

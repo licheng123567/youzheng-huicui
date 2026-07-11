@@ -45,9 +45,10 @@ export function navLabel(path: string, role: string): string {
   const base = PATH2LABEL[path]
   if (path === '/settlement' && (role === 'PL' || role === 'PC')) return '付佣对账'
   if (path === '/settlement-out' && role === 'VL') return '收佣对账'
-  // 公海收权后两侧看到的池不同（BR-M3-29），菜单名跟着说实话：
-  // 平台侧只有平台公海+开放池，服务商侧只有本商公海+开放池——统一叫「案件公海」反而含混。
-  if (path === '/sea') return role === 'SA' || role === 'SE' ? '平台公海' : '服务商公海'
+  // 公海收权后两侧看到的池不同（BR-M3-29）。平台侧菜单叫「平台公海」；
+  // 服务商侧沿用原型的「案件公海」（页内含 待接单/服务商公海/开放抢单池 三个 tab，
+  // 叫"服务商公海"会跟页内的同名 tab 打架——菜单是入口，tab 才是池）。
+  if (path === '/sea') return role === 'SA' || role === 'SE' ? '平台公海' : '案件公海'
   return base
 }
 

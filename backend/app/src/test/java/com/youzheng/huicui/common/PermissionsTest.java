@@ -31,6 +31,16 @@ class PermissionsTest {
     }
 
     @Test
+    void 支付申请单生成权只在平台_服务商只读_佣金线不受影响() {
+        // 2026-07 统一支付逻辑：收佣=平台发起物业确认平台标记;付佣=平台组单平台支付平台标记。
+        assertTrue(Permissions.of("SA").contains("payreq.create"));
+        assertTrue(Permissions.of("SE").contains("payreq.create"));
+        assertFalse(Permissions.of("VL").contains("payreq.create"),
+                "VL 对支付申请单只读——他的下游支付走佣金线(cocomm.manage)");
+        assertTrue(Permissions.of("VL").contains("cocomm.manage"));
+    }
+
+    @Test
     void 抢单与派单的既有分界不被本次收权动到() {
         assertTrue(Permissions.of("CO").contains("case.claim"), "抢单仅 CO");
         assertFalse(Permissions.of("VL").contains("case.claim"), "VL 是分配(case.assign)不是抢");

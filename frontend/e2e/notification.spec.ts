@@ -13,7 +13,7 @@ test.describe('v1.2.0 消息中心 + 公海事件', () => {
 
   test('公海页实时事件日志面板就位', async ({ page }) => {
     await loginAs(page, 'jx_co1')
-    await page.getByRole('menuitem', { name: '服务商公海' }).click()
+    await page.getByRole('menuitem', { name: '案件公海' }).click()
     await expect(page).toHaveURL(/\/sea/)
     await expect(page.getByText('实时事件流水')).toBeVisible()
   })

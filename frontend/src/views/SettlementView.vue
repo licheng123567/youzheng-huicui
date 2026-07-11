@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
@@ -16,11 +17,12 @@ const sides = computed<Array<'IN' | 'OUT'>>(() => (role.value === 'PL' || role.v
 // 平台角色：SA/SE；服务商角色：VL/CO
 const isPlatform = computed(() => role.value === 'SA' || role.value === 'SE')
 const isProvider = computed(() => role.value === 'VL' || role.value === 'CO')
-// 契约 x-settlement-side-rule: IN→平台(SA/SE)生成；OUT→服务商(VL)生成；generatedBy 服务端派生
-// canGenerate: 生成支付申请单权限（payreq.create + 线别与角色匹配）
-const canGenerate = computed(() => auth.has('payreq.create') && ((isPlatform.value && side.value === 'IN') || (isProvider.value && side.value === 'OUT')))
-// canRevoke: 撤销权限同口径——生成方才能撤销（与 canGenerate 同条件）
-const canRevoke = computed(() => auth.has('payreq.create') && ((isPlatform.value && side.value === 'IN') || (isProvider.value && side.value === 'OUT')))
+// 2026-07 统一支付逻辑：**双线均由平台生成/撤回**——收佣=平台发起→物业确认支付→平台标记；
+// 付佣=平台选批次案件明细形成付款单→平台支付→标记完成。服务商(VL)对支付申请单**只读**
+// （他的下游支付走「催收员佣金」co-pay-docs，那条线仍由 VL 勾选明细生成、支付后标记）。
+// VL 的 payreq.create 已在后端收走，这里的权限判定会自然为 false——双保险。
+const canGenerate = computed(() => auth.has('payreq.create') && isPlatform.value)
+const canRevoke = computed(() => auth.has('payreq.create') && isPlatform.value)
 // canComplete: 完成恒由平台受理(契约 completePaymentRequest x-data-scope=platform)——IN=平台确认收款 / OUT=平台支付+上传凭证(BR-M9-12)；仅 SA/SE 持 payreq.complete
 const canComplete = computed(() => auth.has('payreq.complete') && isPlatform.value)
 // H-01：PL/PC 物业角色对收佣支付申请单为「◐只读本物业」——可见但无生成/完成/撤销(读靠后端 scope+side-rule 裁剪 IN 线)。
@@ -192,7 +194,9 @@ async function openCoDocDetail(row: any) {
   if (error) { ElMessage.error('佣金单详情加载失败（可能已删除）'); return }
   coDetail.value = data; codDlg.value = true
 }
-onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
+const route = useRoute()
+// /settlement-out 进来锁 OUT 线(SA/SE 两条菜单各进各线;VL 只有 OUT,PL/PC 只有 IN,与 sides 口径自洽)
+onMounted(() => { side.value = route.path.includes('settlement-out') ? 'OUT' : (sides.value[0] as any); load(); loadCoComm() })
 </script>
 
 <template>
@@ -210,9 +214,10 @@ onMounted(() => { side.value = sides.value[0] as any; load(); loadCoComm() })
     <div class="toolbar">
       <span class="segctrl">
         <!-- 物业(PL/PC)视角 IN 线即付佣（物业付平台），对标原型 navLabel/§对账 relabel -->
-        <span v-for="s in sides" :key="s" :class="{ on: side === s }" @click="side = s; load()">{{ s==='IN'?(isReadonlyProperty?'付佣对账(IN)':'收佣线(IN)'):'付佣线(OUT)' }}</span>
+        <span v-for="s in sides" :key="s" :class="{ on: side === s }" @click="side = s; load()">{{ s==='IN'?(isReadonlyProperty?'付佣对账(IN)':'收佣线(IN)'):(isProvider?'收佣对账(OUT)':'付佣线(OUT)') }}</span>
       </span>
       <button v-if="canGenerate" class="btn sm" @click="openGenerate">勾选明细生成支付申请单</button>
+      <span v-if="isProvider" class="note" style="margin-left:8px">支付申请单由平台生成；批次内哪些明细已结算，点「回款明细」看结算状态列</span>
     </div>
 
     <div class="sec-title">对账汇总（GET /recon/rollup）</div>

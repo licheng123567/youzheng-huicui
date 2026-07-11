@@ -186,6 +186,8 @@ public class CoCommissionM9Controller {
                 "SELECT cc.batch_id,"
                         + "       b.no AS batch_name,"
                         + "       cc.rate,"
+                        + "       COUNT(DISTINCT rl.case_id) AS case_count,"
+                        + "       COALESCE(SUM(rl.amount_cents)::bigint, 0) AS base_cents,"
                         + "       COALESCE(SUM(round(rl.amount_cents * cc.rate))::bigint, 0) AS due_cents,"
                         + "       COALESCE(SUM(CASE WHEN rl.id IS NOT NULL AND NOT EXISTS ("
                         + "             SELECT 1 FROM co_pay_doc_line cpl"
@@ -212,6 +214,8 @@ public class CoCommissionM9Controller {
                         String.valueOf(rs.getLong("batch_id")),
                         rs.getString("batch_name"),
                         rs.getBigDecimal("rate"),
+                        rs.getInt("case_count"),
+                        rs.getLong("base_cents"),
                         rs.getLong("due_cents"),
                         rs.getLong("unsettled_cents"),
                         rs.getInt("unsettled_line_count")),

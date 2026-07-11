@@ -1414,7 +1414,10 @@ export interface paths {
         put?: never;
         /**
          * 生成支付申请单(收款方勾选案件回款明细组单 BR-M9-12a/b)
-         * @description **线别—生成方绑定(可验证鉴权)**：body.side=IN(收佣) 仅**平台**可生成、side=OUT(付佣) 仅**服务商**可生成；
+         * @description **线别—生成方绑定(可验证鉴权·2026-07 统一支付逻辑)**：IN(收佣)与 OUT(付佣) 均仅**平台**可生成——
+         *     收佣线=平台发起、物业确认支付、平台标记完成；付佣线=平台选择批次案件明细形成付款单、平台支付后标记完成，
+         *     **服务商不再生成支付申请单**，只读可见本商单据与批次内哪些明细已结算(settled)。
+         *     OUT 单的服务商归属从**明细快照推导**：所选 lines 的 provider_id_at_repay 须全部非空且一致(一张付款单只付一个服务商)；
          *     `generatedBy` 由**服务端从当前主体派生**(不接受前端传)。错线访问 → **403 BIZ_WRONG_SETTLE_SIDE**。
          */
         post: operations["createPaymentRequest"];
@@ -1475,7 +1478,7 @@ export interface paths {
         put?: never;
         /**
          * 撤销(收佣线·平台)/撤回(付佣线·服务商)支付申请单——仅 PENDING 可做→VOIDED、明细释放重组 BR-M9-12d
-         * @description 仅本单生成方可撤：IN→平台、OUT→服务商(本商)；错线/越权 → 403。已 PAID → 409。
+         * @description 仅本单生成方可撤：双线均平台(2026-07 统一支付逻辑·服务商对支付申请单只读)；错线/越权 → 403。已 PAID → 409。
          */
         post: operations["revokePaymentRequest"];
         delete?: never;
@@ -2697,7 +2700,7 @@ export interface components {
         /** @enum {string} */
         ChannelEnum: "WECHAT_QR" | "BANK_TRANSFER" | "CASH";
         /**
-         * @description IN=收佣(平台生成) OUT=付佣(服务商生成)
+         * @description IN=收佣(平台生成·物业确认·平台标记) OUT=付佣(平台生成·平台支付·平台标记；服务商只读 2026-07 统一)
          * @enum {string}
          */
         ReconSideEnum: "IN" | "OUT";
@@ -3638,12 +3641,16 @@ export interface components {
             settledCents?: components["schemas"]["Money"];
             unsettledCents?: components["schemas"]["Money"];
         };
-        /** @description 催收员佣金按批次下钻行(M-05 穿透·服务商内部) */
+        /** @description 催收员佣金按批次下钻行(M-05 穿透·服务商内部)。已结=dueCents-unsettledCents;批次待结算 ⟺ unsettledLineCount>0 */
         CoCommissionBatchRow: {
             batchId?: string;
             batchName?: string;
             /** @description 该批催收员佣金比例(分数 0-1) */
             rate?: components["schemas"]["Rate"];
+            /** @description 该批本催收员有回款的案件数(distinct case·到账快照归属;v1.10.0) */
+            caseCount?: number;
+            /** @description 回款金额合计(该批本催收员未冲正回款本金和·佣金基数;v1.10.0) */
+            baseCents?: components["schemas"]["Money"];
             /** @description 应结佣金 */
             dueCents?: components["schemas"]["Money"];
             /** @description 未结佣金 */
@@ -4093,7 +4100,7 @@ export interface components {
             avgHolding?: number;
             recentRepayRate?: components["schemas"]["Rate"];
         };
-        /** @description 催收员持仓余量(BR-M3-23·按余量推荐分配) */
+        /** @description 催收员持仓余量(BR-M3-23·按余量推荐分配)。v1.8.0 起兼任 VL 工作台「团队即时看板」(US-M10-03)数据源——同一批人、同一 own-org 裁剪，不另立端点 */
         CollectorCapacity: {
             collectorId: string;
             name: string;
@@ -4103,6 +4110,10 @@ export interface components {
             remaining: number;
             /** @description 余量最大者推荐 */
             recommended?: boolean;
+            /** @description 今日动作数=该催收员当日 activity 条数(通话/标注/跟进等,US-M10-03 团队即时看板) */
+            todayActions?: number;
+            /** @description 今日确认回款(其持有案件当日未冲正回款合计,US-M10-03) */
+            todayRepayCents?: components["schemas"]["Money"];
         };
         /** @description 经营报表(角色口径:物业本物业/服务商本商/平台全局;能力用量只量不金额) */
         ReportData: {

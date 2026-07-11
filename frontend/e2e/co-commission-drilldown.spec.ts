@@ -23,27 +23,34 @@ test.describe('US-M9-10 内催佣金穿透(VL)', () => {
     await expect(page.getByText(/内催|催收员佣金|佣金单/).first()).toBeVisible()
   })
 
-  test('生成佣金单：内催佣金面板结构 + 人→批次→明细勾选穿透弹窗(非手输)', async ({ page }) => {
+  test('佣金明细：名册操作=「明细」→ 批次统计 + 待结算/已结算分档 + 待结算内选明细生成', async ({ page }) => {
     // 「内催佣金」分隔标题(GET /co-commissions)恒在
     await expect(page.getByText(/内催佣金/)).toBeVisible()
-    // 该面板表头穿透字段(催收员/批次数/应结/未结)恒在(快照权威)
     await expect(page.getByText('催收员').first()).toBeVisible()
     await expect(page.getByText('批次数')).toBeVisible()
 
-    // 行级「生成佣金单」入口：仅当有催收员行时穿透验证(种子现实可能空)。
-    // 用 waitFor 而非裸 count()——count() 不自动等待，页面没渲染完就返回 0，
-    // 会让整个 if 分支被"静默跳过"，看着是绿的其实没测（PR#11 CI 正是这样掩盖了下面的 el-dialog 错误）。
-    const genBtn = page.getByRole('button', { name: /生成佣金单/ }).first()
-    await genBtn.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {})
-    if (await genBtn.count()) {
-      await genBtn.click()
-      // 穿透弹层是 DsDrawer(role=dialog)，不是 el-dialog
-      const dlg = page.getByRole('dialog').filter({ hasText: '生成佣金单' })
+    // 名册操作栏是「明细」（不再是「生成佣金单」——组单入口收进明细弹窗的待结算档）
+    const detailBtn = page.getByRole('button', { name: /^明细$/ }).first()
+    await detailBtn.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {})
+    if (await detailBtn.count()) {
+      await detailBtn.click()
+      const dlg = page.getByRole('dialog').filter({ hasText: '佣金明细' })
       await expect(dlg).toBeVisible()
-      // 批次以下拉选择(el-select)穿透，非手输框
-      await expect(dlg.locator('.el-select')).toBeVisible()
-      // 明细勾选区为 el-table(type=selection)，非手输 lineIds
-      await expect(dlg.locator('.el-table')).toBeVisible()
+      // 待结算/已结算两档 + 批次统计表头(案件数/回款金额/应结/已结/未结)
+      await expect(dlg.locator('.segctrl span', { hasText: /待结算/ })).toBeVisible()
+      await expect(dlg.locator('.segctrl span', { hasText: /已结算/ })).toBeVisible()
+      await expect(dlg.getByText('案件数')).toBeVisible()
+      await expect(dlg.getByText('回款金额')).toBeVisible()
+      await expect(dlg.locator('th', { hasText: /^已结$/ })).toBeVisible()
+      // 待结算档下点批次「选明细」→ 展开明细勾选表(type=selection·非手输)
+      const pick = dlg.getByRole('button', { name: /选明细/ }).first()
+      await pick.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {})
+      if (await pick.count()) {
+        await pick.click()
+        await expect(dlg.getByText(/选择未结明细生成佣金单/)).toBeVisible()
+        await expect(dlg.locator('.el-table').last()).toBeVisible()
+        await expect(dlg.getByRole('button', { name: /生成佣金支付单/ })).toBeVisible()
+      }
     }
   })
 
@@ -54,15 +61,36 @@ test.describe('US-M9-10 内催佣金穿透(VL)', () => {
 
     // 行级「详情」：仅当有佣金支付单行时穿透验证(种子现实可能空)
     const detailBtn = page.getByRole('button', { name: /^详情$/ })
+    await detailBtn.first().waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {})
     if (await detailBtn.count()) {
       await detailBtn.first().click()
-      const dlg = page.locator('.el-dialog').filter({ hasText: /佣金支付单详情|佣金单/ })
+      // 详情弹层是 DsDrawer(role=dialog·标题「佣金支付单详情」)，不是 el-dialog
+      const dlg = page.getByRole('dialog').filter({ hasText: '佣金支付单详情' })
       await expect(dlg).toBeVisible()
       // 快照表头穿透字段(明细快照 lines：业主/房号/回款/佣金)
-      await expect(dlg.getByText(/业主/)).toBeVisible()
-      await expect(dlg.getByText(/房号/)).toBeVisible()
-      await expect(dlg.getByText(/回款/)).toBeVisible()
+      await expect(dlg.getByText(/业主/).first()).toBeVisible()
+      await expect(dlg.getByText(/房号/).first()).toBeVisible()
+      await expect(dlg.getByText(/回款/).first()).toBeVisible()
       await expect(dlg.getByText(/佣金/).first()).toBeVisible()
+    }
+  })
+
+  test('佣金支付单已结算/未结算分档：tab 切换过滤，合计随档展示', async ({ page }) => {
+    // 分档 segctrl 三档恒在（对齐平台↔服务商对账体验，服务商一眼看清哪些付了）
+    const seg = page.locator('.segctrl', { hasText: '全部' })   // 付佣单档(全部/未结算/已结算)——佣金明细弹窗的段控只有待结算/已结算,用「全部」区分
+    await expect(seg.locator('span', { hasText: /^全部/ })).toBeVisible()
+    await expect(seg.locator('span', { hasText: /^未结算/ })).toBeVisible()
+    await expect(seg.locator('span', { hasText: /^已结算/ })).toBeVisible()
+    // 合计条：未结算/已结算金额分别展示
+    await expect(page.getByText(/未结算合计/)).toBeVisible()
+    await expect(page.getByText(/已结算合计/)).toBeVisible()
+    // 切到「已结算」档：表内只应出现已结算标签，不应出现未结算标签（种子有一结一未结）
+    await seg.locator('span', { hasText: /^已结算/ }).click()
+    const rows = page.locator('.card table').last().locator('tbody tr')
+    if (await rows.filter({ hasText: '催收员' }).count() === 0) {
+      const badges = rows.locator('.tag')
+      const n = await badges.count()
+      for (let i = 0; i < n; i++) await expect(badges.nth(i)).not.toHaveText('未结算')
     }
   })
 
@@ -77,8 +105,8 @@ test.describe('US-M9-10 内催佣金穿透(VL)', () => {
       // 二次确认（el-message-box 或对话框）
       const confirm = page.getByRole('button', { name: /确定|确认/ })
       if (await confirm.count()) await confirm.first().click().catch(() => {})
-      // 确认后该行状态标签变「已结」(SETTLED 中文显示)
-      await expect(page.getByText('已结').first()).toBeVisible()
+      // 确认后该行状态标签变「已结算」(SETTLED 中文显示)
+      await expect(page.getByText('已结算').first()).toBeVisible()
     }
   })
 })

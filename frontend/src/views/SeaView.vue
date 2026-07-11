@@ -11,11 +11,29 @@ import DsDrawer from '../components/DsDrawer.vue'
 // 平台公海对他们从来是空集，留着分段只是暴露一个永远为空的概念。物业(PL/PC)无 sea.view，进不了本页。
 const auth = useAuth()
 const isPlatformSide = computed(() => auth.me?.role === 'SA' || auth.me?.role === 'SE')
+// 待接单 tab 只对能承接的人(服务商负责人)有意义——按权限点判,不写死角色名
+const canAccept = computed(() => auth.has('case.accept'))
 const items = ref<any[]>([])
 const total = ref(0)
 const loading = ref(false)
 const acting = ref('')
 const pool = ref<'platform' | 'provider' | 'open'>('provider') // /sea 必填池筛选；平台侧 onMounted 落到 platform
+// 服务商公海池里 S1(待接单 status=PENDING_DISPATCH)和 S2(已接单 status=PROVIDER_SEA)**pool 相同**，
+// 后端一次返回、前端按 status 分两个 tab（BR-M3-03a：接单→进服务商公海待分配；拒接→退回平台公海）。
+const subTab = ref<'accept' | 'list'>('list')
+const isPending = (r: any) => r.status === 'PENDING_DISPATCH'
+const pendingRows = computed(() => (pool.value === 'provider' ? items.value.filter(isPending) : []))
+const seaRows = computed(() => (pool.value === 'provider' ? items.value.filter((r) => !isPending(r)) : items.value))
+// 待接单按**批次**分组（原型口径：平台整批/拆单派来，接单拒接都是批次粒度；后端端点是案件级，整批=逐案调用）
+const pendingBatches = computed(() => {
+  const m = new Map<string, any>()
+  for (const r of pendingRows.value) {
+    const g = m.get(r.batchId) ?? { batchId: r.batchId, projectName: r.projectName, cases: [] as any[], dueCents: 0 }
+    g.cases.push(r); g.dueCents += r.dueCents ?? 0
+    m.set(r.batchId, g)
+  }
+  return [...m.values()]
+})
 const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
 const poolName = (p: string) => ({ PLATFORM_SEA: '平台公海', PROVIDER_SEA: '服务商公海', OPEN_POOL: '开放抢单池', PRIVATE: '私海' } as any)[p] ?? p
 // T2 倒计时（基于 t2DeadlineAt）：剩余天/时；<24h 标红(BR-M3-13a 预警提前量)
@@ -27,7 +45,15 @@ async function load() {
   loading.value = true
   const { data, error } = await api.GET('/sea', { params: { query: { pool: pool.value, page: 1, size: 50 } } })
   loading.value = false
-  if (error) { ElMessage.error('加载公海失败'); return }
+  if (error) {
+    // sea.view 是 2026-07 新加的权限点(BR-M3-29),权限集签在 JWT 里——
+    // 收权部署前登录的老 token 没有它,会在这里吃 403。指条明路,别只报一句失败。
+    const code = (error as any)?.code
+    ElMessage.error(code === 'PERM_403'
+      ? '加载公海失败：登录凭证里还没有新权限（近期有权限调整），请退出后重新登录'
+      : '加载公海失败：' + ((error as any)?.message ?? ''))
+    return
+  }
   items.value = data?.items ?? []
   total.value = data?.meta?.total ?? 0
 }
@@ -41,11 +67,33 @@ async function act(id: string, path: any, verb: string, body?: any) {
   ElMessage.success(`${verb}成功`)
   load()
 }
-// VL 拒接：须填原因（ReasonInput.reason，BR-M3-03a），否则后端 422
-async function rejectCase(id: string) {
+// 整批承接/拒接（BR-M3-03a）：后端只有案件级端点，整批=逐案串行调用；
+// 一案失败即停并提示进度，避免半批接单后前端谎报「整批成功」。
+async function acceptBatch(b: any) {
+  acting.value = 'accept' + b.batchId
+  let done = 0
+  for (const c of b.cases) {
+    const { error } = await api.POST('/cases/{id}/accept', { params: { path: { id: c.id } } } as any)
+    if (error) { ElMessage.error(`承接中断：第 ${done + 1}/${b.cases.length} 件失败（${(error as any)?.message ?? ''}）`); acting.value = ''; load(); return }
+    done++
+  }
+  acting.value = ''
+  ElMessage.success(`已承接 ${done} 件，进入服务商公海待分配`)
+  load()
+}
+async function rejectBatch(b: any) {
   try {
-    const { value: reason } = await ElMessageBox.prompt('拒接原因（BR-M3-03a 必填）', '拒接案件', { inputValidator: (v: string) => !!v || '原因必填' })
-    await act(id, '/cases/{id}/reject', '拒接', { reason })
+    const { value: reason } = await ElMessageBox.prompt('拒接原因（BR-M3-03a 必填·整批退回平台公海重派）', '拒接批次', { inputValidator: (v: string) => !!v || '原因必填' })
+    acting.value = 'reject' + b.batchId
+    let done = 0
+    for (const c of b.cases) {
+      const { error } = await api.POST('/cases/{id}/reject', { params: { path: { id: c.id } }, body: { reason } } as any)
+      if (error) { ElMessage.error(`拒接中断：第 ${done + 1}/${b.cases.length} 件失败`); acting.value = ''; load(); return }
+      done++
+    }
+    acting.value = ''
+    ElMessage.success(`已拒接 ${done} 件，退回平台公海重派`)
+    load()
   } catch { /* 取消 */ }
 }
 // VL 指派：把本商承接的案件分给某催收员（POST /cases/{id}/assign）
@@ -188,14 +236,44 @@ const evTag = (ev: string) => EV_TAG[ev] ?? 'inf'
       <div class="ops"><span class="note" style="margin:0">GET /sea · 共 {{ total }} · 动作按 /me 权限门控</span></div>
     </div>
 
-    <!-- 池筛选分段（/sea 必填 pool · 平台侧=平台公海+开放池 / 服务商侧=本商公海+开放池 BR-M3-29） -->
+    <!-- 池筛选分段（/sea 必填 pool · 平台侧=平台公海+开放池 / 服务商侧=待接单(仅VL)+本商公海+开放池 BR-M3-29） -->
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
       <span class="segctrl">
         <span v-if="isPlatformSide" :class="{ on: pool === 'platform' }" @click="pool = 'platform'; load()">平台公海</span>
-        <span v-if="!isPlatformSide" :class="{ on: pool === 'provider' }" @click="pool = 'provider'; load()">服务商公海</span>
+        <span v-if="!isPlatformSide && canAccept" :class="{ on: pool === 'provider' && subTab === 'accept' }"
+          @click="pool = 'provider'; subTab = 'accept'; load()">待接单<span v-if="pendingRows.length" class="tag dan" style="margin-left:4px">{{ pendingRows.length }}</span></span>
+        <span v-if="!isPlatformSide" :class="{ on: pool === 'provider' && subTab === 'list' }"
+          @click="pool = 'provider'; subTab = 'list'; load()">服务商公海</span>
         <span :class="{ on: pool === 'open' }" @click="pool = 'open'; load()">开放抢单池</span>
       </span>
     </div>
+
+    <!-- 待接单（仅 VL·批次粒度 BR-M3-03a）：接单→进服务商公海待分配；拒接→整批退回平台公海重派 -->
+    <template v-if="pool === 'provider' && subTab === 'accept' && canAccept">
+      <div class="alert info" style="margin-bottom:12px">平台派单（整批/拆单）到本服务商后需<b>承接</b>：接单 → 案件进入<b>服务商公海</b>待分配给催收员；拒接 → 退回平台公海由平台重派（须填原因）。</div>
+      <table v-loading="loading">
+        <thead>
+          <tr><th>批次</th><th>项目</th><th style="width:90px">案件数</th><th style="width:130px">应收合计</th><th style="width:200px">操作</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="b in pendingBatches" :key="b.batchId">
+            <td><b>批次 #{{ b.batchId }}</b></td>
+            <td>{{ b.projectName || '—' }}</td>
+            <td class="num">{{ b.cases.length }}</td>
+            <td class="num">{{ yuan(b.dueCents) }}</td>
+            <td @click.stop>
+              <button class="btn txt" :disabled="acting==='accept'+b.batchId" @click="acceptBatch(b)">接单（承接）</button>
+              <button class="btn txt dgc" :disabled="acting==='reject'+b.batchId" @click="rejectBatch(b)">拒接</button>
+            </td>
+          </tr>
+          <tr v-if="!loading && !pendingBatches.length">
+            <td colspan="5" style="text-align:center;color:var(--sec);padding:32px 0">暂无待接单批次</td>
+          </tr>
+        </tbody>
+      </table>
+    </template>
+
+    <template v-else>
 
     <!-- 工具栏：批量分配(case.assign) / 释放记录(own-org · VL) -->
     <div v-if="auth.has('case.assign')" class="toolbar" style="margin-bottom:12px">
@@ -218,7 +296,7 @@ const evTag = (ev: string) => EV_TAG[ev] ?? 'inf'
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in items" :key="row.id">
+        <tr v-for="row in seaRows" :key="row.id">
           <td v-if="auth.has('case.assign')" @click.stop>
             <input type="checkbox" :checked="selectedCaseIds.includes(row.id)"
               @change="onSelectionChange(items.filter((r:any) => selectedCaseIds.includes(r.id) !== (r.id === row.id)))" />
@@ -234,30 +312,26 @@ const evTag = (ev: string) => EV_TAG[ev] ?? 'inf'
             <span v-else>—</span>
           </td>
           <td @click.stop>
-            <!-- CO：抢单（本商公海/开放池可抢） -->
-            <button v-if="auth.has('case.claim') && ['PROVIDER_SEA','OPEN_POOL'].includes(row.pool)" class="btn txt"
+            <!-- CO：抢单（本商公海已承接(S2)/开放池；S1 待接单还没进公海，不可抢） -->
+            <button v-if="auth.has('case.claim') && ['PROVIDER_SEA','OPEN_POOL'].includes(row.pool) && row.status!=='PENDING_DISPATCH'" class="btn txt"
               :disabled="acting===row.id+'抢单'" @click="act(row.id,'/cases/{id}/claim','抢单')">抢单</button>
-            <!-- VL：承接/拒接（已派到本商、待接） -->
-            <template v-if="auth.has('case.accept') && row.pool==='PROVIDER_SEA'">
-              <button class="btn txt" :disabled="acting===row.id+'承接'" @click="act(row.id,'/cases/{id}/accept','承接')">承接</button>
-              <button class="btn txt dgc" :disabled="acting===row.id+'拒接'" @click="rejectCase(row.id)">拒接</button>
-            </template>
             <!-- SA：开放抢单（平台公海案件→开放池） -->
             <button v-if="auth.has('case.dispatch') && row.pool==='PLATFORM_SEA'" class="btn txt"
               :disabled="acting===row.id+'开放抢单'" @click="act(row.id,'/cases/{id}/open-for-claim','开放抢单')">开放抢单</button>
             <!-- SA/SE：单案再派（平台公海案件→改派目标服务商 US-M3-02） -->
             <button v-if="auth.has('case.dispatch') && row.pool==='PLATFORM_SEA'" class="btn txt"
               :disabled="acting===row.id+'再派'" @click="openRedispatch(row.id)">再派</button>
-            <!-- VL：指派给催收员（本商承接的公海案件） -->
-            <button v-if="auth.has('case.assign') && row.pool==='PROVIDER_SEA'" class="btn txt"
+            <!-- VL：指派给催收员（本商已承接(S2)的公海案件；S1 先走待接单 tab） -->
+            <button v-if="auth.has('case.assign') && row.pool==='PROVIDER_SEA' && row.status!=='PENDING_DISPATCH'" class="btn txt"
               @click="openAssign(row.id)">指派</button>
           </td>
         </tr>
-        <tr v-if="!loading && !items.length">
+        <tr v-if="!loading && !seaRows.length">
           <td :colspan="auth.has('case.assign') ? 9 : 8" style="text-align:center;color:var(--sec);padding:32px 0">当前公海暂无可抢案件</td>
         </tr>
       </tbody>
     </table>
+    </template>
 
     <div class="alert info" style="margin-top:12px">
       按角色登录看不同动作：CO(jx_co1) 见抢单 / VL(jx_vl) 见承接拒接 / SA(admin) 见开放抢单。服务端 x-permission+状态机双重校验。

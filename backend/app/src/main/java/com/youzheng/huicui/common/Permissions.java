@@ -43,8 +43,10 @@ public final class Permissions {
                     "case.call");
                     // 物业侧：处理 CO 转来的工单(ticket.handle)；case.reduce 发起减免/留痕但无 reduce.approve 核准权（超档转 PL）。
                     // case.call：BR-M4-01a 物业(PL/PC)可获取/回填本物业案件通话录音并查看 AI 复盘（case-actor 行级裁剪仅本物业）
-            // 服务商负责人：承接/拒接/分配/退案 + 处置/上报本商催收员风险 + 管本商成员
-            case "VL" -> Set.of("case.accept", "case.assign", "case.return", "cocomm.manage", "payreq.create",
+            // 服务商负责人：承接/拒接/分配/退案 + 处置/上报本商催收员风险 + 管本商成员。
+            //   payreq.create 已收走(2026-07 统一支付逻辑)：付佣支付申请单改由**平台**选批次明细生成,
+            //   VL 对支付申请单只读;VL 自己的下游支付单走佣金线 co-pay-docs(cocomm.manage),不受影响。
+            case "VL" -> Set.of("case.accept", "case.assign", "case.return", "cocomm.manage",
                     "qc.dispose", "qc.escalate", "member.manage", "sea.view");
             // 催收员：抢单/释放/跟进/通话/承诺/开工单(case.ticket)/缴费链接。回款登记/冲正属 PC/SA，CO 无权(矩阵:58-59)
             //   sea.view(BR-M3-29)：公海对 SA/SE/VL/CO 开放——物业角色(PL/PC)**没有**这个点，
