@@ -37,14 +37,38 @@ async function load() {
 // M3 派单/重派（用户定：批次一律整体派 WHOLE，不拆分——同批一个服务商，催不动走 结项→重派）。
 // 动作按状态互斥：未派+无承接史→「派单」；未派+有承接史(结项过)→「重派」；已派→只有「结项」。
 const dlg = ref(false)
-const form = ref<any>({ batchId: '', providerId: '', payOutRate: 0.2, redispatch: false })
+// 佣金比例（撮合设定·平台最终决定权）：派单即一处同定双佣——
+//   收佣 commIn = 物业公司支付平台（IN，物业可先提案，平台最终确认）；
+//   付佣 payOut = 平台支付服务商（OUT）。防倒挂：付佣 ≤ 收佣（平台毛利 ≥ 0）。
+//   提交时先 PUT /batches/{id}/commission-rates 确认双佣（置 comm_in_confirmed=true），再 dispatch/redispatch。
+// 表单比率用百分数（0-100）便于输入，提交按 /100 转分数（全栈 Rate=分数口径）。
+const form = ref<any>({ batchId: '', providerId: '', commInPct: null as number | null, payOutPct: null as number | null, redispatch: false })
+const commStatus = ref<any>({})      // {commInRate,payOutRate,commInConfirmed}（comm-status 非契约端点）
+const marginPct = computed(() => (form.value.commInPct != null && form.value.payOutPct != null)
+  ? Math.round((form.value.commInPct - form.value.payOutPct) * 100) / 100 : null)
+const ratesInvalid = computed(() => form.value.commInPct == null || form.value.payOutPct == null
+  || form.value.commInPct < 0 || form.value.commInPct > 100
+  || form.value.payOutPct < 0 || form.value.payOutPct > form.value.commInPct)
 // 重派软警示：上一承接段（服务商/结项原因）——结项后重派对象含派回原商由平台裁量，仅提示不拦截（v1.17.0）
 const lastSeg = ref<any>(null)
 function openDispatch(id: string, redispatch = false) {
-  form.value = { batchId: id, providerId: '', payOutRate: 0.2, redispatch }
-  lastSeg.value = null; dlg.value = true
+  form.value = { batchId: id, providerId: '', commInPct: null, payOutPct: null, redispatch }
+  commStatus.value = {}; lastSeg.value = null; dlg.value = true
   loadMetrics()                      // 服务商下拉数据源 + 指标决策辅助（BR-M3-24）
+  loadCommStatus(id)                 // 预填双佣（物业提案值/既定值）
   if (redispatch) loadLastSegment(id)
+}
+async function loadCommStatus(batchId: string) {
+  try {
+    const res = await fetch(`/v1/batches/${batchId}/comm-status`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` },
+    })
+    const c = res.ok ? await res.json() : {}
+    commStatus.value = c
+    const toPct = (f?: number | null) => (f == null ? null : Math.round(f * 10000) / 100)
+    form.value.commInPct = toPct(c.commInRate)            // 物业提案/既定收佣
+    form.value.payOutPct = toPct(c.payOutRate) ?? 20      // 既定付佣，无则默认 20%
+  } catch { commStatus.value = {} }
 }
 async function loadLastSegment(batchId: string) {
   const { data } = await api.GET('/batches/{id}/engagements', { params: { path: { id: batchId } } })
@@ -100,13 +124,32 @@ async function loadMetrics() {
 }
 async function submitDispatch() {
   if (!form.value.providerId) { ElMessage.warning('请选择服务商'); return }
-  const body: any = { mode: 'WHOLE', providerId: form.value.providerId, payOutRate: form.value.payOutRate }
+  if (ratesInvalid.value) { ElMessage.warning('佣金比例非法：须 0-100，且付佣 ≤ 收佣（防倒挂）'); return }
+  const commInRate = form.value.commInPct / 100
+  const payOutRate = form.value.payOutPct / 100
   acting.value = form.value.batchId
+
+  // ① 平台一处同定双佣（撮合设定·平台最终决定权）：PUT /commission-rates 置 comm_in_confirmed=true，
+  //    后端复核防倒挂（BIZ_PAYOUT_INVERT）。非契约端点，带鉴权 fetch 直调（同 BatchDetailView）。
+  const res = await fetch(`/v1/batches/${form.value.batchId}/commission-rates`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ commInRate, payOutRate }),
+  })
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({} as any))
+    acting.value = ''
+    ElMessage.error('确认佣金比例失败：' + (e.message ?? res.status)); return
+  }
+
+  // ② 整批派单/重派（付佣随双佣落库，dispatch 再写一次保持既有语义一致）。
+  const body: any = { mode: 'WHOLE', providerId: form.value.providerId, payOutRate }
   const ep = form.value.redispatch ? '/batches/{id}/redispatch' : '/batches/{id}/dispatch'
   const { error } = await api.POST(ep as any, { params: { path: { id: form.value.batchId } }, body })
   acting.value = ''; dlg.value = false
   if (error) { ElMessage.error((form.value.redispatch ? '重派' : '派单') + '失败：' + ((error as any)?.message ?? '')); return }
-  ElMessage.success(form.value.redispatch ? '已重派' : '已派单'); load()
+  ElMessage.success((form.value.redispatch ? '已重派' : '已派单') + `（收佣 ${form.value.commInPct}% · 付佣 ${form.value.payOutPct}% · 毛利 ${marginPct.value}%）`)
+  load()
 }
 // ── 批次导入向导（3 步：① 填信息 + 逐条录入 → ② 提交校验 → ③ 查看结果）──
 const impDlg = ref(false)
@@ -359,9 +402,37 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
           </el-table>
           <span style="color:#909399;font-size:12px">仅客观指标陈列，不评分/不加权（BR-M3-24）。点行即选中该服务商。</span>
         </el-form-item>
-        <el-form-item label="付佣比例(小数)"><el-input-number v-model="form.payOutRate" :min="0" :max="1" :step="0.01" /><span style="margin-left:8px;color:#909399">0.2=20%（须≤收佣，防倒挂）</span></el-form-item>
       </el-form>
-      <template #footer><el-button @click="dlg=false">取消</el-button><el-button type="primary" :loading="acting===form.batchId" @click="submitDispatch">{{ form.redispatch?'整批重派':'整批派单' }}</el-button></template>
+
+      <!-- 佣金比例（撮合设定·平台最终决定权）：一处同定 收佣(物业付平台) + 付佣(平台付服务商) -->
+      <div class="sec-title" style="margin-top:6px">
+        佣金比例（撮合设定 · 平台最终决定权）
+        <span style="font-size:12px;color:var(--sec);font-weight:400;margin-left:8px">派单即确认双方佣金；防倒挂：付佣 ≤ 收佣</span>
+      </div>
+      <div class="alert info" style="margin-top:0;margin-bottom:10px">
+        <b>收佣比例</b>=物业公司支付平台（IN 收佣线，物业可先提案、平台最终确认）；
+        <b>付佣比例</b>=平台支付服务商（OUT 付佣线）。平台毛利 = 收佣 − 付佣。
+      </div>
+      <el-form label-width="120px">
+        <el-form-item label="收佣比例(%)" required>
+          <el-input-number v-model="form.commInPct" :min="0" :max="100" :step="1" :precision="2" />
+          <span style="margin-left:8px;color:#909399">物业 → 平台</span>
+          <span v-if="commStatus.commInConfirmed != null" class="tag" :class="commStatus.commInConfirmed ? 'suc' : 'inf'" style="margin-left:8px">
+            {{ commStatus.commInConfirmed ? '平台已确认' : '物业提案·待平台确认' }}
+          </span>
+        </el-form-item>
+        <el-form-item label="付佣比例(%)" required>
+          <el-input-number v-model="form.payOutPct" :min="0" :max="100" :step="1" :precision="2" />
+          <span style="margin-left:8px;color:#909399">平台 → 服务商</span>
+        </el-form-item>
+        <el-form-item label="平台毛利">
+          <span class="tag" :class="(marginPct != null && marginPct < 0) ? 'dan' : 'pri'" style="font-size:14px">
+            {{ marginPct != null ? marginPct + '%' : '—' }}
+          </span>
+          <span v-if="ratesInvalid" class="tag dan" style="margin-left:8px">比例非法：须 0-100 且 付佣 ≤ 收佣（防倒挂）</span>
+        </el-form-item>
+      </el-form>
+      <template #footer><el-button @click="dlg=false">取消</el-button><el-button type="primary" :loading="acting===form.batchId" :disabled="ratesInvalid || !form.providerId" @click="submitDispatch">{{ form.redispatch?'确认双佣并重派':'确认双佣并派单' }}</el-button></template>
     </DsDrawer>
 
     <!-- v1.17.0 结项确认（终止当前服务商承接·全部收回+承诺保留） -->

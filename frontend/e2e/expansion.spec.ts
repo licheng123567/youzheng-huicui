@@ -21,8 +21,8 @@ test.describe('v1.1.0 工作台 + 派单决策', () => {
     await loginAs(page, 'admin')
     await page.getByRole('menuitem', { name: '案件运营' }).click()
     await expect(page).toHaveURL(/\/batches/)
-    // v1.17.0 动作按状态互斥：未派批次(如种子 B-CH-M3-S0)才有「派单」；打开即自动加载指标(不再手点加载)。
-    await page.locator('tbody tr', { hasText: 'B-CH-M3-S0' }).getByText('派单', { exact: true }).click()
+    // v1.17.0 动作按状态互斥：只有未派批次渲染「派单」（不绑定具体批次号——其他 spec 可能已把某批派掉）。
+    await page.locator('a.btn.txt').filter({ hasText: /^派单$/ }).first().click()
     // 批次运营表新增「服务商」列后页面到处是服务商名——断言收窄到派单抽屉内
     const drawer = page.getByRole('dialog').filter({ hasText: '服务商指标' })
     await expect(drawer.getByText('近30天回款率')).toBeVisible()        // 指标表头
