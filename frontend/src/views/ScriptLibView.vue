@@ -49,6 +49,13 @@ const scenes = computed(() => [...new Set(items.value.map((r) => r.scene).filter
 const vDlg = ref(false); const vRow = ref<any>(null)
 function viewScript(row: any) { vRow.value = row; vDlg.value = true }
 
+// 话术有效性飞轮（GET /script-lib/flywheel）：转化漏斗 + Wilson 下界趋势
+const flywheel = ref<any>({ funnel: [], wilsonTrend: [], note: '' })
+async function loadFlywheel() {
+  const { data } = await api.GET('/script-lib/flywheel', {} as any)
+  flywheel.value = data ?? { funnel: [], wilsonTrend: [], note: '' }
+}
+
 // 新建话术对话框。数组/对象字段初始即初始化，防白屏。
 const dlg = ref(false)
 const form = reactive<ScriptInput>({ scene: '', intent: '', cohort: '', text: '' })
@@ -75,7 +82,7 @@ async function promote(row: any) {
   load()
 }
 
-onMounted(load)
+onMounted(() => { load(); loadFlywheel() })
 </script>
 
 <template>
@@ -137,6 +144,35 @@ onMounted(load)
         </tr>
       </tbody>
     </table>
+
+    <!-- 话术有效性飞轮（承诺·回款转化信号 BR-M5-12） -->
+    <div class="sec-title" style="margin-top:18px">话术有效性飞轮（承诺·回款转化信号）</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;flex-wrap:wrap">
+      <div>
+        <div class="sec-title" style="font-size:12px;margin-bottom:8px">转化漏斗</div>
+        <div v-for="f in flywheel.funnel" :key="f.stage" style="display:flex;align-items:center;gap:8px;margin:6px 0">
+          <span style="width:100px;font-size:12px">{{ f.stage }}</span>
+          <div style="flex:1;height:14px;background:#e4e7ed;border-radius:7px;overflow:hidden">
+            <div :style="{ width: Math.min(f.pct, 100) + '%', height: '100%', background: 'var(--primary,#2563EB)', borderRadius: '7px' }"></div>
+          </div>
+          <span style="width:78px;font-size:12px;text-align:right">{{ f.n }} / {{ f.pct }}%</span>
+        </div>
+        <div v-if="!flywheel.funnel.length" class="note">暂无转化数据</div>
+      </div>
+      <div>
+        <div class="sec-title" style="font-size:12px;margin-bottom:8px">Wilson 下界趋势（月度承诺兑现率置信下界）</div>
+        <div v-for="t in flywheel.wilsonTrend" :key="t.m" style="display:flex;align-items:center;gap:8px;margin:6px 0">
+          <span style="width:40px;font-size:12px">{{ t.m }}</span>
+          <div style="flex:1;height:14px;background:#e4e7ed;border-radius:7px;overflow:hidden">
+            <div :style="{ width: (t.w * 100) + '%', height: '100%', background: '#15A35B', borderRadius: '7px' }"></div>
+          </div>
+          <span style="width:48px;font-size:12px;text-align:right">{{ t.w }}</span>
+        </div>
+        <div v-if="!flywheel.wilsonTrend.length" class="note">暂无月度趋势</div>
+      </div>
+    </div>
+    <div class="note" style="margin-top:8px">{{ flywheel.note }}</div>
+    <div class="alert info" style="margin-top:10px">话术库样本经脱敏合规处理：训练与样本已剥离业主 PII，对外仅输出 AI 策略与话术建议。</div>
 
     <DsDrawer v-model="vDlg" :title="`话术详情 · ${vRow?.scene ?? ''}`" :width="560">
       <template v-if="vRow">

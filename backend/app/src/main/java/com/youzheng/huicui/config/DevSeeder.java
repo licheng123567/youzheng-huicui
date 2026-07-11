@@ -158,6 +158,7 @@ public class DevSeeder implements CommandLineRunner {
 
         // ── 催收员业绩/结算演示数据（我的业绩 GET /me/stats + 我的结算 GET /me/settlement 全字段可见）──
         seedCoPerformance(proj, provider, co1, co2);
+        seedFlywheelAndPlaybookV2(proj);
 
         // 案件级 provider_id 回填（V913）：DevSeeder 经 SQL 直插案件、绕过 dispatch/accept 控制器，
         // 故 case.provider_id 留空；而 V913 回填在 Flyway 期(种子前)执行、看不到这些行。
@@ -1520,6 +1521,43 @@ public class DevSeeder implements CommandLineRunner {
     //   co_commission(co1×B-CH-M3-S2=8%、co2=6%) + batch1 回款归属回填(co1·15%)
     //   SETTLED co_pay_doc 关联 batch1 已结明细 → "已结"提成
     //   承诺 FULFILLED×2/BROKEN×1 → 兑现率 67%；通话结果标记 activity 4接通/1无人接听 → 接通率 80%
+    // 话术飞轮 + 作战手册 v2：承诺跨月混合状态(飞轮漏斗/Wilson趋势数据源)、项目1作战手册第2版(版本对比 diff)。
+    private void seedFlywheelAndPlaybookV2(Long projId) {
+        Long sa = jdbc.query("SELECT id FROM account WHERE role_template='SA' ORDER BY id LIMIT 1",
+                rs -> rs.next() ? rs.getLong(1) : null);
+        if (sa == null || projId == null) return;
+        Integer pc = jdbc.queryForObject("SELECT count(*) FROM promise", Integer.class);
+        if (pc != null && pc < 8) {
+            Long[] cs = jdbc.query("SELECT id FROM \"case\" WHERE project_id = ? ORDER BY id LIMIT 6",
+                    (rs, i) -> rs.getLong(1), projId).toArray(new Long[0]);
+            if (cs.length >= 4) {
+                Object[][] rows = {
+                    {cs[0], 120000, "FULFILLED", "95 days"}, {cs[1], 80000, "FULFILLED", "92 days"},
+                    {cs[2], 60000, "BROKEN", "88 days"},     {cs[3], 50000, "FULFILLED", "62 days"},
+                    {cs[0], 90000, "PENDING", "58 days"},    {cs[1], 70000, "FULFILLED", "30 days"},
+                    {cs[2], 40000, "FULFILLED", "28 days"},  {cs[3], 55000, "BROKEN", "5 days"},
+                    {cs[0], 65000, "FULFILLED", "3 days"},
+                };
+                for (Object[] r : rows) {
+                    jdbc.update("INSERT INTO promise(case_id, date, amount_cents, state, created_by, created_at)"
+                            + " VALUES (?, now()::date, ?, ?, ?, now() - (?)::interval)",
+                            r[0], r[1], r[2], sa, r[3]);
+                }
+            }
+        }
+        Integer vc = jdbc.queryForObject(
+                "SELECT count(*) FROM playbook WHERE project_id = ? AND batch_id IS NULL", Integer.class, projId);
+        if (vc != null && vc < 2) {
+            jdbc.update("UPDATE playbook SET status='ARCHIVED',"
+                    + " content = '开场：以信任建立破冰\n施压：合规提示后果\n兜底：分期引导'"
+                    + " WHERE project_id = ? AND batch_id IS NULL AND status = 'PUBLISHED'", projId);
+            jdbc.update("INSERT INTO playbook(project_id, version, content, status, adopt_mode, adopted_by, adopted_at, created_at)"
+                    + " VALUES (?, 'v2.0',"
+                    + " '开场：以信任建立破冰\n施压：合规提示 + 征信影响提醒\n兜底：分期引导\n失联：多渠道触达后转工单',"
+                    + " 'PUBLISHED', 'FORCE_MANUAL', ?, now(), now())", projId, sa);
+        }
+    }
+
     private void seedCoPerformance(Long projId, Long providerOrg, Long co1, Long co2) {
         if (projId == null || providerOrg == null || co1 == null) return;
         // 无总幂等门：各子步骤自身幂等（NOT EXISTS / 按 acct_no 判存在），支持增量补种。

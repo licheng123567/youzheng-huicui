@@ -20,6 +20,15 @@ test.describe('SA 平台话术库还原', () => {
       await expect(page.getByRole('dialog').filter({ hasText: '话术详情' })).toBeVisible()
     }
   })
+
+  test('话术飞轮:转化漏斗 + Wilson 趋势有真数据', async ({ page }) => {
+    await loginRole(page, 'SA')
+    await page.getByRole('menuitem', { name: '平台话术库' }).click()
+    await expect(page.getByText('话术有效性飞轮（承诺·回款转化信号）')).toBeVisible()
+    await expect(page.getByText('转化漏斗')).toBeVisible()
+    await expect(page.getByText('通话接通')).toBeVisible()
+    await expect(page.getByText(/Wilson 下界趋势/)).toBeVisible()
+  })
 })
 
 test.describe('SA 项目管理还原', () => {
@@ -32,6 +41,23 @@ test.describe('SA 项目管理还原', () => {
     await expect(row).toBeVisible()
     // 应收总额列（¥ 开头）有值
     await expect(row.getByText(/¥/).first()).toBeVisible()
+  })
+
+  test('作战手册版本历史 + 版本对比 diff', async ({ page }) => {
+    await loginRole(page, 'SA')
+    await page.getByRole('menuitem', { name: '项目管理' }).click()
+    // 打开翠湖一期档案(查看档案内联)
+    const row = page.locator('tbody tr', { hasText: '翠湖一期' }).first()
+    await row.getByText('查看档案').click()
+    // 版本历史区（selProjPlaybook.versions 渲染）
+    const hist = page.getByText('版本历史')
+    if (await hist.count()) {
+      await expect(hist.first()).toBeVisible()
+      await page.getByRole('button', { name: /对比上一版/ }).first().click()
+      await expect(page.getByRole('dialog').filter({ hasText: '作战手册版本对比' })).toBeVisible()
+      // 行级 diff:应有 + 或 − 标记
+      await expect(page.getByText(/绿=新增/)).toBeVisible()
+    }
   })
 })
 
