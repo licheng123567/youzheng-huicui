@@ -21,12 +21,12 @@ public final class Permissions {
         return switch (role) {
             // 平台超管 SA：派单/再派/开放抢单/作废 + 结算/质检/主数据 + 平台管理（建组织/AI配置/充值/系统设置）
             case "SA" -> Set.of("proj.edit", "batch.import", "case.dispatch", "case.void", "case.close",
-                    "payreq.create", "payreq.complete", "qc.review", "qc.escalate", "member.manage", "report.export",
+                    "payreq.create", "payreq.complete", "qc.review", "member.manage", "report.export",
                     "org.manage", "ai.config", "billing.recharge", "settings.manage", "sea.view");
             // 平台员工 SE（运营岗，非超管）：= SA 去掉平台管理四权（org.manage/settings.manage/billing.recharge/ai.config 收归 SA）。
             //   保留派单/作废/撤案 + 结算生成确认 + 质检复核 + 报表 + 成员 + 项目/批次运营（proj.edit/batch.import）；数据范围另受 data_range 三维裁剪。
             case "SE" -> Set.of("proj.edit", "batch.import", "case.dispatch", "case.void", "case.close",
-                    "payreq.create", "payreq.complete", "qc.review", "qc.escalate", "member.manage", "report.export",
+                    "payreq.create", "payreq.complete", "qc.review", "member.manage", "report.export",
                     "sea.view");
             // 物业负责人 PL（项目主数据 owner：+proj.edit 项目档案/协调员/背景/佣金提案 + 减免政策）
             case "PL" -> Set.of("proj.edit", "reduce.policy.edit", "case.follow", "case.paylink",

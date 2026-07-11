@@ -76,6 +76,17 @@ public class QcM5Controller {
                 recipientId, type, title, body, refType, refId);
     }
 
+    private static final Map<String, String> DISPOSE_ACTION_LABEL =
+            Map.of("mark", "标记", "to_qc", "转质检复核", "notify", "通知督导");
+
+    /** 平台质检复核人(SA/SE·ACTIVE)用于上报送达。 */
+    private java.util.List<Long> platformReviewers() {
+        return jdbc.query(
+                "SELECT a.id FROM account a JOIN org o ON o.id = a.org_id"
+                        + " WHERE o.type = 'PLATFORM' AND a.role_template IN ('SA','SE') AND a.status = 'ACTIVE'",
+                (rs, i) -> rs.getLong("id"));
+    }
+
     /** 取某组织的负责人账号(PL/VL)用于通知归属方；无则 null。 */
     private Long orgOwnerAccount(long orgId) {
         return jdbc.query(
@@ -109,6 +120,7 @@ public class QcM5Controller {
                 + " JOIN project p ON p.id = c.project_id"
                 + " JOIN batch b ON b.id = c.batch_id"
                 + " LEFT JOIN account acc ON acc.id = r.collector_id"
+                + " LEFT JOIN org vorg ON vorg.id = acc.org_id"
                 + where;
 
         Long total = jdbc.queryForObject("SELECT count(*) " + base, Long.class, args.toArray());
@@ -118,10 +130,15 @@ public class QcM5Controller {
         pageArgs.add(pg.offset);
         List<RiskRecordDto> items = jdbc.query(
                 "SELECT r.id, r.case_id, acc.name AS collector_name, r.type, r.level,"
-                        + " r.segment_ts, r.reviewed, r.call_id " + base + " ORDER BY r.id DESC LIMIT ? OFFSET ?",
+                        + " r.segment_ts, r.reviewed, r.call_id,"
+                        + " acc.role_template AS violator_role, vorg.name AS violator_org, acc.org_id AS violator_org_id " + base + " ORDER BY r.id DESC LIMIT ? OFFSET ?",
                 (rs, i) -> {
                     long callId = rs.getLong("call_id");
                     boolean noCall = rs.wasNull();     // 必须紧跟 getLong 取 wasNull（后续读列会重置）
+                    Long violatorOrgId = (Long) rs.getObject("violator_org_id");
+                    // ownScope：违规员工所属组织==当前主体组织(平台 orgId 恒不等→false，符合"平台只复核不处置")。
+                    boolean own = !s.isPlatform() && violatorOrgId != null
+                            && String.valueOf(violatorOrgId).equals(s.orgId());
                     return new RiskRecordDto(
                             String.valueOf(rs.getLong("id")),
                             String.valueOf(rs.getLong("case_id")),
@@ -130,7 +147,10 @@ public class QcM5Controller {
                             rs.getString("level"),
                             rs.getString("segment_ts"),
                             rs.getString("reviewed"),           // NULL→null（契约 reviewed oneOf null）
-                            noCall ? null : String.valueOf(callId));   // call_id → recordingId（无录音→null）
+                            noCall ? null : String.valueOf(callId),   // call_id → recordingId（无录音→null）
+                            rs.getString("violator_org"),
+                            rs.getString("violator_role"),
+                            own);
                 },
                 pageArgs.toArray());
 
@@ -168,6 +188,11 @@ public class QcM5Controller {
                 "action=" + action + (note == null ? "" : ("; note=" + note)),
                 riskQc.snapMap(risk), riskQc.snapMap(risk));
 
+        // 反馈：组织负责人处置本组织员工违规 → 通知违规当事人（处置了要让当事人知道）。
+        String dnote = note == null || note.isBlank() ? "" : ("。说明：" + note);
+        notify(risk.collectorId(), "QC_HANDLING", "质检处置通知（本人）",
+                "你的通话被质检处置（" + DISPOSE_ACTION_LABEL.getOrDefault(action, action) + "）" + dnote, "risk", riskId);
+
         return Map.of("ok", true, "action", action);
     }
 
@@ -187,10 +212,15 @@ public class QcM5Controller {
         // 先存在后可见（越 range scope→404）。
         RiskSnapshot risk = riskQc.loadVisibleRisk(s, riskId);
 
-        // 不改 actor 组织处置态、不建 dispose_task（建任务是平台 review 的事）；仅写审计留上报痕迹。
+        // 不改 actor 组织处置态、不建 dispose_task（建任务是平台 review 的事）；写审计 + 真送达通知。
         String note = (in == null || in.note() == null || in.note().isBlank()) ? "上报平台复核" : in.note();
         riskQc.audit(s, "qc.escalate", riskId, note,
                 riskQc.snapMap(risk), riskQc.snapMap(risk));
+
+        // 反馈：非本组织发现方上报 → 通知违规员工的组织负责人(催收员→VL/协调员→PL) + 平台质检人。
+        String body = "收到一条风险上报，请复核处置。上报说明：" + note;
+        notify(orgOwnerAccount(risk.actorOrgId()), "QC_ESCALATED", "风险上报待处置", body, "risk", riskId);
+        for (Long pid : platformReviewers()) notify(pid, "QC_ESCALATED", "风险上报待复核", body, "risk", riskId);
 
         return Map.of("ok", true);
     }

@@ -3841,6 +3841,12 @@ export interface components {
             reviewed?: components["schemas"]["RiskReviewVerdictEnum"] | null;
             /** @description 关联录音 id（跳通话记录页+AI复盘；无录音为 null） */
             recordingId?: string | null;
+            /** @description 违规员工所属组织名(v1.15.0) */
+            violatorOrgName?: string | null;
+            /** @description 违规员工角色(CO催收员/PC协调员;平台据此看反馈给哪个组织负责人) */
+            violatorRole?: string | null;
+            /** @description 当前主体是否可直接处置该风险(本组织员工=true;平台/非本组织=false→复核或上报;BR-M5-07a) */
+            ownScope?: boolean | null;
         };
         DisposeTask: {
             id?: string;
