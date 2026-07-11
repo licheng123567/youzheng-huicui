@@ -3970,7 +3970,7 @@ export interface components {
             issuedAt?: string;
             hash?: string;
         };
-        /** @description 能力用量·只量不金额(US-M10-02) */
+        /** @description 能力用量·只量不金额(US-M10-02)。ownerName/room/projectName/batchNo 由 caseId join 补齐(计费明细页穿透列;v1.11.0);计费明细恒为成功计费(失败不计费 BR-M6-06,故无 status) */
         BillingUsage: {
             id?: string;
             type?: components["schemas"]["BillingTypeEnum"];
@@ -3978,6 +3978,11 @@ export interface components {
             /** @description 分钟/条/次/件 */
             unit?: string;
             caseId?: string | null;
+            /** @description 案件业主(caseId join·脱敏案件为占位) */
+            ownerName?: string | null;
+            room?: string | null;
+            projectName?: string | null;
+            batchNo?: string | null;
             /** Format: date-time */
             occurredAt?: string;
         };

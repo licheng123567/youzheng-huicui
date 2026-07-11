@@ -195,6 +195,7 @@ public class ReportsM10Controller {
                     qty,
                     unitOf(type),
                     null,                       // caseId 恒 null：不下钻到案
+                    null, null, null, null,     // 报表聚合口径不下钻案件穿透列（业主/房号/项目/批次）
                     last == null ? null : ISO.format(last.toInstant()));
         }, args.toArray());
     }

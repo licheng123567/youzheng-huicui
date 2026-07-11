@@ -15,8 +15,7 @@ const drillMonth = ref('')   // '' = 月汇总; 有值 = 按日
 const drillDay = ref('')     // '' = 按日; 有值 = 明细
 
 const USAGE_CN: Record<string, string> = { STT: 'STT解析', SMS: '短信', EVIDENCE: '存证', LEGAL: '法律服务' }
-const STATUS_TAG: Record<string, string> = { success: 'suc', failed: 'dan' }
-const statusCn = (s: string) => s === 'success' ? '成功' : s === 'failed' ? '失败' : s
+// 计费明细只入账成功计费（失败不计费 BR-M6-06），故状态列恒「成功」，无重试。
 
 async function load() {
   const { data } = await api.GET('/billing/usage', { params: { query: { page: 1, size: 200 } } as any })
@@ -144,10 +143,7 @@ onMounted(load)
             <td class="num">{{ b.qty || '—' }}</td>
             <td>{{ b.ownerName || '—' }}</td><td>{{ b.room || '—' }}</td>
             <td>{{ b.projectName || '—' }}</td><td>{{ b.batchNo || '—' }}</td>
-            <td>
-              <span class="tag" :class="STATUS_TAG[b.status] || 'inf'">{{ statusCn(b.status) }}</span>
-              <a v-if="b.status === 'failed'" class="btn txt" style="margin-left:4px">重试</a>
-            </td>
+            <td><span class="tag suc">成功</span></td>
           </tr>
           <tr v-if="!billDetail.length"><td colspan="8" class="note" style="text-align:center">无明细数据</td></tr>
         </tbody>
