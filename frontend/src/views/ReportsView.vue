@@ -23,7 +23,7 @@ async function load() {
   data.value = d
 }
 
-function applyFilter() { load() }
+function applyFilter() { load(); loadVl() }
 
 async function exportReport() {
   const { error } = await api.POST('/reports/export', { body: { report: 'operation', format: 'xlsx' } as any })
@@ -31,17 +31,35 @@ async function exportReport() {
   ElMessage.success('导出任务已提交')
 }
 
-// KPI 从 data.summary 聚合
+// KPI 读 data.kpis（ReportKpi[]·{label,kind,amountCents,rate,count}）——此前误读 data.summary（后端从不返回该字段）恒空。
+const pct = (r?: number) => (r == null ? '—' : (r * 100).toFixed(1) + '%')
 const kpis = computed(() => {
-  if (!data.value?.summary) return []
-  const s = data.value.summary
-  return [
-    { n: yuan(s.dueCents), l: '应收总额', c: '#e8f4fd', t: 'up', tx: '' },
-    { n: yuan(s.repayCents), l: '已回款', c: '#e6f7e6', t: 'up', tx: '' },
-    { n: (s.caseCount ?? '—'), l: '案件总数', c: '#fef3e6', t: 'flat', tx: '' },
-    { n: ((s.repayRate ?? 0) * 100).toFixed(1) + '%', l: '回款率', c: '#f0e6f6', t: 'up', tx: '' },
-  ]
+  const arr = data.value?.kpis
+  if (!Array.isArray(arr)) return []
+  return arr.map((k: any) => ({
+    l: k.label,
+    n: k.kind === 'MONEY' ? yuan(k.amountCents) : k.kind === 'RATE' ? pct(k.rate) : (k.count ?? '—'),
+  }))
 })
+
+// VL 服务商视角三块真数据（催收员产能 / 佣金汇总 / 团队即时看板 US-M10-03）
+const coProd = ref<any[]>([])      // 催收员产能：/reports/operation?dimension=collector
+const coComm = ref<any[]>([])      // 佣金汇总：/co-commissions（应得/已付/未付）
+const vlTeam = ref<any[]>([])      // 团队即时看板：/providers/{id}/collector-capacity
+const vlHoldCap = ref(0)
+async function loadVl() {
+  if (role.value !== 'VL') return
+  const orgId = auth.me?.org?.id
+  const [prod, comm, cap] = await Promise.all([
+    api.GET('/reports/operation', { params: { query: { dimension: 'collector' } } as any }),
+    api.GET('/co-commissions', { params: { query: { page: 1, size: 50 } } as any }),
+    orgId ? api.GET('/providers/{id}/collector-capacity', { params: { path: { id: String(orgId) } } } as any) : Promise.resolve({ data: null }),
+  ])
+  coProd.value = (prod.data as any)?.rows ?? []
+  coComm.value = (comm.data as any)?.items ?? []
+  vlTeam.value = (cap.data as any)?.items ?? []
+  vlHoldCap.value = (cap.data as any)?.holdCap ?? 0
+}
 
 // 平台 KPI 图标 path
 const ic: Record<string, string> = {
@@ -81,7 +99,7 @@ const capBilling = computed(() => {
   ]
 })
 
-onMounted(load)
+onMounted(() => { load(); loadVl() })
 </script>
 
 <template>
@@ -188,15 +206,78 @@ onMounted(load)
       </div>
     </template>
 
-    <!-- ═══ VL：服务商视角 ═══ -->
+    <!-- ═══ VL：服务商视角（催收员产能 / 佣金汇总 / 团队即时看板 / 批次汇总）═══ -->
     <template v-else-if="role === 'VL'">
+      <!-- ① 催收员产能：/reports/operation?dimension=collector（按持有催收员聚合） -->
       <div class="card">
-        <div class="card-h"><div class="t"><span class="bar"></span>催收员产能</div></div>
-        <table><thead><tr><th>催收员</th><th>案件数</th><th>接通率</th><th>回款额</th><th>回款率</th></tr></thead><tbody><tr><td colspan="5" class="note" style="text-align:center">暂无数据</td></tr></tbody></table>
+        <div class="card-h"><div class="t"><span class="bar"></span>催收员产能</div><div class="ops"><span class="note" style="margin:0">按持有催收员 · 本服务商</span></div></div>
+        <table>
+          <thead><tr><th>催收员</th><th>案件数</th><th>回款额</th><th>回款率</th></tr></thead>
+          <tbody>
+            <tr v-for="r in coProd" :key="r.dimKey">
+              <td>{{ r.dimName || '—' }}</td>
+              <td class="num">{{ r.caseCount ?? 0 }}</td>
+              <td class="num">{{ yuan(r.repayCents) }}</td>
+              <td class="num">{{ pct(r.repayRate) }}</td>
+            </tr>
+            <tr v-if="!coProd.length"><td colspan="4" class="note" style="text-align:center">暂无持有案件的催收员</td></tr>
+          </tbody>
+        </table>
       </div>
+
+      <!-- ② 佣金汇总：/co-commissions（应得/已付/未付，付给本商催收员） -->
       <div class="card">
-        <div class="card-h"><div class="t"><span class="bar"></span>佣金汇总</div></div>
-        <table><thead><tr><th>催收员</th><th>回款基数</th><th>比例</th><th>应得</th><th>已付</th><th>未付</th></tr></thead><tbody><tr><td colspan="6" class="note" style="text-align:center">暂无数据</td></tr></tbody></table>
+        <div class="card-h"><div class="t"><span class="bar"></span>佣金汇总（付本商催收员）</div><div class="ops"><span class="note" style="margin:0">应得/已付/未付</span></div></div>
+        <table>
+          <thead><tr><th>催收员</th><th>批次数</th><th>应得</th><th>已付</th><th>未付</th></tr></thead>
+          <tbody>
+            <tr v-for="c in coComm" :key="c.collectorId">
+              <td>{{ c.name }}</td>
+              <td class="num">{{ c.batchCount }}</td>
+              <td class="num">{{ yuan(c.dueCents) }}</td>
+              <td class="num"><span class="tag suc">{{ yuan(c.settledCents) }}</span></td>
+              <td class="num"><span class="tag" :class="c.unsettledCents ? 'war' : 'inf'">{{ yuan(c.unsettledCents) }}</span></td>
+            </tr>
+            <tr v-if="!coComm.length"><td colspan="5" class="note" style="text-align:center">暂无佣金数据</td></tr>
+          </tbody>
+        </table>
+        <div class="note">口径引自「催收员佣金」；付佣对象为本商催收员，与平台付佣线（平台付服务商）不同。</div>
+      </div>
+
+      <!-- ③ 团队即时看板（US-M10-03）：/providers/{id}/collector-capacity -->
+      <div class="card">
+        <div class="card-h"><div class="t"><span class="bar"></span>团队即时看板（US-M10-03）</div><div class="ops"><span class="note" style="margin:0">本商全员 · 持有上限 {{ vlHoldCap }}</span></div></div>
+        <table>
+          <thead><tr><th>催收员</th><th>持有案件数</th><th>今日动作</th><th>容量余量</th><th>今日回款</th><th>状态</th></tr></thead>
+          <tbody>
+            <tr v-for="m in vlTeam" :key="m.collectorId">
+              <td>{{ m.name }}</td>
+              <td class="num">{{ m.holding }}</td>
+              <td class="num">{{ m.todayActions ?? 0 }}</td>
+              <td><span class="tag" :class="m.remaining <= 0 ? 'dan' : (m.remaining <= 5 ? 'war' : 'suc')">余{{ m.remaining }}件</span></td>
+              <td class="num">{{ m.todayRepayCents != null ? yuan(m.todayRepayCents) : '—' }}</td>
+              <td><span class="tag" :class="m.remaining <= 0 ? 'dan' : 'suc'">{{ m.remaining <= 0 ? '满员' : '在线' }}</span></td>
+            </tr>
+            <tr v-if="!vlTeam.length"><td colspan="6" class="note" style="text-align:center">本商暂无在职催收员</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ④ 批次汇总：/reports/operation?dimension=batch（默认 data） -->
+      <div class="card">
+        <div class="card-h"><div class="t"><span class="bar"></span>批次汇总</div><div class="ops"><span class="note" style="margin:0">本服务商承接批次</span></div></div>
+        <table>
+          <thead><tr><th>批次</th><th>应收总额</th><th>案件数</th><th>回款率</th></tr></thead>
+          <tbody>
+            <tr v-for="r in (data?.rows ?? [])" :key="r.dimKey">
+              <td>{{ r.dimName }}</td>
+              <td class="num">{{ yuan(r.dueCents) }}</td>
+              <td class="num">{{ r.caseCount ?? 0 }}</td>
+              <td class="num">{{ pct(r.repayRate) }}</td>
+            </tr>
+            <tr v-if="!(data?.rows ?? []).length"><td colspan="4" class="note" style="text-align:center">暂无批次数据</td></tr>
+          </tbody>
+        </table>
       </div>
     </template>
   </div>

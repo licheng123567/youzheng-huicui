@@ -7700,7 +7700,7 @@ export interface operations {
     getOperationReport: {
         parameters: {
             query?: {
-                dimension?: "project" | "batch" | "month";
+                dimension?: "project" | "batch" | "month" | "collector";
                 month?: string;
             };
             header?: never;
