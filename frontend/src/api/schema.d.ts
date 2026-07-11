@@ -2312,6 +2312,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/script-lib/flywheel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 话术有效性飞轮(承诺·回款转化漏斗 + Wilson 下界趋势 BR-M5-12·平台护城河)
+         * @description 飞轮可视化数据源:漏斗从 call_recording/promise/repay_line 真实聚合;wilsonTrend 按月算承诺兑现率的 Wilson 置信下界。仅平台可见(platform scope)。v1.13.0
+         */
+        get: operations["getScriptFlywheel"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{id}/playbook": {
         parameters: {
             query?: never;
@@ -2326,6 +2346,26 @@ export interface paths {
         put?: never;
         /** 采纳作战手册新版(物业负责人或协调员·分级采纳闸 BR-M5-05a/b) */
         post: operations["adoptPlaybook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{id}/playbook/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 作战手册版本对比(行级 diff·现行版 vs 指定历史版 BR-M5)
+         * @description 取现行版与 from 指定版内容做行级对比,产出 add/del/keep 差异项(版本历史「对比上一版」)。缺 from 则与前一版比。range scope,内容按角色可见性(服务商仅 PUBLISHED)。v1.13.0
+         */
+        get: operations["getPlaybookDiff"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4214,9 +4254,35 @@ export interface components {
             cohort?: string;
             text: string;
         };
+        /** @description 话术飞轮:funnel 转化漏斗(通话接通→命中承诺信号→登记承诺→承诺兑现回款);wilsonTrend 月度 Wilson 下界趋势 */
+        ScriptFlywheel: {
+            funnel?: {
+                stage?: string;
+                n?: number;
+                /** @description 占首段(通话接通)百分比 */
+                pct?: number;
+            }[];
+            wilsonTrend?: {
+                /** @description 月份标签 */
+                m?: string;
+                /** @description Wilson 下界 0-1 */
+                w?: number;
+            }[];
+            note?: string;
+        };
         ScriptPage: {
             items?: components["schemas"]["Script"][];
             meta?: components["schemas"]["PageMeta"];
+        };
+        /** @description 作战手册两版行级对比。items[].kind: add(新增)/del(删除)/keep(未变) */
+        PlaybookDiff: {
+            fromVersion?: string | null;
+            toVersion?: string;
+            items?: {
+                /** @enum {string} */
+                kind?: "add" | "del" | "keep";
+                text?: string;
+            }[];
         };
         Playbook: {
             projectId?: string;
@@ -8129,6 +8195,26 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
+    getScriptFlywheel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScriptFlywheel"];
+                };
+            };
+        };
+    };
     getPlaybook: {
         parameters: {
             query?: never;
@@ -8177,6 +8263,32 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["Forbidden"];
+        };
+    };
+    getPlaybookDiff: {
+        parameters: {
+            query?: {
+                /** @description 对比基准版本号(缺省=现行的前一版) */
+                from?: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaybookDiff"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     listOrgs: {

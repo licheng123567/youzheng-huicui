@@ -52,6 +52,16 @@ watch(() => filter.value.status, () => search())
 const selProj = ref<any>(null)
 const selProjLoading = ref(false)
 const selProjPlaybook = ref<any>(null)
+// 作战手册版本对比 diff（GET /projects/{id}/playbook/diff）
+const diffDlg = ref(false); const diffData = ref<any>(null); const diffLoading = ref(false)
+async function openPlaybookDiff(fromVer?: string) {
+  if (!selProj.value?.id) return
+  diffDlg.value = true; diffLoading.value = true; diffData.value = null
+  const { data, error } = await api.GET('/projects/{id}/playbook/diff', { params: { path: { id: String(selProj.value.id) }, query: fromVer ? { from: fromVer } : {} } as any })
+  diffLoading.value = false
+  if (error) { ElMessage.error('加载版本对比失败'); return }
+  diffData.value = data
+}
 const projContextInput = ref('')
 const coordDlg = ref(false)
 const coordEditDlg = ref(false)
@@ -251,6 +261,21 @@ onMounted(load)
     </div>
 
     <!-- 作战手册·仅手册编辑（协调员亦可，项目档案其余只读） -->
+    <el-dialog v-model="diffDlg" title="作战手册版本对比" width="640px" append-to-body>
+      <div v-loading="diffLoading">
+        <div v-if="diffData" class="note" style="margin-bottom:8px">{{ diffData.fromVersion || '（无基准版）' }} → {{ diffData.toVersion }}（行级对比：绿=新增 / 红=删除 / 灰=未变）</div>
+        <div v-for="(it, i) in (diffData?.items ?? [])" :key="i"
+          :style="{ padding: '4px 8px', fontSize: '13px', whiteSpace: 'pre-wrap',
+                    background: it.kind === 'add' ? '#e6f7e6' : it.kind === 'del' ? '#fde6e6' : 'transparent',
+                    color: it.kind === 'del' ? '#c0392b' : it.kind === 'add' ? '#1e7d32' : 'var(--sec)',
+                    textDecoration: it.kind === 'del' ? 'line-through' : 'none' }">
+          <span style="display:inline-block;width:20px">{{ it.kind === 'add' ? '+' : it.kind === 'del' ? '−' : ' ' }}</span>{{ it.text }}
+        </div>
+        <div v-if="diffData && !diffData.items?.length" class="note">两版内容一致，无差异。</div>
+      </div>
+      <template #footer><el-button @click="diffDlg=false">关闭</el-button></template>
+    </el-dialog>
+
     <el-dialog v-model="pbDlg" title="维护作战手册" width="600px" append-to-body>
       <el-form label-width="72px">
         <el-form-item label="版本"><el-input v-model="pbForm.version" placeholder="如 v1.1" /></el-form-item>
@@ -370,6 +395,25 @@ onMounted(load)
       <div class="r"><div class="k">内容</div><div class="v"><div style="white-space:pre-wrap;max-height:120px;overflow:auto;font-size:13px;color:var(--sec)">{{ selProjPlaybook.content || '（尚无手册内容）' }}</div></div></div>
     </div>
     <div v-else class="note" style="margin-bottom:8px">尚无作战手册，点击「维护手册」编辑。</div>
+
+    <!-- 版本历史（Playbook.versions[]·此前响应含但未渲染） + 对比上一版 -->
+    <template v-if="selProjPlaybook?.versions?.length">
+      <div class="sec-title" style="font-size:12px;margin-top:10px">版本历史
+        <button class="btn txt" style="margin-left:auto" @click="openPlaybookDiff()">对比上一版 ›</button>
+      </div>
+      <table>
+        <thead><tr><th>版本</th><th>状态</th><th>采纳人</th><th>时间</th><th style="width:110px">操作</th></tr></thead>
+        <tbody>
+          <tr v-for="v in selProjPlaybook.versions" :key="v.version">
+            <td><b>{{ v.version }}</b><span v-if="v.version === selProjPlaybook.version" class="tag suc" style="margin-left:6px;font-size:11px">现行</span></td>
+            <td>{{ v.source || '—' }}</td>
+            <td>{{ v.by || '—' }}</td>
+            <td class="note">{{ v.tm ? String(v.tm).slice(0,16).replace('T',' ') : '—' }}</td>
+            <td><button class="btn txt" @click="openPlaybookDiff(v.version)">对比现行</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </template>
 
     <!-- 录入项目相关情况 -->
     <div class="sec-title">录入项目相关情况（驱动 AI 生成手册初稿）</div>

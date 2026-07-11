@@ -69,6 +69,72 @@ public class PlaybookController {
         return buildProjectPlaybook(s, projectId);
     }
 
+    // ── GET /projects/{id}/playbook/diff —— 版本对比（行级 diff·现行 vs from 指定版 BR-M5） ──
+    @GetMapping("/projects/{id}/playbook/diff")
+    public Map<String, Object> getPlaybookDiff(@PathVariable("id") String id,
+                                               @org.springframework.web.bind.annotation.RequestParam(value = "from", required = false) String from) {
+        CurrentSubject s = SubjectContext.get();
+        long projectId = parseId(id, "项目不存在: " + id);
+        Long orgId = loadProjectOrgId(projectId);
+        requireProjectVisible(s, projectId, orgId);
+        boolean privileged = isPrivileged(s);
+
+        // 现行版（可见性同 buildProjectPlaybook）
+        String vis = privileged ? " AND status <> 'ARCHIVED'" : " AND status = 'PUBLISHED'";
+        List<PlaybookRow> cur = jdbc.query(
+                "SELECT * FROM playbook WHERE project_id = ? AND batch_id IS NULL" + vis
+                        + " ORDER BY id DESC LIMIT 1", playbookRowMapper(), projectId);
+        if (cur.isEmpty()) throw new ApiException(BizError.NOT_FOUND_404, "无可见作战手册版本");
+        PlaybookRow toRow = cur.get(0);
+
+        // 基准版：from 指定则取该版本号；否则取现行的前一版（id 次大）。
+        String histVis = privileged ? "" : " AND status = 'PUBLISHED'";
+        PlaybookRow fromRow;
+        if (from != null && !from.isBlank()) {
+            List<PlaybookRow> f = jdbc.query(
+                    "SELECT * FROM playbook WHERE project_id = ? AND batch_id IS NULL AND version = ?" + histVis
+                            + " ORDER BY id DESC LIMIT 1", playbookRowMapper(), projectId, from.trim());
+            fromRow = f.isEmpty() ? null : f.get(0);
+        } else {
+            List<PlaybookRow> prev = jdbc.query(
+                    "SELECT * FROM playbook WHERE project_id = ? AND batch_id IS NULL AND id < ?" + histVis
+                            + " ORDER BY id DESC LIMIT 1", playbookRowMapper(), projectId, toRow.id());
+            fromRow = prev.isEmpty() ? null : prev.get(0);
+        }
+
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("fromVersion", fromRow == null ? null : fromRow.version());
+        out.put("toVersion", toRow.version());
+        out.put("items", lineDiff(fromRow == null ? "" : fromRow.content(), toRow.content()));
+        return out;
+    }
+
+    /** 极简行级 diff：基于 LCS 标记 keep/del/add（作战手册是逐行话术，行级足够）。 */
+    private static List<Map<String, Object>> lineDiff(String fromText, String toText) {
+        String[] a = (fromText == null ? "" : fromText).split("\n", -1);
+        String[] b = (toText == null ? "" : toText).split("\n", -1);
+        int n = a.length, m = b.length;
+        int[][] lcs = new int[n + 1][m + 1];
+        for (int i = n - 1; i >= 0; i--)
+            for (int j = m - 1; j >= 0; j--)
+                lcs[i][j] = a[i].equals(b[j]) ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+        List<Map<String, Object>> items = new ArrayList<>();
+        int i = 0, j = 0;
+        while (i < n && j < m) {
+            if (a[i].equals(b[j])) { items.add(diffItem("keep", a[i])); i++; j++; }
+            else if (lcs[i + 1][j] >= lcs[i][j + 1]) { items.add(diffItem("del", a[i])); i++; }
+            else { items.add(diffItem("add", b[j])); j++; }
+        }
+        while (i < n) { items.add(diffItem("del", a[i])); i++; }
+        while (j < m) { items.add(diffItem("add", b[j])); j++; }
+        return items;
+    }
+    private static Map<String, Object> diffItem(String kind, String text) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("kind", kind); m.put("text", text);
+        return m;
+    }
+
     // ── [2] POST /projects/{id}/playbook（采纳·飞轮终环） ────────────────────
     // x-permission=playbook.adopt（拦截器先校验 PL/PC 权限点）；x-data-scope=own-org。
     @PostMapping("/projects/{id}/playbook")

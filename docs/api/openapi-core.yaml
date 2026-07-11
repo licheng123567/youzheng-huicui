@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 有证慧催 · API 契约（全模块·已冻结）
-  version: 1.12.0  # v1.12.0(additive·平台超管页还原): Script +wilson(话术库排序权威透出) | listCases +holderName/contactPhone(案件管理归属催收员/联系方式列) | getOperationReport dimension +collector(经营报表催收员维,已于 v1.10.0 引入合并至此) | v1.11.0(additive·计费明细穿透列): BillingUsage +ownerName/room/projectName/batchNo(caseId join,计费明细页明细行业主/房号/项目/批次列;修服务商计费明细空表——STT 用量归服务商 org 见 seed) | v1.10.0(additive·佣金名册明细): CoCommissionBatchRow +caseCount/baseCents(案件数·回款金额,支撑佣金明细待结算/已结算分档) | v1.9.0(语义收敛·统一支付逻辑): 付佣线(OUT)生成/发送/撤回改为仅平台(服务商对支付申请单只读,批次结算标记照常可见;OUT 归属由明细 provider_id_at_repay 快照推导且须一致);佣金线(服务商→催收员 co-pay-docs)不变 | v1.8.0(additive·VL 团队即时看板 US-M10-03): CollectorCapacity +todayActions/todayRepayCents(工作台看板与指派弹窗共用同端点) | v1.7.0(additive·公海可见性收敛 BR-M3-29): listSea/listSeaEvents 补 x-permission=sea.view(全契约最后两个无权限点业务读端点;PL/PC 无此点→403·公海概念消失);平台方对 pool=provider 改返回空集(不看服务商公海明细,明细归 VL/CO;平台靠 T1/T2 预警与聚合) | v1.6.0(additive·App 多角色): listCases +holderId(私海过滤;催收员端「我持有的」——不传时 range scope 对 CO 返回本服务商全部案件,并非本人持有) | v1.5.0(additive·契约外端点回写): +录音回听 audio(V921)/佣金三端点 comm-status·comm-in-rate·commission-rates(V922)/附件四端点 attachments·upload-sessions(V923)/存证证书 certificate;rebindOrgOwner 200 补 ownerSetupToken;escalate 补 note;sms-code 补 502(未启用拒发·废 000000 后门) | v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
+  version: 1.13.0  # v1.13.0(additive·SA 飞轮+作战手册): +GET /script-lib/flywheel(话术飞轮漏斗+Wilson趋势) | +GET /projects/{id}/playbook/diff(作战手册版本对比行级diff) | v1.12.0(additive·平台超管页还原): Script +wilson(话术库排序权威透出) | listCases +holderName/contactPhone(案件管理归属催收员/联系方式列) | getOperationReport dimension +collector(经营报表催收员维,已于 v1.10.0 引入合并至此) | v1.11.0(additive·计费明细穿透列): BillingUsage +ownerName/room/projectName/batchNo(caseId join,计费明细页明细行业主/房号/项目/批次列;修服务商计费明细空表——STT 用量归服务商 org 见 seed) | v1.10.0(additive·佣金名册明细): CoCommissionBatchRow +caseCount/baseCents(案件数·回款金额,支撑佣金明细待结算/已结算分档) | v1.9.0(语义收敛·统一支付逻辑): 付佣线(OUT)生成/发送/撤回改为仅平台(服务商对支付申请单只读,批次结算标记照常可见;OUT 归属由明细 provider_id_at_repay 快照推导且须一致);佣金线(服务商→催收员 co-pay-docs)不变 | v1.8.0(additive·VL 团队即时看板 US-M10-03): CollectorCapacity +todayActions/todayRepayCents(工作台看板与指派弹窗共用同端点) | v1.7.0(additive·公海可见性收敛 BR-M3-29): listSea/listSeaEvents 补 x-permission=sea.view(全契约最后两个无权限点业务读端点;PL/PC 无此点→403·公海概念消失);平台方对 pool=provider 改返回空集(不看服务商公海明细,明细归 VL/CO;平台靠 T1/T2 预警与聚合) | v1.6.0(additive·App 多角色): listCases +holderId(私海过滤;催收员端「我持有的」——不传时 range scope 对 CO 返回本服务商全部案件,并非本人持有) | v1.5.0(additive·契约外端点回写): +录音回听 audio(V921)/佣金三端点 comm-status·comm-in-rate·commission-rates(V922)/附件四端点 attachments·upload-sessions(V923)/存证证书 certificate;rebindOrgOwner 200 补 ownerSetupToken;escalate 补 note;sms-code 补 502(未启用拒发·废 000000 后门) | v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
   contact: { name: 契约 Owner（架构师）, email: api-owner@youzheng.example }
   description: |
     从高保真原型 + PRD(BR/US) + 报告14口径抽取的全模块契约（单一事实源 SSOT）。**v1.0 已冻结（2026-06-24）**：经 codex×2 + 人工×2 共四轮独立审计、openapi-generator Spring 桩 mvn compile、Flyway 真库迁移三重验证，0 阻断/0 高。破坏性变更须升 major + 双 approve。
@@ -1916,6 +1916,16 @@ paths:
       x-permission: ai.config
       x-data-scope: platform
       responses: { '200': { description: ok }, '409': { $ref: '#/components/responses/Conflict' } }
+  /script-lib/flywheel:
+    get:
+      operationId: getScriptFlywheel
+      tags: [ai]
+      summary: 话术有效性飞轮(承诺·回款转化漏斗 + Wilson 下界趋势 BR-M5-12·平台护城河)
+      description: '飞轮可视化数据源:漏斗从 call_recording/promise/repay_line 真实聚合;wilsonTrend 按月算承诺兑现率的 Wilson 置信下界。仅平台可见(platform scope)。v1.13.0'
+      x-data-scope: platform
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/ScriptFlywheel' } } } }
+
   /projects/{id}/playbook:
     parameters: [ { $ref: '#/components/parameters/Id' } ]
     get:
@@ -1934,6 +1944,20 @@ paths:
       responses: { '200': { description: ok }, '403': { $ref: '#/components/responses/Forbidden' } }
 
   # ---- 组织与成员 / 审计 M1 ----
+  /projects/{id}/playbook/diff:
+    get:
+      operationId: getPlaybookDiff
+      tags: [ai]
+      summary: 作战手册版本对比(行级 diff·现行版 vs 指定历史版 BR-M5)
+      description: '取现行版与 from 指定版内容做行级对比,产出 add/del/keep 差异项(版本历史「对比上一版」)。缺 from 则与前一版比。range scope,内容按角色可见性(服务商仅 PUBLISHED)。v1.13.0'
+      x-data-scope: range
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: from, in: query, schema: { type: string }, description: '对比基准版本号(缺省=现行的前一版)' }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/PlaybookDiff' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /orgs:
     get:
       operationId: listOrgs
@@ -3129,7 +3153,21 @@ components:
       type: object
       properties: { id: { type: string }, scene: { type: string }, intent: { type: string }, cohort: { type: string }, source: { $ref: '#/components/schemas/ScriptSourceEnum' }, uses: { type: integer }, promiseRate: { $ref: '#/components/schemas/Rate' }, repayRate: { $ref: '#/components/schemas/Rate' }, wilson: { type: ['number', 'null'], description: 'Wilson 置信下界(排序权威·话术库 BR-M5;v1.11.0 透出)' }, status: { $ref: '#/components/schemas/ScriptStatusEnum' }, variant: { type: [object, 'null'], properties: { text: { type: string }, uplift: { $ref: '#/components/schemas/Rate' }, state: { type: string } } } }
     ScriptInput: { type: object, required: [scene, text], properties: { scene: { type: string }, intent: { type: string }, cohort: { type: string }, text: { type: string } } }
+    ScriptFlywheel:
+      type: object
+      description: '话术飞轮:funnel 转化漏斗(通话接通→命中承诺信号→登记承诺→承诺兑现回款);wilsonTrend 月度 Wilson 下界趋势'
+      properties:
+        funnel: { type: array, items: { type: object, properties: { stage: { type: string }, n: { type: integer }, pct: { type: integer, description: '占首段(通话接通)百分比' } } } }
+        wilsonTrend: { type: array, items: { type: object, properties: { m: { type: string, description: '月份标签' }, w: { type: number, description: 'Wilson 下界 0-1' } } } }
+        note: { type: string }
     ScriptPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Script' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }
+    PlaybookDiff:
+      type: object
+      description: '作战手册两版行级对比。items[].kind: add(新增)/del(删除)/keep(未变)'
+      properties:
+        fromVersion: { type: [string, 'null'] }
+        toVersion: { type: string }
+        items: { type: array, items: { type: object, properties: { kind: { type: string, enum: [add, del, keep] }, text: { type: string } } } }
     Playbook:
       type: object
       properties: { projectId: { type: string }, version: { type: string }, content: { type: string }, adoptMode: { $ref: '#/components/schemas/PlaybookAdoptModeEnum' }, adoptedBy: { type: [string, 'null'] }, versions: { type: array, items: { type: object, properties: { version: { type: string }, source: { type: string }, by: { type: string }, tm: { type: string } } } } }

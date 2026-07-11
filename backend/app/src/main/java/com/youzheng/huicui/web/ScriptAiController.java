@@ -476,4 +476,64 @@ public class ScriptAiController {
     private static Map<String, Object> ok() {
         return Map.of("ok", true);
     }
+    // ── GET /script-lib/flywheel —— 话术有效性飞轮（BR-M5-12·平台护城河） ──
+    // 漏斗从 call_recording/promise/repay_line 真实聚合；wilsonTrend 按月算承诺兑现率 Wilson 下界。
+    @GetMapping("/script-lib/flywheel")
+    public Map<String, Object> getFlywheel() {
+        requirePlatform();
+        long connected = countOr0("SELECT count(*) FROM activity WHERE type = 'CALL'"); // 通话接通=通话动作总量(漏斗首段)
+        long signal = countOr0("SELECT count(*) FROM promise");                       // 命中承诺信号=登记的承诺
+        long registered = countOr0("SELECT count(*) FROM promise WHERE state <> 'BROKEN'"); // 有效承诺(未违约)
+        long fulfilled = countOr0("SELECT count(*) FROM promise WHERE state = 'FULFILLED'"); // 承诺兑现
+        List<Map<String, Object>> funnel = new ArrayList<>();
+        funnel.add(stage("通话接通", connected, connected));
+        funnel.add(stage("命中承诺信号", signal, connected));
+        funnel.add(stage("登记承诺", registered, connected));
+        funnel.add(stage("承诺兑现回款", fulfilled, connected));
+
+        // wilsonTrend：近 4 个月，按月对「当月承诺的兑现率」算 Wilson 95% 置信下界。
+        List<Map<String, Object>> trend = jdbc.query(
+                "SELECT to_char(date_trunc('month', created_at), 'MM月') AS m,"
+                        + " count(*) AS total,"
+                        + " count(*) FILTER (WHERE state = 'FULFILLED') AS ok"
+                        + " FROM promise"
+                        + " WHERE created_at >= date_trunc('month', now()) - interval '3 months'"
+                        + " GROUP BY date_trunc('month', created_at) ORDER BY date_trunc('month', created_at)",
+                (rs, i) -> {
+                    long total = rs.getLong("total");
+                    long ok = rs.getLong("ok");
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("m", rs.getString("m"));
+                    row.put("w", Math.round(wilsonLower(ok, total) * 1000.0) / 1000.0);
+                    return row;
+                });
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("funnel", funnel);
+        out.put("wilsonTrend", trend);
+        out.put("note", "承诺→回款转化为飞轮正反馈信号：高 Wilson 下界话术回流话术库置为生效（BR-M5-12）");
+        return out;
+    }
+
+    private long countOr0(String sql) {
+        Long v = jdbc.queryForObject(sql, Long.class);
+        return v == null ? 0L : v;
+    }
+    private static Map<String, Object> stage(String name, long n, long base) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("stage", name);
+        m.put("n", n);
+        m.put("pct", base > 0 ? Math.round(n * 100.0 / base) : 0);
+        return m;
+    }
+    /** Wilson 95% 置信下界（z=1.96）；n=0 → 0。 */
+    private static double wilsonLower(long ok, long n) {
+        if (n <= 0) return 0.0;
+        double z = 1.96, p = (double) ok / n;
+        double denom = 1 + z * z / n;
+        double centre = p + z * z / (2 * n);
+        double margin = z * Math.sqrt(p * (1 - p) / n + z * z / (4.0 * n * n));
+        double lo = (centre - margin) / denom;
+        return Math.max(0.0, lo);
+    }
 }
