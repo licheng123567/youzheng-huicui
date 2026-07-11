@@ -19,6 +19,7 @@ public record ScriptDto(
         int uses,
         Double promiseRate,
         Double repayRate,
+        Double wilson,
         String status,
         ScriptVariantDto variant) {
 }

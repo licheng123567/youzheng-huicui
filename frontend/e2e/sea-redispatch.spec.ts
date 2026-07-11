@@ -7,12 +7,11 @@ import { loginRole } from './helpers'
 test.describe('US-M3-02 平台公海再派(SA)', () => {
   test.beforeEach(async ({ page }) => {
     await loginRole(page, 'SA')
-    await page.getByRole('menuitem', { name: '平台公海' }).click()
-    await expect(page).toHaveURL(/\/sea/)
-    // 平台公海视图
-    // 点池切换 radio 的可见 label span（el-radio 真 input 隐藏、点它被 __inner 拦截；
-    // 且 "平台公海" 文案也出现在表格"来源池"列 .el-tag，故限定在池分段控件 .segctrl 内）。
-    await page.locator('.segctrl span', { hasText: '平台公海' }).click()
+    // 平台公海已并入「撮合派单」页的 Tab（保留一个菜单入口）。
+    await page.getByRole('menuitem', { name: '撮合派单' }).click()
+    await expect(page).toHaveURL(/\/batches/)
+    // 顶部第一个 segctrl 是页级 Tab（批次派单/平台公海）；切到平台公海 → 内嵌 SeaView 自动落平台池。
+    await page.locator('.segctrl').first().getByText('平台公海').click()
     await expect(page.locator('table').first()).toBeVisible()
     // 切池触发异步 load()，旧(服务商)表恒 visible 不会等到平台池数据；
     // 平台公海每行「来源池」列 .el-tag 文案=平台公海，等它出现确保已渲染平台池数据(再派按钮才就位)。

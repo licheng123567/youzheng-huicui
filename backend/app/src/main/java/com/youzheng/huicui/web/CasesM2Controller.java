@@ -123,6 +123,9 @@ public class CasesM2Controller {
         String base = "FROM \"case\" c"
                 + " JOIN project p ON p.id = c.project_id"
                 + " JOIN batch b ON b.id = c.batch_id"
+                + " LEFT JOIN account ha ON ha.id = c.holder_id"
+                + " LEFT JOIN (SELECT DISTINCT ON (case_id) case_id, phone FROM contact"
+                + "            ORDER BY case_id, is_primary DESC, id) ct ON ct.case_id = c.id"
                 + where;
 
         Long total = jdbc.queryForObject("SELECT count(*) " + base, Long.class, args.toArray());
@@ -130,7 +133,7 @@ public class CasesM2Controller {
         List<Object> pageArgs = new ArrayList<>(args);
         pageArgs.add(pg.size);
         pageArgs.add(pg.offset);
-        String listSql = "SELECT c.* " + base + " ORDER BY c.id DESC LIMIT ? OFFSET ?";
+        String listSql = "SELECT c.*, ha.name AS holder_name, ct.phone AS contact_phone " + base + " ORDER BY c.id DESC LIMIT ? OFFSET ?";
         List<CaseDto> items = jdbc.query(listSql, caseRowMapper(s), pageArgs.toArray());
 
         return Page.of(items, pg, total == null ? 0 : total);
@@ -147,8 +150,11 @@ public class CasesM2Controller {
         String base = "FROM \"case\" c"
                 + " JOIN project p ON p.id = c.project_id"
                 + " JOIN batch b ON b.id = c.batch_id"
+                + " LEFT JOIN account ha ON ha.id = c.holder_id"
+                + " LEFT JOIN (SELECT DISTINCT ON (case_id) case_id, phone FROM contact"
+                + "            ORDER BY case_id, is_primary DESC, id) ct ON ct.case_id = c.id"
                 + " WHERE c.id = ?";
-        List<CaseDto> found = jdbc.query("SELECT c.* " + base, caseRowMapper(s), caseId);
+        List<CaseDto> found = jdbc.query("SELECT c.*, ha.name AS holder_name, ct.phone AS contact_phone " + base, caseRowMapper(s), caseId);
         if (found.isEmpty()) {
             throw new ApiException(BizError.NOT_FOUND_404, "案件不存在: " + id);
         }
@@ -376,6 +382,8 @@ public class CasesM2Controller {
                     status,
                     rs.getString("legal_stage"),
                     idOrNull(rs, "holder_id"),
+                    rs.getString("holder_name"),
+                    redacted ? null : rs.getString("contact_phone"),
                     rs.getString("pool"),
                     rs.getString("source"),
                     ts(rs.getTimestamp("t2_deadline")),

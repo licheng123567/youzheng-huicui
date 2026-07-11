@@ -2848,6 +2848,14 @@ export interface components {
             status?: string;
             dueTotalCents?: components["schemas"]["Money"];
             repayTotalCents?: components["schemas"]["Money"];
+            /** @description 项目下批次数(列表聚合;v1.12.0) */
+            batchCount?: number | null;
+            /** @description 在催案件数(IN_PROGRESS) */
+            activeCases?: number | null;
+            /** @description 法务处理数(legal_stage 非 NONE) */
+            legalCount?: number | null;
+            /** @description 已结清数 */
+            settledCount?: number | null;
             coordinators?: components["schemas"]["CoordinatorRef"][];
             reduceTiers?: components["schemas"]["ReduceTier"][];
         } & {
@@ -3071,6 +3079,10 @@ export interface components {
             legalStage?: components["schemas"]["LegalStageEnum"];
             /** @description 持有催收员(私海) */
             holderId?: string | null;
+            /** @description 持有催收员姓名(holderId join account·案件管理归属列;v1.12.0) */
+            holderName?: string | null;
+            /** @description 主联系人电话(平台/持有方可见;脱敏案件为 null·案件管理联系方式列;v1.12.0) */
+            contactPhone?: string | null;
             /** @description 当前池归属(平台公海/服务商公海/开放池/私海) */
             pool?: components["schemas"]["PoolEnum"];
             /** @description 来源:派单/抢单/分配/退回 */
@@ -4187,6 +4199,8 @@ export interface components {
             uses?: number;
             promiseRate?: components["schemas"]["Rate"];
             repayRate?: components["schemas"]["Rate"];
+            /** @description Wilson 置信下界(排序权威·话术库 BR-M5;v1.11.0 透出) */
+            wilson?: number | null;
             status?: components["schemas"]["ScriptStatusEnum"];
             variant?: {
                 text?: string;

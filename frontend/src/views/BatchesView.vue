@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
@@ -7,10 +7,16 @@ import { useAuth } from '../stores/auth'
 import { useRoleFields } from '../composables/useRoleFields'
 import { caseStatusLabel } from '../constants/enums'
 import DsDrawer from '../components/DsDrawer.vue'
+import SeaView from './SeaView.vue'
 import * as XLSX from 'xlsx'
 
 // GET /batches → BatchView(平台双线/物业只收佣/服务商只付佣)。SA 派单(M3)；物业可导入批次/作废(批次2)。
 const auth = useAuth()
+// 撮合派单与平台公海是同一批待派案件的两个视角（原型即同一模板）——合并为本页两个 Tab：
+//   「批次派单」= 批次粒度首派/重派/开放费率/作废；「平台公海」= 案件粒度再派/开放抢单/竞争态（内嵌 SeaView 平台形态）。
+// 仅平台(SA/SE)在裸 /batches 会看到 Tab；PL/PC/VL 只从 /batches/{id} 详情下钻进来，不涉及。
+const isPlatform = computed(() => auth.me?.role === 'SA' || auth.me?.role === 'SE')
+const platformTab = ref<'dispatch' | 'sea'>('dispatch')
 // 资金双线列可见性(H-03)：收佣=平台/物业、付佣=平台/服务商，整列裁剪而非占位串。
 const { showCommInRate, showPayOutRate, ratePct } = useRoleFields()
 const items = ref<any[]>([])
@@ -213,7 +219,17 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
 </script>
 
 <template>
-  <div class="card">
+  <div>
+    <!-- 平台侧 Tab：批次派单 / 平台公海（合并原独立「平台公海」菜单 BR-M3-01/29） -->
+    <div v-if="isPlatform" class="segctrl" style="margin-bottom:12px">
+      <span :class="{ on: platformTab === 'dispatch' }" @click="platformTab = 'dispatch'">批次派单</span>
+      <span :class="{ on: platformTab === 'sea' }" @click="platformTab = 'sea'">平台公海</span>
+    </div>
+
+    <!-- 平台公海：内嵌 SeaView（其自身按 isPlatformSide 渲染 平台公海+开放抢单池，含再派/开放抢单/事件流水） -->
+    <SeaView v-if="isPlatform && platformTab === 'sea'" />
+
+  <div class="card" v-show="!isPlatform || platformTab === 'dispatch'">
     <div class="card-h">
       <div class="t"><span class="bar"></span>批次（催收单）</div>
       <div class="ops">
@@ -400,6 +416,7 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
         </template>
       </template>
     </DsDrawer>
+  </div>
   </div>
 </template>
 

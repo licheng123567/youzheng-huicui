@@ -23,7 +23,7 @@ test.describe('P-DATA-08 案件跨层级筛选', () => {
     await qReq
 
     const statusReq = page.waitForRequest((r) => /\/batches\?/.test(r.url()) && /[?&]status=/.test(r.url()))
-    await page.locator('select.inp').first().selectOption('IN_PROGRESS')
+    await page.locator('select.inp').filter({ hasText: '全部状态' }).selectOption('IN_PROGRESS')
     await statusReq
   })
 
