@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 有证慧催 · API 契约（全模块·已冻结）
-  version: 1.16.0  # v1.16.0(additive·平台双线总账 V929): +GET /recon/rollup-dual(平台批次维一行双线 应收/已收/未收+应付/已付/未付+毛利;platform-only) | RepayLine +双线可空字段(commInCents/settledIn/paymentRequestIdIn/prNoIn 平台+物业;commOutCents/settledOut/paymentRequestIdOut/prNoOut 平台+服务商;providerIdAtRepay/providerName 仅平台;legacy settled/paymentRequestId 废弃为按视角映射——PROVIDER=OUT 线值,其余=IN 线值);底层 repay_line 占用拆双线(同一笔回款可同时进 IN 收佣单与 OUT 付佣单,各线独立结清) | v1.15.0(additive·质检处置修正): RiskRecord +violatorOrgName/violatorRole/ownScope(谁的员工谁处置判定·平台看反馈对象);平台去 qc.escalate(顶层不上报只复核处置);dispose/escalate 补通知反馈组织负责人/当事人(BR-M5-07a/b/c) | v1.14.0(additive·确定性飞轮闭环): +POST /script-lib/recompute(飞轮结算重算+达标 AI 变体自动晋升环7) | Promise +scriptId(承诺话术归因·环3) | getScriptFlywheel +scriptId(单条话术漏斗·口径修正为单调子集) | PromiseInput.sourceSuggestionId 语义落地(采纳话术卡→承诺归因) | v1.13.0(additive·SA 飞轮+作战手册): +GET /script-lib/flywheel(话术飞轮漏斗+Wilson趋势) | +GET /projects/{id}/playbook/diff(作战手册版本对比行级diff) | v1.12.0(additive·平台超管页还原): Script +wilson(话术库排序权威透出) | listCases +holderName/contactPhone(案件管理归属催收员/联系方式列) | getOperationReport dimension +collector(经营报表催收员维,已于 v1.10.0 引入合并至此) | v1.11.0(additive·计费明细穿透列): BillingUsage +ownerName/room/projectName/batchNo(caseId join,计费明细页明细行业主/房号/项目/批次列;修服务商计费明细空表——STT 用量归服务商 org 见 seed) | v1.10.0(additive·佣金名册明细): CoCommissionBatchRow +caseCount/baseCents(案件数·回款金额,支撑佣金明细待结算/已结算分档) | v1.9.0(语义收敛·统一支付逻辑): 付佣线(OUT)生成/发送/撤回改为仅平台(服务商对支付申请单只读,批次结算标记照常可见;OUT 归属由明细 provider_id_at_repay 快照推导且须一致);佣金线(服务商→催收员 co-pay-docs)不变 | v1.8.0(additive·VL 团队即时看板 US-M10-03): CollectorCapacity +todayActions/todayRepayCents(工作台看板与指派弹窗共用同端点) | v1.7.0(additive·公海可见性收敛 BR-M3-29): listSea/listSeaEvents 补 x-permission=sea.view(全契约最后两个无权限点业务读端点;PL/PC 无此点→403·公海概念消失);平台方对 pool=provider 改返回空集(不看服务商公海明细,明细归 VL/CO;平台靠 T1/T2 预警与聚合) | v1.6.0(additive·App 多角色): listCases +holderId(私海过滤;催收员端「我持有的」——不传时 range scope 对 CO 返回本服务商全部案件,并非本人持有) | v1.5.0(additive·契约外端点回写): +录音回听 audio(V921)/佣金三端点 comm-status·comm-in-rate·commission-rates(V922)/附件四端点 attachments·upload-sessions(V923)/存证证书 certificate;rebindOrgOwner 200 补 ownerSetupToken;escalate 补 note;sms-code 补 502(未启用拒发·废 000000 后门) | v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
+  version: 1.17.0  # v1.17.0(additive·批次结项+承接段 V930): +POST /batches/{id}/close-engagement(结项=终止当前服务商承接·S1/S2/S3 全部收回回平台公海·承诺保留·批次回 PENDING 可重派;审计写 case.engagement-recall 不触发再派护栏——结项后重派对象含派回原商由平台裁量) | +GET /batches/{id}/close-preview(结项确认框:可收回统计+带有效分期承诺案件警示) | +GET /batches/{id}/engagements(承接历史:每段 服务商/起止/付佣快照/期间回款[按 V914 到账快照+时间窗归段·结算口径一致不漂移]/期间回款率=期间回款÷期初剩余应收/结项原因) | BatchBase +运营统计可选字段(projectName/providerName/caseCount/dueTotalCents/repaidTotalCents/repayRate/engagementCount/poolDist——角色中立进 Base 三视图同含,修批次列表幽灵列) | getOperationReport dimension +provider(案件侧按当前 c.provider_id/回款侧按快照 provider_id_at_repay) | v1.16.0(additive·平台双线总账 V929): +GET /recon/rollup-dual(平台批次维一行双线 应收/已收/未收+应付/已付/未付+毛利;platform-only) | RepayLine +双线可空字段(commInCents/settledIn/paymentRequestIdIn/prNoIn 平台+物业;commOutCents/settledOut/paymentRequestIdOut/prNoOut 平台+服务商;providerIdAtRepay/providerName 仅平台;legacy settled/paymentRequestId 废弃为按视角映射——PROVIDER=OUT 线值,其余=IN 线值);底层 repay_line 占用拆双线(同一笔回款可同时进 IN 收佣单与 OUT 付佣单,各线独立结清) | v1.15.0(additive·质检处置修正): RiskRecord +violatorOrgName/violatorRole/ownScope(谁的员工谁处置判定·平台看反馈对象);平台去 qc.escalate(顶层不上报只复核处置);dispose/escalate 补通知反馈组织负责人/当事人(BR-M5-07a/b/c) | v1.14.0(additive·确定性飞轮闭环): +POST /script-lib/recompute(飞轮结算重算+达标 AI 变体自动晋升环7) | Promise +scriptId(承诺话术归因·环3) | getScriptFlywheel +scriptId(单条话术漏斗·口径修正为单调子集) | PromiseInput.sourceSuggestionId 语义落地(采纳话术卡→承诺归因) | v1.13.0(additive·SA 飞轮+作战手册): +GET /script-lib/flywheel(话术飞轮漏斗+Wilson趋势) | +GET /projects/{id}/playbook/diff(作战手册版本对比行级diff) | v1.12.0(additive·平台超管页还原): Script +wilson(话术库排序权威透出) | listCases +holderName/contactPhone(案件管理归属催收员/联系方式列) | getOperationReport dimension +collector(经营报表催收员维,已于 v1.10.0 引入合并至此) | v1.11.0(additive·计费明细穿透列): BillingUsage +ownerName/room/projectName/batchNo(caseId join,计费明细页明细行业主/房号/项目/批次列;修服务商计费明细空表——STT 用量归服务商 org 见 seed) | v1.10.0(additive·佣金名册明细): CoCommissionBatchRow +caseCount/baseCents(案件数·回款金额,支撑佣金明细待结算/已结算分档) | v1.9.0(语义收敛·统一支付逻辑): 付佣线(OUT)生成/发送/撤回改为仅平台(服务商对支付申请单只读,批次结算标记照常可见;OUT 归属由明细 provider_id_at_repay 快照推导且须一致);佣金线(服务商→催收员 co-pay-docs)不变 | v1.8.0(additive·VL 团队即时看板 US-M10-03): CollectorCapacity +todayActions/todayRepayCents(工作台看板与指派弹窗共用同端点) | v1.7.0(additive·公海可见性收敛 BR-M3-29): listSea/listSeaEvents 补 x-permission=sea.view(全契约最后两个无权限点业务读端点;PL/PC 无此点→403·公海概念消失);平台方对 pool=provider 改返回空集(不看服务商公海明细,明细归 VL/CO;平台靠 T1/T2 预警与聚合) | v1.6.0(additive·App 多角色): listCases +holderId(私海过滤;催收员端「我持有的」——不传时 range scope 对 CO 返回本服务商全部案件,并非本人持有) | v1.5.0(additive·契约外端点回写): +录音回听 audio(V921)/佣金三端点 comm-status·comm-in-rate·commission-rates(V922)/附件四端点 attachments·upload-sessions(V923)/存证证书 certificate;rebindOrgOwner 200 补 ownerSetupToken;escalate 补 note;sms-code 补 502(未启用拒发·废 000000 后门) | v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
   contact: { name: 契约 Owner（架构师）, email: api-owner@youzheng.example }
   description: |
     从高保真原型 + PRD(BR/US) + 报告14口径抽取的全模块契约（单一事实源 SSOT）。**v1.0 已冻结（2026-06-24）**：经 codex×2 + 人工×2 共四轮独立审计、openapi-generator Spring 桩 mvn compile、Flyway 真库迁移三重验证，0 阻断/0 高。破坏性变更须升 major + 双 approve。
@@ -741,6 +741,56 @@ paths:
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DispatchInput' } } } }
       responses: { '200': { description: ok }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  /batches/{id}/close-engagement:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    post:
+      operationId: closeBatchEngagement
+      tags: [dispatch]
+      summary: 批次结项(v1.17.0)——终止当前服务商承接：S1/S2/S3 全部收回回平台公海，承诺保留，批次回 PENDING 可重派
+      description: |
+        「服务商催不动了」的平台动作。收回该批次当前服务商名下全部在催案件(待接单/服务商公海/私海进行中)回平台公海 S0；
+        带有效分期承诺的案件照收(承诺/跟进历史随案保留，重派后新服务商可见)——与 TC 到期的承诺暂缓(BR-M8-11)语义不同。
+        钱的归属不受影响：V914 到账快照保证旧商催回的回款/应得付佣仍归旧商。审计写 case.engagement-recall(不触发再派护栏①，
+        结项后重派对象含派回原商由平台裁量)。批次无进行中承接→409。
+      x-permission: case.dispatch
+      x-data-scope: platform
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CloseEngagementInput' } } } }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/CloseEngagementResult' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /batches/{id}/close-preview:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    get:
+      operationId: previewCloseEngagement
+      tags: [dispatch]
+      summary: 结项预览(v1.17.0)——确认框数据源：可收回统计+带有效分期承诺案件警示清单
+      x-permission: case.dispatch
+      x-data-scope: platform
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/ClosePreview' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /batches/{id}/engagements:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    get:
+      operationId: listBatchEngagements
+      tags: [dispatch]
+      summary: 批次承接历史(v1.17.0)——每段 服务商/起止/付佣快照/期间回款/期间回款率/结项原因
+      description: '期间回款按 V914 到账快照+时间窗归段(结项后补到账尾款仍归旧商·与结算口径一致)；期间回款率=期间回款÷期初剩余应收(批次总应收−开段前累计已收)。'
+      x-permission: case.dispatch
+      x-data-scope: platform
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/BatchEngagement' } } } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /cases/{id}/redispatch:
     parameters: [ { $ref: '#/components/parameters/Id' } ]
@@ -1783,7 +1833,7 @@ paths:
       tags: [reports]
       summary: 经营报表(物业/服务商/平台各口径·回款率/进度/能力用量·按项目/批次下钻 BR-M10-01/03)
       x-data-scope: range
-      parameters: [ { name: dimension, in: query, schema: { type: string, enum: [project, batch, month, collector] } }, { name: month, in: query, schema: { type: string } } ]
+      parameters: [ { name: dimension, in: query, schema: { type: string, enum: [project, batch, month, collector, provider], description: 'v1.17.0 +provider：案件侧按当前 c.provider_id、回款侧按 V914 快照 provider_id_at_repay(结项/再派不漂移)' } }, { name: month, in: query, schema: { type: string } } ]
       responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/ReportData' } } } } }
   /reports/export:
     post:
@@ -2430,6 +2480,68 @@ components:
     ImportError:
       type: object
       properties: { row: { type: integer }, field: { type: string }, code: { type: string }, message: { type: string } }
+    PoolDist:
+      type: object
+      description: '批次案件状态分布(v1.17.0·批次运营迷你分布条)。s0=待派单 s1=待接单 s2=服务商公海 s3=私海进行中 s4=开放抢单池 settled=已结清 closed=撤案/坏账/作废'
+      properties:
+        s0: { type: integer }
+        s1: { type: integer }
+        s2: { type: integer }
+        s3: { type: integer }
+        s4: { type: integer }
+        settled: { type: integer }
+        closed: { type: integer }
+    CloseEngagementReasonEnum: { type: string, enum: [INCAPABLE, COOP_TERMINATED, PROPERTY_REQUEST, OTHER], description: '结项原因：无力催收/合作终止/物业要求/其他' }
+    CloseEngagementInput:
+      type: object
+      required: [reason, note]
+      properties:
+        reason: { $ref: '#/components/schemas/CloseEngagementReasonEnum' }
+        note: { type: string, minLength: 1, description: '结项备注(必填留痕)' }
+    PromisedCaseWarn:
+      type: object
+      description: '带有效分期承诺(PENDING 期)的在催案件——结项收回警示项(承诺保留·新服务商可见历史)'
+      properties:
+        caseId: { type: string }
+        ownerName: { type: string }
+        room: { type: string }
+        pendingInstallments: { type: integer, description: '未兑付期数' }
+        nextDueDate: { type: [string, 'null'], format: date, description: '最近一期到期日' }
+    CloseEngagementResult:
+      type: object
+      properties:
+        ok: { type: boolean }
+        recalled: { type: integer, description: '本次收回案件数' }
+        byState:
+          type: object
+          properties: { s1: { type: integer }, s2: { type: integer }, s3: { type: integer } }
+        promisedCases: { type: array, items: { $ref: '#/components/schemas/PromisedCaseWarn' } }
+    ClosePreview:
+      type: object
+      properties:
+        providerId: { type: string }
+        providerName: { type: [string, 'null'] }
+        recallable:
+          type: object
+          properties: { s1: { type: integer }, s2: { type: integer }, s3: { type: integer }, total: { type: integer } }
+        promisedCases: { type: array, items: { $ref: '#/components/schemas/PromisedCaseWarn' } }
+    BatchEngagement:
+      type: object
+      description: '承接段(V930)：批次×服务商承接生命周期。期间回款按 V914 快照+时间窗归段；期间回款率=期间回款÷期初剩余应收'
+      properties:
+        id: { type: string }
+        seq: { type: integer, description: '批内承接序号 1..n' }
+        providerId: { type: string }
+        providerName: { type: string }
+        payOutRate: { $ref: '#/components/schemas/Rate', description: '开段时点付佣快照' }
+        startedAt: { type: string, format: date-time }
+        endedAt: { type: [string, 'null'], format: date-time, description: '空=进行中' }
+        endReason: { oneOf: [{ $ref: '#/components/schemas/CloseEngagementReasonEnum' }, { type: 'null' }] }
+        endNote: { type: [string, 'null'] }
+        endedByName: { type: [string, 'null'] }
+        periodRepayCents: { $ref: '#/components/schemas/Money', description: '期间回款' }
+        openingDueCents: { $ref: '#/components/schemas/Money', description: '期初剩余应收' }
+        periodRepayRate: { oneOf: [{ $ref: '#/components/schemas/Rate' }, { type: 'null' }], description: '期间回款率(期初剩余应收为 0 时省略)' }
     BatchBase:
       type: object
       properties:
@@ -2443,6 +2555,15 @@ components:
         playbookMode: { type: string, enum: [INHERIT, CUSTOM], description: 'INHERIT=继承项目；CUSTOM=批次自定义(BR-M2-18b)' }
         reduceDrift: { type: boolean, description: '可选·项目级减免阶梯已更新而该 CUSTOM 批次有差异(供"一键同步"提示 BR-M2-18b)；仅 CUSTOM 批次有意义' }
         playbookDrift: { type: boolean, description: '可选·项目级作战手册已更新而该 CUSTOM 批次有差异(供"一键同步"提示 BR-M2-18b)；仅 CUSTOM 批次有意义' }
+        # v1.17.0 批次运营统计（角色中立·三视图同含——放 Base 经 allOf 共同评估，不影响 oneOf 互斥判别；全部可选）
+        projectName: { type: string, description: '所属项目名(v1.17.0 批次运营列)' }
+        providerName: { type: [string, 'null'], description: '承接服务商名(未派单为空)' }
+        caseCount: { type: integer, description: '批内案件数(户数)' }
+        dueTotalCents: { $ref: '#/components/schemas/Money', description: '批次总应收(Σcase.due_cents)' }
+        repaidTotalCents: { $ref: '#/components/schemas/Money', description: '累计已收(repay_line reversed=false)' }
+        repayRate: { oneOf: [{ $ref: '#/components/schemas/Rate' }, { type: 'null' }], description: '回款率·分数(应收为 0 时省略)' }
+        engagementCount: { type: integer, description: '承接段数(V930·>1 表示发生过结项重派)' }
+        poolDist: { $ref: '#/components/schemas/PoolDist' }
     Batch:
       description: '平台全视角(双线均含)。物业用 BatchForProperty、服务商用 BatchForProvider'
       unevaluatedProperties: false   # v1.0.2: 三向 oneOf 互斥(3.1 unevaluatedProperties 透视 allOf)

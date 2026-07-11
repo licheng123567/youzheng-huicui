@@ -163,7 +163,8 @@ watch(() => auth.me, (me) => {
         <tr v-for="row in batches" :key="row.id" class="row-click" @click="viewBatch(row)">
           <td><b>{{ row.code }}</b></td>
           <td>{{ row.projectName || '—' }}</td>
-          <td class="num">{{ row.totalCases ?? '—' }}</td>
+          <!-- v1.17.0：契约字段名 caseCount（原 totalCases 是 /batches 从未返回的幽灵字段，恒"—"） -->
+          <td class="num">{{ row.caseCount ?? '—' }}</td>
           <td class="num">{{ yuan(row.dueTotalCents) }}</td>
           <td class="num">{{ yuan(row.repaidTotalCents) }}</td>
           <td class="num">{{ pct(row.repayRate) }}</td>

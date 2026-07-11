@@ -21,7 +21,9 @@ export const KEY2PATH: Record<string, string | null> = {
 }
 
 export const PATH2LABEL: Record<string, string> = {
-  '/dashboard': '工作台', '/batches': '撮合派单', '/sea': '案件公海', '/projects': '项目管理',
+  // v1.17.0 三合一：/batches 对平台=「案件运营」（批次运营+派单/结项+平台公海 Tab）；
+  // dispatch key 仅 SA/SE 菜单持有，PL/PC/VL 只下钻 /batches/{id} 详情不显示此标签，全局改名安全。
+  '/dashboard': '工作台', '/batches': '案件运营', '/sea': '案件公海', '/projects': '项目管理',
   '/cases': '案件管理', '/call-records': '通话记录', '/risks': '质检/风控', '/evidence': '存证管理',
   '/settlement': '收佣对账', '/settlement-out': '付佣对账', '/co-commission': '催收员佣金',
   '/billing': '计费明细', '/recharge': '充值中心', '/sms': '短信通道',
@@ -34,8 +36,10 @@ export const PATH2LABEL: Record<string, string> = {
 export const NAV_BY_ROLE: Record<string, NavItem[]> = {
   // 平台侧（SA/SE）财务只留一条「结算对账」（reconIn=/settlement 平台双线总账 v1.16.0）：
   // 收佣/付佣两菜单曾同指 SettlementView 仅差 side——对平台是同一屏，合并；PL/PC/VL 各自单线菜单不受影响。
-  SA: [{ group: '业务' }, 'workbench', 'dispatch', 'projects', 'cases', { group: '能力' }, 'playbookLib', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'billing', 'recharge', 'sms', { group: '系统' }, 'orgMgmt', 'members', 'settings', 'reports', 'audit', { group: '工具' }, 'appDownload'],
-  SE: [{ group: '业务' }, 'workbench', 'dispatch', 'projects', 'cases', { group: '能力' }, 'playbookLib', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'billing', { group: '系统' }, 'members', 'audit', { group: '报表' }, 'reports', { group: '工具' }, 'appDownload'],
+  // v1.17.0 三合一：平台侧去掉独立「案件管理」菜单（cases）——案件运营(/batches)一站式承载
+  // 批次运营+派单/结项+平台公海 Tab，案件明细走批次下钻；老书签 /cases、/sea 由 ROLE_REDIRECTS 转 /batches。
+  SA: [{ group: '业务' }, 'workbench', 'dispatch', 'projects', { group: '能力' }, 'playbookLib', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'billing', 'recharge', 'sms', { group: '系统' }, 'orgMgmt', 'members', 'settings', 'reports', 'audit', { group: '工具' }, 'appDownload'],
+  SE: [{ group: '业务' }, 'workbench', 'dispatch', 'projects', { group: '能力' }, 'playbookLib', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'billing', { group: '系统' }, 'members', 'audit', { group: '报表' }, 'reports', { group: '工具' }, 'appDownload'],
   PL: [{ group: '业务' }, 'workbench', 'projects', 'cases', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'billing', 'recharge', 'sms', { group: '管理' }, 'reports', 'members', 'audit', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
   PC: [{ group: '业务' }, 'workbench', 'cases', 'callLog', 'myLinks', { group: '项目' }, 'projects', { group: '能力' }, 'qc', 'legal', 'evidence', { group: '财务' }, 'reconIn', { group: '我的' }, 'myStats', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
   VL: [{ group: '业务' }, 'workbench', 'providerSea', 'projects', 'qc', 'cases', { group: '财务' }, 'reconOut', 'coCommission', 'recharge', 'billing', { group: '管理' }, 'reports', 'members', 'audit', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
@@ -77,13 +81,17 @@ export function allowedPaths(role: string): string[] {
 // CO 不列入：其案件入口是私海/公海扁平清单，且资金双线上 CO 两线比例均不可见。
 const DRILLDOWN_PATHS: Record<string, string[]> = {
   PL: ['/batches'], PC: ['/batches'], VL: ['/batches'],
+  // v1.17.0：平台 /cases 裸列表被 redirect 到 /batches，但 /cases/{id} 案件详情、
+  // /cases/{id}/call/{callId} 通话详情仍是批次下钻链路的合法落点（redirectPath 精确匹配不含子路径）。
+  SA: ['/cases'], SE: ['/cases'],
 }
 
 // 角色级老书签重定向（v1.16.0）：平台(SA/SE)的 /settlement-out 已并入 /settlement 双线总账。
 // 守卫在越权判定前先查此表——命中即 redirect（非拦截回 dashboard）；e2e-nav-lint 同源消费。
 const ROLE_REDIRECTS: Record<string, Record<string, string>> = {
-  SA: { '/settlement-out': '/settlement' },
-  SE: { '/settlement-out': '/settlement' },
+  // v1.17.0 三合一：平台老书签 /cases、/sea 并入 /batches 案件运营（案件明细走批次下钻，公海是页内 Tab）。
+  SA: { '/settlement-out': '/settlement', '/cases': '/batches', '/sea': '/batches' },
+  SE: { '/settlement-out': '/settlement', '/cases': '/batches', '/sea': '/batches' },
 }
 
 /** 该角色访问 path 是否应重定向；返回目标路由或 null。router 守卫与 nav-lint 共用（SSOT）。 */

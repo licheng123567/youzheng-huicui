@@ -151,7 +151,9 @@ public class MasterWriteController {
         // 新导入批次未覆盖项目级减免/手册 → reduceDrift/playbookDrift 恒 false（BR-M2-18b）。
         BatchPropertyView batchView = new BatchPropertyView(
                 String.valueOf(batchId), String.valueOf(projectId), batchNo, null, List.of(),
-                "PENDING", "INHERIT", "INHERIT", "PROPERTY", rate, false, false, false);
+                "PENDING", "INHERIT", "INHERIT", "PROPERTY", rate, false, false, false,
+                // v1.17.0 运营统计字段（导入响应给最小集：项目名+本次成功件数；余为可选省略，全量见 GET /batches）
+                proj.name(), null, succeeded, null, null, null, null, null);
         return new ImportResult(batchView, rows.size(), succeeded, skipped, errors);
     }
 

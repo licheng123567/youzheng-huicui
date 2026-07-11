@@ -6,8 +6,7 @@ import { loginAs } from './helpers'
 // 注：「通话记录」只在 PC/CO 菜单（一线作业角色），平台无此入口 → 不列入本表。
 const SCREENS: { label: string; url: RegExp }[] = [
   { label: '项目管理', url: /\/projects/ },
-  { label: '撮合派单', url: /\/batches/ },
-  { label: '案件管理', url: /\/cases/ },
+  { label: '案件运营', url: /\/batches/ },      // v1.17.0 三合一：撮合派单+案件管理+平台公海（案件明细走批次下钻）
   { label: '结算对账', url: /\/settlement/ },   // v1.16.0 平台双线总账（收佣/付佣两菜单合并）
   { label: '质检/风控', url: /\/risks/ },
   { label: '经营报表', url: /\/reports/ },

@@ -429,7 +429,33 @@ public class DispatchM3Controller {
         jdbc.update("UPDATE batch SET provider_id = ?, pay_out_rate = ?, status = 'DISPATCHED', updated_at = now()"
                 + " WHERE id = ?", providerId, in.payOutRate(), batchId);
 
+        // 9) 承接段（V930）：无进行中段 → 开新段；同商进行中段沿用不新开（追加拆派）；
+        //    异商进行中段=数据异常（正常流须先结项）→ 防御性收旧段(OTHER)开新段并留痕。
+        openEngagementIfNeeded(s, batchId, providerId, in.payOutRate());
+
         return ok();
+    }
+
+    /** 承接段开段（V930·派单/重派挂点）。批次行已在 doDispatch 外围被 FOR UPDATE？否——依赖 uq_be_open 部分唯一索引兜底并发。 */
+    private void openEngagementIfNeeded(CurrentSubject s, long batchId, long providerId, BigDecimal payOutRate) {
+        record OpenSeg(long id, long providerId) {}
+        OpenSeg open = jdbc.query(
+                "SELECT id, provider_id FROM batch_engagement WHERE batch_id = ? AND ended_at IS NULL FOR UPDATE",
+                rs -> rs.next() ? new OpenSeg(rs.getLong("id"), rs.getLong("provider_id")) : null, batchId);
+        if (open != null && open.providerId() == providerId) return;   // 同商追加派单沿用现段
+        if (open != null) {
+            // 异商但有进行中段：正常流须先结项；防御性收旧开新（不阻断派单本身）并审计。
+            jdbc.update("UPDATE batch_engagement SET ended_at = now(), end_reason = 'OTHER',"
+                    + " end_note = '系统防御：未结项即改派他商，自动收段', ended_by = ? WHERE id = ?",
+                    Long.valueOf(s.accountId()), open.id());
+            jdbc.update("INSERT INTO audit_log(actor_id, actor, action, target, target_type, target_id, scope, reason, trace_id)"
+                            + " VALUES (?, ?, 'batch.engagement-auto-close', ?, 'batch', ?, ?, ?, ?)",
+                    Long.valueOf(s.accountId()), s.name(), "batch#" + batchId, String.valueOf(batchId),
+                    s.orgType(), "未结项即改派他商，自动收段 seg=" + open.id(), org.slf4j.MDC.get("traceId"));
+        }
+        jdbc.update("INSERT INTO batch_engagement(batch_id, provider_id, seq, pay_out_rate, started_at)"
+                        + " SELECT ?, ?, COALESCE(max(seq), 0) + 1, ?, now() FROM batch_engagement WHERE batch_id = ?",
+                batchId, providerId, payOutRate, batchId);
     }
 
     // ── 选目标案件 ────────────────────────────────────────────────────────────

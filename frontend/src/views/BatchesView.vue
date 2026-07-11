@@ -6,6 +6,7 @@ import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import { useRoleFields } from '../composables/useRoleFields'
 import { caseStatusLabel } from '../constants/enums'
+import { yuan, pct } from '../utils/money'
 import DsDrawer from '../components/DsDrawer.vue'
 import SeaView from './SeaView.vue'
 import * as XLSX from 'xlsx'
@@ -37,10 +38,57 @@ async function load() {
 const dlg = ref(false)
 const dispCases = ref<any[]>([]); const caseSel = ref<any[]>([])
 const form = ref<any>({ batchId: '', providerId: '', payOutRate: 0.2, mode: 'WHOLE', splitBy: 'count', splitCount: 10, redispatch: false })
+// 重派软警示：上一承接段（服务商/结项原因）——结项后重派对象含派回原商由平台裁量，仅提示不拦截（v1.17.0）
+const lastSeg = ref<any>(null)
 function openDispatch(id: string, redispatch = false) {
   form.value = { batchId: id, providerId: '', payOutRate: 0.2, mode: 'WHOLE', splitBy: 'count', splitCount: 10, redispatch }
-  dispCases.value = []; caseSel.value = []; dlg.value = true
+  dispCases.value = []; caseSel.value = []; lastSeg.value = null; dlg.value = true
+  if (redispatch) loadLastSegment(id)
 }
+async function loadLastSegment(batchId: string) {
+  const { data } = await api.GET('/batches/{id}/engagements', { params: { path: { id: batchId } } })
+  const items = (data as any)?.items ?? []
+  lastSeg.value = items.length ? items[items.length - 1] : null
+}
+
+// ── v1.17.0 结项（终止当前服务商承接·全部收回+承诺保留）──
+const REASON_LABEL: Record<string, string> = {
+  INCAPABLE: '无力催收', COOP_TERMINATED: '合作终止', PROPERTY_REQUEST: '物业要求', OTHER: '其他',
+}
+const ceDlg = ref(false); const ceBatch = ref<any>(null); const cePreview = ref<any>(null)
+const ceForm = ref<any>({ reason: 'INCAPABLE', note: '' }); const ceLoading = ref(false); const ceSaving = ref(false)
+async function openCloseEngagement(row: any) {
+  ceBatch.value = row; cePreview.value = null; ceForm.value = { reason: 'INCAPABLE', note: '' }
+  ceDlg.value = true; ceLoading.value = true
+  const { data, error } = await api.GET('/batches/{id}/close-preview', { params: { path: { id: row.id } } })
+  ceLoading.value = false
+  if (error) { ElMessage.error('结项预览加载失败：' + ((error as any)?.message ?? '')); ceDlg.value = false; return }
+  cePreview.value = data
+}
+async function submitCloseEngagement() {
+  if (!ceForm.value.note?.trim()) { ElMessage.warning('结项备注必填（留痕）'); return }
+  ceSaving.value = true
+  const { data, error } = await api.POST('/batches/{id}/close-engagement', {
+    params: { path: { id: ceBatch.value.id } },
+    body: { reason: ceForm.value.reason, note: ceForm.value.note.trim() } as any,
+  })
+  ceSaving.value = false
+  if (error) { ElMessage.error('结项失败：' + ((error as any)?.message ?? '')); return }
+  const r = data as any
+  ElMessage.success(`已结项：收回 ${r?.recalled ?? 0} 件回平台公海（承诺保留），批次可重派`)
+  ceDlg.value = false; load()
+}
+
+// ── v1.17.0 承接历史抽屉 ──
+const ehDlg = ref(false); const ehBatch = ref<any>(null); const ehItems = ref<any[]>([]); const ehLoading = ref(false)
+async function openEngagements(row: any) {
+  ehBatch.value = row; ehItems.value = []; ehDlg.value = true; ehLoading.value = true
+  const { data, error } = await api.GET('/batches/{id}/engagements', { params: { path: { id: row.id } } })
+  ehLoading.value = false
+  if (error) { ElMessage.error('承接历史加载失败'); return }
+  ehItems.value = (data as any)?.items ?? []
+}
+const dt = (s?: string | null) => (s ? s.slice(0, 10) : '至今')
 // 派单决策辅助：服务商客观经营指标(BR-M3-24)
 const metrics = ref<any[]>([])
 async function loadMetrics() {
@@ -222,7 +270,7 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
   <div>
     <!-- 平台侧 Tab：批次派单 / 平台公海（合并原独立「平台公海」菜单 BR-M3-01/29） -->
     <div v-if="isPlatform" class="segctrl" style="margin-bottom:12px">
-      <span :class="{ on: platformTab === 'dispatch' }" @click="platformTab = 'dispatch'">批次派单</span>
+      <span :class="{ on: platformTab === 'dispatch' }" @click="platformTab = 'dispatch'">批次运营</span>
       <span :class="{ on: platformTab === 'sea' }" @click="platformTab = 'sea'">平台公海</span>
     </div>
 
@@ -238,41 +286,75 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
       </div>
     </div>
 
+    <!-- v1.17.0 批次运营表：项目/户数/应收/已收/回款率/状态分布/服务商/承接段 —— GET /batches 契约 BatchBase 新字段 -->
     <table v-loading="loading">
       <thead>
         <tr>
-          <th style="width:60px">ID</th>
           <th>批次号</th>
-          <th style="width:110px">状态</th>
-          <th v-if="showCommInRate" style="width:100px">收佣比例</th>
-          <th v-if="showPayOutRate" style="width:120px">付佣比例</th>
-          <th style="width:300px">操作</th>
+          <th>项目</th>
+          <th style="width:64px">户数</th>
+          <th>应收</th>
+          <th>已收</th>
+          <th style="width:80px">回款率</th>
+          <th style="width:130px">状态分布</th>
+          <th>服务商</th>
+          <th v-if="showCommInRate" style="width:80px">收佣</th>
+          <th v-if="showPayOutRate" style="width:80px">付佣</th>
+          <th style="width:96px">状态</th>
+          <th style="width:330px">操作</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="row in items" :key="row.id">
-          <td class="num">{{ row.id }}</td>
           <td><a class="link" @click="$router.push(`/batches/${row.id}`)">{{ row.code }}</a></td>
-          <td><span class="tag" :class="statusTag(row.status)" :title="row.status">{{ caseStatusLabel(row.status) }}</span></td>
+          <td>{{ row.projectName }}</td>
+          <td class="num">{{ row.caseCount ?? '—' }}</td>
+          <td class="num">{{ yuan(row.dueTotalCents) }}</td>
+          <td class="num">{{ yuan(row.repaidTotalCents) }}</td>
+          <td class="num">{{ pct(row.repayRate) }}</td>
+          <td>
+            <!-- 迷你状态分布：待派/待接/商公海/在催/开放/结清 -->
+            <span v-if="row.poolDist" class="pooldist" :title="`待派${row.poolDist.s0} 待接${row.poolDist.s1} 商公海${row.poolDist.s2} 在催${row.poolDist.s3} 开放${row.poolDist.s4} 结清${row.poolDist.settled} 关闭${row.poolDist.closed}`">
+              <span v-if="row.poolDist.s0" class="tag inf">待派{{ row.poolDist.s0 }}</span>
+              <span v-if="row.poolDist.s1 + row.poolDist.s2" class="tag war">在商{{ row.poolDist.s1 + row.poolDist.s2 }}</span>
+              <span v-if="row.poolDist.s3" class="tag pri">在催{{ row.poolDist.s3 }}</span>
+              <span v-if="row.poolDist.settled" class="tag suc">结清{{ row.poolDist.settled }}</span>
+            </span>
+            <span v-else>—</span>
+          </td>
+          <td>
+            <span v-if="row.providerName">{{ row.providerName }}</span>
+            <span v-else class="tag inf">待派单</span>
+            <sup v-if="(row.engagementCount ?? 0) > 1" class="tag war" style="margin-left:4px" title="发生过结项重派，点「承接历史」看各段表现">{{ row.engagementCount }}任</sup>
+          </td>
           <!-- 收佣比例：仅平台/物业视角整列渲染(服务商视角字段级无→整列不出 H-03) -->
           <td v-if="showCommInRate" class="num">{{ ratePct(row.commInRate) }}</td>
           <!-- 付佣比例：仅平台/服务商视角整列渲染(物业视角字段级无→整列不出，不显占位串 H-03) -->
           <td v-if="showPayOutRate" class="num">{{ ratePct(row.payOutRate) }}</td>
+          <td><span class="tag" :class="statusTag(row.status)" :title="row.status">{{ caseStatusLabel(row.status) }}</span></td>
           <td>
-            <a v-if="auth.has('case.dispatch')" class="btn txt" :class="{ 'is-disabled': acting===row.id }" @click="acting===row.id || openDispatch(row.id)">派单</a>
+            <a v-if="auth.has('case.dispatch') && !row.providerId" class="btn txt" :class="{ 'is-disabled': acting===row.id }" @click="acting===row.id || openDispatch(row.id)">派单</a>
             <a v-if="auth.has('case.dispatch')" class="btn txt" @click="openDispatch(row.id, true)">重派</a>
+            <a v-if="auth.has('case.dispatch') && row.providerId" class="btn txt dgc" @click="openCloseEngagement(row)">结项</a>
             <a v-if="auth.has('case.dispatch')" class="btn txt" @click="setOpenRate(row)">开放费率</a>
+            <a v-if="isPlatform && (row.engagementCount ?? 0) > 0" class="btn txt" @click="openEngagements(row)">承接历史</a>
             <a v-if="auth.has('case.void')" class="btn txt dgc" @click="voidBatch(row)">作废</a>
           </td>
         </tr>
         <tr v-if="!loading && !items.length">
-          <td :colspan="3 + (showCommInRate ? 1 : 0) + (showPayOutRate ? 1 : 0) + 1" style="text-align:center;color:var(--sec);padding:32px 0">暂无批次，点击「+ 导入批次」导入催收单。</td>
+          <td :colspan="10 + (showCommInRate ? 1 : 0) + (showPayOutRate ? 1 : 0)" style="text-align:center;color:var(--sec);padding:32px 0">暂无批次，点击「+ 导入批次」导入催收单。</td>
         </tr>
       </tbody>
     </table>
 
     <!-- 派单/重派 -->
     <DsDrawer v-model="dlg" :title="(form.redispatch?'重派':'派单')" :width="640">
+      <!-- v1.17.0 重派软警示：上一承接段（结项后重派对象含派回原商由平台裁量，仅提示不拦截） -->
+      <div v-if="form.redispatch && lastSeg" class="alert warn" style="margin-bottom:10px">
+        上一承接：<b>{{ lastSeg.providerName }}</b>（第 {{ lastSeg.seq }} 任 · {{ dt(lastSeg.startedAt) }} ~ {{ dt(lastSeg.endedAt) }}）
+        <template v-if="lastSeg.endReason">· 结项原因：{{ REASON_LABEL[lastSeg.endReason] ?? lastSeg.endReason }}</template>
+        <template v-if="lastSeg.periodRepayRate != null">· 期间回款率 {{ pct(lastSeg.periodRepayRate) }}</template>
+      </div>
       <el-form label-width="120px">
         <el-form-item label="方式"><el-radio-group v-model="form.mode"><el-radio-button label="WHOLE">整批</el-radio-button><el-radio-button label="SPLIT">拆分</el-radio-button></el-radio-group></el-form-item>
         <template v-if="form.mode==='SPLIT'">
@@ -303,6 +385,72 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
         <el-form-item label="付佣比例(小数)"><el-input-number v-model="form.payOutRate" :min="0" :max="1" :step="0.01" /><span style="margin-left:8px;color:#909399">0.2=20%（须≤收佣，防倒挂）</span></el-form-item>
       </el-form>
       <template #footer><el-button @click="dlg=false">取消</el-button><el-button type="primary" :loading="acting===form.batchId" @click="submitDispatch">{{ form.redispatch?'重派':(form.mode==='SPLIT'?'拆分派单':'整批派单') }}</el-button></template>
+    </DsDrawer>
+
+    <!-- v1.17.0 结项确认（终止当前服务商承接·全部收回+承诺保留） -->
+    <DsDrawer v-model="ceDlg" :title="`结项 · ${ceBatch?.code ?? ''}（终止服务商承接）`" :width="560">
+      <div v-loading="ceLoading">
+        <template v-if="cePreview">
+          <div class="alert info" style="margin-bottom:10px">
+            将终止 <b>{{ cePreview.providerName }}</b> 对本批次的承接：收回其名下全部在催案件回<b>平台公海</b>，
+            批次回「待派单」可重派。已催回的回款与应得付佣按到账时点归属，<b>不受结项影响</b>。
+          </div>
+          <el-descriptions :column="4" border size="small" style="margin-bottom:10px">
+            <el-descriptions-item label="待接单">{{ cePreview.recallable?.s1 ?? 0 }}</el-descriptions-item>
+            <el-descriptions-item label="商公海">{{ cePreview.recallable?.s2 ?? 0 }}</el-descriptions-item>
+            <el-descriptions-item label="催收中">{{ cePreview.recallable?.s3 ?? 0 }}</el-descriptions-item>
+            <el-descriptions-item label="合计收回">{{ cePreview.recallable?.total ?? 0 }}</el-descriptions-item>
+          </el-descriptions>
+          <div v-if="cePreview.promisedCases?.length" class="alert danger" style="margin-bottom:8px">
+            <b>承诺警示：</b>以下 {{ cePreview.promisedCases.length }} 件带有效分期承诺，将一并收回——
+            承诺与跟进记录随案保留，重派后新服务商可见完整历史。
+          </div>
+          <el-table v-if="cePreview.promisedCases?.length" :data="cePreview.promisedCases" border size="small" max-height="200" style="margin-bottom:10px">
+            <el-table-column prop="ownerName" label="业主" width="100" />
+            <el-table-column prop="room" label="房号" width="90" />
+            <el-table-column prop="pendingInstallments" label="未兑期数" width="90" />
+            <el-table-column prop="nextDueDate" label="最近到期" />
+          </el-table>
+          <el-form label-width="90px">
+            <el-form-item label="结项原因" required>
+              <el-select v-model="ceForm.reason" style="width:220px">
+                <el-option v-for="(l, k) in REASON_LABEL" :key="k" :label="l" :value="k" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="备注" required>
+              <el-input v-model="ceForm.note" type="textarea" :rows="2" placeholder="结项备注（必填留痕，如：三个月回款率不足 5%，协商终止）" />
+            </el-form-item>
+          </el-form>
+        </template>
+      </div>
+      <template #footer>
+        <el-button @click="ceDlg = false">取消</el-button>
+        <el-button type="danger" :loading="ceSaving" :disabled="!cePreview" @click="submitCloseEngagement">确认结项并收回</el-button>
+      </template>
+    </DsDrawer>
+
+    <!-- v1.17.0 承接历史（每段 服务商/起止/期间回款/期间回款率/结项原因） -->
+    <DsDrawer v-model="ehDlg" :title="`承接历史 · ${ehBatch?.code ?? ''}`" :width="640">
+      <div v-loading="ehLoading">
+        <div v-for="seg in ehItems" :key="seg.id" class="card" style="margin-bottom:10px;padding:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <b>第 {{ seg.seq }} 任 · {{ seg.providerName }}</b>
+            <span class="tag" :class="seg.endedAt ? 'inf' : 'suc'">{{ seg.endedAt ? '已结项' : '承接中' }}</span>
+          </div>
+          <div class="note" style="margin:6px 0">{{ dt(seg.startedAt) }} ~ {{ dt(seg.endedAt) }} · 付佣快照 {{ pct(seg.payOutRate) }}</div>
+          <div style="display:flex;gap:18px;font-size:13px">
+            <span>期间回款 <b>{{ yuan(seg.periodRepayCents) }}</b></span>
+            <span>期初剩余应收 {{ yuan(seg.openingDueCents) }}</span>
+            <span>期间回款率 <b>{{ pct(seg.periodRepayRate) }}</b></span>
+          </div>
+          <div v-if="seg.endReason" class="note" style="margin-top:6px">
+            结项：{{ REASON_LABEL[seg.endReason] ?? seg.endReason }}<template v-if="seg.endNote">·{{ seg.endNote }}</template>
+            <template v-if="seg.endedByName">（{{ seg.endedByName }}）</template>
+          </div>
+        </div>
+        <div v-if="!ehLoading && !ehItems.length" class="note" style="text-align:center;padding:20px">暂无承接记录（批次尚未派单）</div>
+      </div>
+      <template #footer><el-button @click="ehDlg = false">关闭</el-button></template>
     </DsDrawer>
 
     <!-- 导入批次向导（3 步：对标原型 view==='import'） -->

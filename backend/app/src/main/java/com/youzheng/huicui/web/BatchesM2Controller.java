@@ -64,7 +64,70 @@ public class BatchesM2Controller {
     private record BatchRow(
             long id, long projectId, String code, Long providerId,
             BigDecimal commInRate, Boolean commInInherited, BigDecimal payOutRate,
-            String status) {}
+            String status, String projectName, String providerName) {}
+
+    /** v1.17.0 批次运营统计（角色中立，页内 batch_id=ANY 批量取，零 N+1）。 */
+    private record BatchStats(int caseCount, long dueTotalCents, long repaidTotalCents,
+                              com.youzheng.huicui.web.dto.PoolDistDto poolDist, int engagementCount) {}
+
+    private static final BatchStats EMPTY_STATS =
+            new BatchStats(0, 0L, 0L, new com.youzheng.huicui.web.dto.PoolDistDto(0, 0, 0, 0, 0, 0, 0), 0);
+
+    /**
+     * 页内批次统计（3 条批量查询）：①案件分布+应收（FILTER 聚合）②已收（repay_line reversed=false）③承接段数（V930）。
+     */
+    private java.util.Map<Long, BatchStats> loadStats(List<Long> batchIds) {
+        java.util.Map<Long, BatchStats> out = new java.util.HashMap<>();
+        if (batchIds.isEmpty()) return out;
+        Long[] ids = batchIds.toArray(new Long[0]);
+        java.util.Map<Long, long[]> dist = new java.util.HashMap<>();      // [cnt,due,s0..s4,settled,closed]
+        jdbc.query(con -> {
+            var ps = con.prepareStatement(
+                    "SELECT c.batch_id, count(*) AS cnt, COALESCE(sum(c.due_cents),0) AS due,"
+                            + " count(*) FILTER (WHERE c.status='PENDING_DISPATCH' AND c.pool='PLATFORM_SEA') AS s0,"
+                            + " count(*) FILTER (WHERE c.status='PENDING_DISPATCH' AND c.pool='PROVIDER_SEA') AS s1,"
+                            + " count(*) FILTER (WHERE c.status='PROVIDER_SEA') AS s2,"
+                            + " count(*) FILTER (WHERE c.status='IN_PROGRESS' AND c.pool='PRIVATE') AS s3,"
+                            + " count(*) FILTER (WHERE c.status='PENDING_DISPATCH' AND c.pool='OPEN_POOL') AS s4,"
+                            + " count(*) FILTER (WHERE c.status='SETTLED') AS settled,"
+                            + " count(*) FILTER (WHERE c.status IN ('WITHDRAWN','BAD_DEBT','VOIDED')) AS closed"
+                            + " FROM \"case\" c WHERE c.batch_id = ANY(?) GROUP BY c.batch_id");
+            ps.setArray(1, con.createArrayOf("bigint", ids));
+            return ps;
+        }, rs -> {
+            dist.put(rs.getLong("batch_id"), new long[]{
+                    rs.getLong("cnt"), rs.getLong("due"), rs.getLong("s0"), rs.getLong("s1"),
+                    rs.getLong("s2"), rs.getLong("s3"), rs.getLong("s4"),
+                    rs.getLong("settled"), rs.getLong("closed")});
+        });
+        java.util.Map<Long, Long> repaid = new java.util.HashMap<>();
+        jdbc.query(con -> {
+            var ps = con.prepareStatement(
+                    "SELECT c.batch_id, COALESCE(sum(rl.amount_cents),0) AS repaid FROM repay_line rl"
+                            + " JOIN \"case\" c ON c.id = rl.case_id"
+                            + " WHERE rl.reversed = false AND c.batch_id = ANY(?) GROUP BY c.batch_id");
+            ps.setArray(1, con.createArrayOf("bigint", ids));
+            return ps;
+        }, rs -> { repaid.put(rs.getLong("batch_id"), rs.getLong("repaid")); });
+        java.util.Map<Long, Integer> engs = new java.util.HashMap<>();
+        jdbc.query(con -> {
+            var ps = con.prepareStatement(
+                    "SELECT batch_id, count(*) AS n FROM batch_engagement WHERE batch_id = ANY(?) GROUP BY batch_id");
+            ps.setArray(1, con.createArrayOf("bigint", ids));
+            return ps;
+        }, rs -> { engs.put(rs.getLong("batch_id"), rs.getInt("n")); });
+
+        for (Long bid : batchIds) {
+            long[] d = dist.get(bid);
+            if (d == null) { out.put(bid, EMPTY_STATS); continue; }
+            out.put(bid, new BatchStats(
+                    (int) d[0], d[1], repaid.getOrDefault(bid, 0L),
+                    new com.youzheng.huicui.web.dto.PoolDistDto(
+                            (int) d[2], (int) d[3], (int) d[4], (int) d[5], (int) d[6], (int) d[7], (int) d[8]),
+                    engs.getOrDefault(bid, 0)));
+        }
+        return out;
+    }
 
     /**
      * GET /batches —— 批次列表（按 projectId/status + scope 过滤，分页）。
@@ -96,7 +159,8 @@ public class BatchesM2Controller {
         //   PLATFORM → 不限（全量）。
         appendBatchScope(s, where, args);
 
-        String fromWhere = " FROM batch b JOIN project p ON p.id = b.project_id" + where;
+        String fromWhere = " FROM batch b JOIN project p ON p.id = b.project_id"
+                + " LEFT JOIN org pr ON pr.id = b.provider_id" + where;
 
         Long total = jdbc.queryForObject("SELECT count(*)" + fromWhere, Long.class, args.toArray());
 
@@ -104,7 +168,8 @@ public class BatchesM2Controller {
         pageArgs.add(pg.size);
         pageArgs.add(pg.offset);
         List<BatchRow> rows = jdbc.query(
-                "SELECT b.id, b.project_id, b.no, b.provider_id, b.comm_in_rate, b.comm_in_inherited, b.pay_out_rate, b.status"
+                "SELECT b.id, b.project_id, b.no, b.provider_id, b.comm_in_rate, b.comm_in_inherited, b.pay_out_rate, b.status,"
+                        + " p.name AS project_name, pr.name AS provider_name"
                         + fromWhere + " ORDER BY b.id DESC LIMIT ? OFFSET ?",
                 BatchesM2Controller::mapRow, pageArgs.toArray());
 
@@ -113,7 +178,9 @@ public class BatchesM2Controller {
         // 列表视图不逐行推导覆盖态（避免 N+1）：reduceMode/playbookMode 给 INHERIT、drift 给 false（契约该批字段可选）；
         // 真实覆盖态/drift 由明细端点 getBatch 提供。
         Override listOv = new Override("INHERIT", "INHERIT", false, false);
-        for (BatchRow r : rows) items.add(toView(r, role, List.of(), listOv));
+        // v1.17.0 运营统计：页内 3 条批量查询（零 N+1）。
+        java.util.Map<Long, BatchStats> stats = loadStats(rows.stream().map(BatchRow::id).toList());
+        for (BatchRow r : rows) items.add(toView(r, role, List.of(), listOv, stats.getOrDefault(r.id(), EMPTY_STATS)));
         return Page.of(items, pg, total == null ? 0 : total);
     }
 
@@ -135,8 +202,10 @@ public class BatchesM2Controller {
         appendBatchScope(s, where, args);
 
         List<BatchRow> found = jdbc.query(
-                "SELECT b.id, b.project_id, b.no, b.provider_id, b.comm_in_rate, b.comm_in_inherited, b.pay_out_rate, b.status"
-                        + " FROM batch b JOIN project p ON p.id = b.project_id" + where,
+                "SELECT b.id, b.project_id, b.no, b.provider_id, b.comm_in_rate, b.comm_in_inherited, b.pay_out_rate, b.status,"
+                        + " p.name AS project_name, pr.name AS provider_name"
+                        + " FROM batch b JOIN project p ON p.id = b.project_id"
+                        + " LEFT JOIN org pr ON pr.id = b.provider_id" + where,
                 BatchesM2Controller::mapRow, args.toArray());
         if (found.isEmpty()) {
             // 越范围与不存在统一 404（不泄露存在性）。
@@ -152,7 +221,8 @@ public class BatchesM2Controller {
 
         // BC-05 真值化：reduceMode/playbookMode 由 reduce_tier(batch_id)/playbook 关联推导，消解与 GET reduce-tiers source 不一致。
         Override ov = deriveOverride(batchId, r.projectId());
-        return toView(r, RoleResponse.of(s), coordinators, ov);
+        BatchStats st = loadStats(List.of(batchId)).getOrDefault(batchId, EMPTY_STATS);
+        return toView(r, RoleResponse.of(s), coordinators, ov, st);
     }
 
     /** 批次覆盖真值（reduceMode/playbookMode 真实 INHERIT/CUSTOM + BR-M2-18b drift 标记）。 */
@@ -209,14 +279,15 @@ public class BatchesM2Controller {
         return new Override(reduceMode, playbookMode, reduceDrift, playbookDrift);
     }
 
-    /** 行映射：no→code，provider_id 可空。 */
+    /** 行映射：no→code，provider_id 可空；projectName/providerName v1.17.0 运营列。 */
     private static BatchRow mapRow(java.sql.ResultSet rs, int i) throws java.sql.SQLException {
         long providerId = rs.getLong("provider_id");
         Long provider = rs.wasNull() ? null : providerId;
         return new BatchRow(
                 rs.getLong("id"), rs.getLong("project_id"), rs.getString("no"), provider,
                 rs.getBigDecimal("comm_in_rate"), (Boolean) rs.getObject("comm_in_inherited"),
-                rs.getBigDecimal("pay_out_rate"), rs.getString("status"));
+                rs.getBigDecimal("pay_out_rate"), rs.getString("status"),
+                rs.getString("project_name"), rs.getString("provider_name"));
     }
 
     /**
@@ -229,7 +300,7 @@ public class BatchesM2Controller {
      *   - playbookDrift：无批次级手册存储 → 恒 false（已知降级，照实传，不造假数据）。
      */
     private static Object toView(BatchRow r, RoleResponse.ViewRole role,
-                                 List<BatchCoordinatorRef> coordinators, Override ov) {
+                                 List<BatchCoordinatorRef> coordinators, Override ov, BatchStats st) {
         String idStr = String.valueOf(r.id());
         String projectIdStr = String.valueOf(r.projectId());
         String providerIdStr = r.providerId() == null ? null : String.valueOf(r.providerId());
@@ -237,16 +308,27 @@ public class BatchesM2Controller {
         final String playbookMode = ov.playbookMode();
         final Boolean reduceDrift = ov.reduceDrift();
         final Boolean playbookDrift = ov.playbookDrift();
+        // v1.17.0 运营统计（角色中立·契约进 BatchBase 三视图同含；repayRate 分母 0 → null）。
+        final BigDecimal repayRate = st.dueTotalCents() > 0
+                ? BigDecimal.valueOf(st.repaidTotalCents())
+                    .divide(BigDecimal.valueOf(st.dueTotalCents()), 4, java.math.RoundingMode.HALF_UP)
+                : null;
         return switch (role) {
             case PROVIDER -> new BatchProviderView(
                     idStr, projectIdStr, r.code(), providerIdStr, coordinators, r.status(),
-                    reduceMode, playbookMode, "PROVIDER", r.payOutRate(), reduceDrift, playbookDrift);
+                    reduceMode, playbookMode, "PROVIDER", r.payOutRate(), reduceDrift, playbookDrift,
+                    r.projectName(), r.providerName(), st.caseCount(), st.dueTotalCents(),
+                    st.repaidTotalCents(), repayRate, st.engagementCount(), st.poolDist());
             case PROPERTY -> new BatchPropertyView(
                     idStr, projectIdStr, r.code(), providerIdStr, coordinators, r.status(),
-                    reduceMode, playbookMode, "PROPERTY", r.commInRate(), r.commInInherited(), reduceDrift, playbookDrift);
+                    reduceMode, playbookMode, "PROPERTY", r.commInRate(), r.commInInherited(), reduceDrift, playbookDrift,
+                    r.projectName(), r.providerName(), st.caseCount(), st.dueTotalCents(),
+                    st.repaidTotalCents(), repayRate, st.engagementCount(), st.poolDist());
             case PLATFORM -> new BatchPlatformView(
                     idStr, projectIdStr, r.code(), providerIdStr, coordinators, r.status(),
-                    reduceMode, playbookMode, "PLATFORM", r.commInRate(), r.commInInherited(), r.payOutRate(), reduceDrift, playbookDrift);
+                    reduceMode, playbookMode, "PLATFORM", r.commInRate(), r.commInInherited(), r.payOutRate(), reduceDrift, playbookDrift,
+                    r.projectName(), r.providerName(), st.caseCount(), st.dueTotalCents(),
+                    st.repaidTotalCents(), repayRate, st.engagementCount(), st.poolDist());
         };
     }
 

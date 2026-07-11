@@ -19,7 +19,7 @@ test.describe('v1.1.0 工作台 + 派单决策', () => {
 
   test('SA 派单对话框→服务商指标决策辅助就位', async ({ page }) => {
     await loginAs(page, 'admin')
-    await page.getByRole('menuitem', { name: '撮合派单' }).click()
+    await page.getByRole('menuitem', { name: '案件运营' }).click()
     await expect(page).toHaveURL(/\/batches/)
     // 行内「派单」是 <a class="btn txt">（无 href → 无 link/button role），按 class+精确文案定位；
     // 同列还有「重派」，故用 exact text 过滤

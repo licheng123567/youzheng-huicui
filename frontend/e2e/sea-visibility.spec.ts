@@ -8,7 +8,7 @@ import { loginAs, loginRole } from './helpers'
 test.describe('BR-M3-29 公海可见性收敛', () => {
   test('SA 平台侧:撮合派单→平台公海 Tab,池分段默认平台公海、不含「服务商公海」', async ({ page }) => {
     await loginRole(page, 'SA')
-    await page.getByRole('menuitem', { name: '撮合派单' }).click()
+    await page.getByRole('menuitem', { name: '案件运营' }).click()
     await page.locator('.segctrl').first().getByText('平台公海').click()
     // SeaView 的池分段控件（含「开放抢单池」，用它区分于页级 Tab）
     const poolSeg = page.locator('.segctrl', { hasText: '开放抢单池' })
