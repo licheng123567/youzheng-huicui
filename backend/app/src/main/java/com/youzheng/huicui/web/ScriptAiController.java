@@ -282,9 +282,12 @@ public class ScriptAiController {
                 rs.getInt("uses"),
                 rateToFraction(rs.getBigDecimal("promise_rate")),
                 rateToFraction(rs.getBigDecimal("repay_rate")),
+                doubleOrNull(rs.getBigDecimal("wilson")),
                 rs.getString("status"),
                 parseVariant(rs.getString("variant")));
     }
+
+    private static Double doubleOrNull(java.math.BigDecimal v) { return v == null ? null : v.doubleValue(); }
 
     private ScriptDto loadScriptOr404(String id) {
         List<ScriptDto> found = jdbc.query(

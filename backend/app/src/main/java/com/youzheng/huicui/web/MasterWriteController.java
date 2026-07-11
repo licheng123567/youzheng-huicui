@@ -206,7 +206,7 @@ public class MasterWriteController {
                 String.valueOf(caseId), in.acctNo(), String.valueOf(batchId), String.valueOf(batch.projectId()),
                 batch.projectName(), in.ownerName(), in.room(), in.dueCents(), in.penaltyCents(), in.dueCents(),
                 in.arrearagePeriods(), in.litigationFields(), "PENDING_DISPATCH", "NONE",
-                null, "PLATFORM_SEA", null, null, null, null, null, false);
+                null, null, null, "PLATFORM_SEA", null, null, null, null, null, false);
         return ResponseEntity.status(HttpStatus.CREATED).body(dto);
     }
 

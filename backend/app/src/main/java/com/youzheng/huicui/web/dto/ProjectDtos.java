@@ -60,7 +60,11 @@ public final class ProjectDtos {
             Long repayTotalCents,       // 回款聚合（M2 占位 TODO 对账模块接入）
             List<CoordinatorRef> coordinators,
             List<ReduceTier> reduceTiers,
-            Litigation litigation
+            Litigation litigation,
+            Integer batchCount,        // 项目下批次数（列表聚合;v1.12.0）
+            Integer activeCases,       // 在催案件数（IN_PROGRESS）
+            Integer legalCount,        // 法务处理数（legal_stage 非 NONE）
+            Integer settledCount       // 已结清数
     ) {}
 
     /**

@@ -29,6 +29,8 @@ public record CaseDto(
         String status,
         String legalStage,
         String holderId,
+        String holderName,
+        String contactPhone,
         String pool,
         String source,
         String t2DeadlineAt,

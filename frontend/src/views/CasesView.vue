@@ -35,6 +35,12 @@ const STATUS_TAG: Record<string, string> = {
 const statusTag = (s?: string) => STATUS_TAG[s ?? ''] ?? 'inf'
 
 const filters = reactive({ projectId: '', status: '', q: '' })
+const projectOpts = ref<any[]>([])
+async function loadProjectOpts() {
+  if (!isManagerRole.value) return
+  const { data } = await api.GET('/projects', { params: { query: { page: 1, size: 100 } } as any })
+  projectOpts.value = (data as any)?.items ?? []
+}
 const page = ref(1); const size = ref(20)
 
 async function loadBatches() {
@@ -91,7 +97,7 @@ const holdingCount = computed(() => total.value)
 // 改为 me 就绪后再按角色加载，immediate 兼容已就绪场景。
 watch(() => auth.me, (me) => {
   if (!me) return
-  if (isManagerRole.value) loadBatches()
+  if (isManagerRole.value) { loadBatches(); loadProjectOpts() }
   else loadCases()
 }, { immediate: true })
 </script>
@@ -114,6 +120,13 @@ watch(() => auth.me, (me) => {
       <div class="fi">
         <span>搜索</span>
         <input class="inp" v-model="filters.q" placeholder="批次号/项目名" style="min-width:160px" @keyup.enter="search" />
+      </div>
+      <div class="fi">
+        <span>项目</span>
+        <select class="inp" v-model="filters.projectId" style="min-width:150px" @change="search">
+          <option value="">全部项目</option>
+          <option v-for="p in projectOpts" :key="p.id" :value="p.id">{{ p.name }}</option>
+        </select>
       </div>
       <div class="fi">
         <span>状态</span>

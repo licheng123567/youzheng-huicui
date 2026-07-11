@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 有证慧催 · API 契约（全模块·已冻结）
-  version: 1.11.0  # v1.11.0(additive·计费明细穿透列): BillingUsage +ownerName/room/projectName/batchNo(caseId join,计费明细页明细行业主/房号/项目/批次列;修服务商计费明细空表——STT 用量归服务商 org 见 seed) | v1.10.0(additive·佣金名册明细): CoCommissionBatchRow +caseCount/baseCents(案件数·回款金额,支撑佣金明细待结算/已结算分档) | v1.9.0(语义收敛·统一支付逻辑): 付佣线(OUT)生成/发送/撤回改为仅平台(服务商对支付申请单只读,批次结算标记照常可见;OUT 归属由明细 provider_id_at_repay 快照推导且须一致);佣金线(服务商→催收员 co-pay-docs)不变 | v1.8.0(additive·VL 团队即时看板 US-M10-03): CollectorCapacity +todayActions/todayRepayCents(工作台看板与指派弹窗共用同端点) | v1.7.0(additive·公海可见性收敛 BR-M3-29): listSea/listSeaEvents 补 x-permission=sea.view(全契约最后两个无权限点业务读端点;PL/PC 无此点→403·公海概念消失);平台方对 pool=provider 改返回空集(不看服务商公海明细,明细归 VL/CO;平台靠 T1/T2 预警与聚合) | v1.6.0(additive·App 多角色): listCases +holderId(私海过滤;催收员端「我持有的」——不传时 range scope 对 CO 返回本服务商全部案件,并非本人持有) | v1.5.0(additive·契约外端点回写): +录音回听 audio(V921)/佣金三端点 comm-status·comm-in-rate·commission-rates(V922)/附件四端点 attachments·upload-sessions(V923)/存证证书 certificate;rebindOrgOwner 200 补 ownerSetupToken;escalate 补 note;sms-code 补 502(未启用拒发·废 000000 后门) | v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
+  version: 1.12.0  # v1.12.0(additive·平台超管页还原): Script +wilson(话术库排序权威透出) | listCases +holderName/contactPhone(案件管理归属催收员/联系方式列) | getOperationReport dimension +collector(经营报表催收员维,已于 v1.10.0 引入合并至此) | v1.11.0(additive·计费明细穿透列): BillingUsage +ownerName/room/projectName/batchNo(caseId join,计费明细页明细行业主/房号/项目/批次列;修服务商计费明细空表——STT 用量归服务商 org 见 seed) | v1.10.0(additive·佣金名册明细): CoCommissionBatchRow +caseCount/baseCents(案件数·回款金额,支撑佣金明细待结算/已结算分档) | v1.9.0(语义收敛·统一支付逻辑): 付佣线(OUT)生成/发送/撤回改为仅平台(服务商对支付申请单只读,批次结算标记照常可见;OUT 归属由明细 provider_id_at_repay 快照推导且须一致);佣金线(服务商→催收员 co-pay-docs)不变 | v1.8.0(additive·VL 团队即时看板 US-M10-03): CollectorCapacity +todayActions/todayRepayCents(工作台看板与指派弹窗共用同端点) | v1.7.0(additive·公海可见性收敛 BR-M3-29): listSea/listSeaEvents 补 x-permission=sea.view(全契约最后两个无权限点业务读端点;PL/PC 无此点→403·公海概念消失);平台方对 pool=provider 改返回空集(不看服务商公海明细,明细归 VL/CO;平台靠 T1/T2 预警与聚合) | v1.6.0(additive·App 多角色): listCases +holderId(私海过滤;催收员端「我持有的」——不传时 range scope 对 CO 返回本服务商全部案件,并非本人持有) | v1.5.0(additive·契约外端点回写): +录音回听 audio(V921)/佣金三端点 comm-status·comm-in-rate·commission-rates(V922)/附件四端点 attachments·upload-sessions(V923)/存证证书 certificate;rebindOrgOwner 200 补 ownerSetupToken;escalate 补 note;sms-code 补 502(未启用拒发·废 000000 后门) | v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
   contact: { name: 契约 Owner（架构师）, email: api-owner@youzheng.example }
   description: |
     从高保真原型 + PRD(BR/US) + 报告14口径抽取的全模块契约（单一事实源 SSOT）。**v1.0 已冻结（2026-06-24）**：经 codex×2 + 人工×2 共四轮独立审计、openapi-generator Spring 桩 mvn compile、Flyway 真库迁移三重验证，0 阻断/0 高。破坏性变更须升 major + 双 approve。
@@ -2303,6 +2303,10 @@ components:
             status: { type: string }
             dueTotalCents: { $ref: '#/components/schemas/Money' }
             repayTotalCents: { $ref: '#/components/schemas/Money' }
+            batchCount: { type: ['integer', 'null'], description: '项目下批次数(列表聚合;v1.12.0)' }
+            activeCases: { type: ['integer', 'null'], description: '在催案件数(IN_PROGRESS)' }
+            legalCount: { type: ['integer', 'null'], description: '法务处理数(legal_stage 非 NONE)' }
+            settledCount: { type: ['integer', 'null'], description: '已结清数' }
             coordinators: { type: array, items: { $ref: '#/components/schemas/CoordinatorRef' } }
             reduceTiers: { type: array, items: { $ref: '#/components/schemas/ReduceTier' } }
     ProjectForProvider:
@@ -2474,6 +2478,8 @@ components:
         status: { $ref: '#/components/schemas/CaseStatusEnum' }
         legalStage: { $ref: '#/components/schemas/LegalStageEnum', description: '与 status 正交·边催边诉(D2)' }
         holderId: { type: [string, 'null'], description: '持有催收员(私海)' }
+        holderName: { type: [string, 'null'], description: '持有催收员姓名(holderId join account·案件管理归属列;v1.12.0)' }
+        contactPhone: { type: [string, 'null'], description: '主联系人电话(平台/持有方可见;脱敏案件为 null·案件管理联系方式列;v1.12.0)' }
         pool: { $ref: '#/components/schemas/PoolEnum', description: '当前池归属(平台公海/服务商公海/开放池/私海)' }
         source: { type: [string, 'null'], description: '来源:派单/抢单/分配/退回' }
         t2DeadlineAt: { type: [string, 'null'], format: date-time, description: '服务商处置时限(BR-M3 T2)' }
@@ -3121,7 +3127,7 @@ components:
         flywheel: { type: object, properties: { autoIterate: { type: boolean }, trigger: { type: string }, adoptMode: { $ref: '#/components/schemas/PlaybookAdoptModeEnum' }, liveHint: { type: boolean, description: '通话中实时提示·恒false(OQ-M5-1)' } } }
     Script:
       type: object
-      properties: { id: { type: string }, scene: { type: string }, intent: { type: string }, cohort: { type: string }, source: { $ref: '#/components/schemas/ScriptSourceEnum' }, uses: { type: integer }, promiseRate: { $ref: '#/components/schemas/Rate' }, repayRate: { $ref: '#/components/schemas/Rate' }, status: { $ref: '#/components/schemas/ScriptStatusEnum' }, variant: { type: [object, 'null'], properties: { text: { type: string }, uplift: { $ref: '#/components/schemas/Rate' }, state: { type: string } } } }
+      properties: { id: { type: string }, scene: { type: string }, intent: { type: string }, cohort: { type: string }, source: { $ref: '#/components/schemas/ScriptSourceEnum' }, uses: { type: integer }, promiseRate: { $ref: '#/components/schemas/Rate' }, repayRate: { $ref: '#/components/schemas/Rate' }, wilson: { type: ['number', 'null'], description: 'Wilson 置信下界(排序权威·话术库 BR-M5;v1.11.0 透出)' }, status: { $ref: '#/components/schemas/ScriptStatusEnum' }, variant: { type: [object, 'null'], properties: { text: { type: string }, uplift: { $ref: '#/components/schemas/Rate' }, state: { type: string } } } }
     ScriptInput: { type: object, required: [scene, text], properties: { scene: { type: string }, intent: { type: string }, cohort: { type: string }, text: { type: string } } }
     ScriptPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Script' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }
     Playbook:

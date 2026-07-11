@@ -225,7 +225,7 @@ onMounted(load)
           <td class="num">{{ row.activeCases ?? '—' }}</td>
           <td class="num">{{ yuan(row.dueTotalCents) }}</td>
           <td class="num">{{ yuan(row.repayTotalCents) }}</td>
-          <td class="num">{{ row.repayRate != null ? (row.repayRate * 100).toFixed(1) + '%' : '—' }}</td>
+          <td class="num">{{ row.dueTotalCents ? ((row.repayTotalCents || 0) / row.dueTotalCents * 100).toFixed(1) + '%' : '—' }}</td>
           <td class="num">{{ row.legalCount ?? '—' }}</td>
           <td class="num">{{ row.settledCount ?? '—' }}</td>
           <td v-if="showCommInRate" class="num">{{ ratePct(row.commInRate) }}</td>
@@ -378,7 +378,7 @@ onMounted(load)
       <div v-else class="note">只读，不可录入。</div>
     </div>
     <div v-if="auth.has('proj.edit')" style="margin-bottom:8px">
-      <button class="btn sm" @click="ElMessage.success('已保存项目相关情况')">保存并触发 AI 生成</button>
+      <span class="note" style="margin:0">项目情况录入用于 AI 生成作战手册初稿——该能力端点待接入（当前仅本地暂存，未持久化）。</span>
     </div>
 
     <!-- 协调员（本物业） -->

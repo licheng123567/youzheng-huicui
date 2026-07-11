@@ -94,9 +94,17 @@ public class ProjectsM2Controller {
         pageArgs.add(pg.size);
         pageArgs.add(pg.offset);
         // 列表固定 Project schema（roleResponseRule 第4条），coordinators/reduceTiers 省略（详情才给）
+        // 列表补聚合列（批次数/在催/法务/已结清/应收/回款）——原型项目列表列，子查询按 project 汇总。
+        String aggCols = ", (SELECT count(*) FROM batch b WHERE b.project_id = p.id) AS batch_count"
+                + ", (SELECT count(*) FROM \"case\" c WHERE c.project_id = p.id AND c.status = 'IN_PROGRESS') AS active_cases"
+                + ", (SELECT count(*) FROM \"case\" c WHERE c.project_id = p.id AND c.legal_stage IS NOT NULL AND c.legal_stage <> 'NONE') AS legal_count"
+                + ", (SELECT count(*) FROM \"case\" c WHERE c.project_id = p.id AND c.status = 'SETTLED') AS settled_count"
+                + ", (SELECT COALESCE(SUM(c.due_cents),0) FROM \"case\" c WHERE c.project_id = p.id) AS due_total"
+                + ", (SELECT COALESCE(SUM(rl.amount_cents),0) FROM repay_line rl JOIN \"case\" c ON c.id = rl.case_id"
+                + "     WHERE c.project_id = p.id AND rl.reversed = false) AS repay_total";
         List<Project> items = totalVal == 0 ? List.of() : jdbc.query(
-                "SELECT p.* FROM project p" + where + " ORDER BY p.id DESC LIMIT ? OFFSET ?",
-                projectRowMapper(/*withDetail*/ false), pageArgs.toArray());
+                "SELECT p.*" + aggCols + " FROM project p" + where + " ORDER BY p.id DESC LIMIT ? OFFSET ?",
+                projectListRowMapper(), pageArgs.toArray());
 
         return Page.of(items, pg, totalVal);
     }
@@ -154,7 +162,8 @@ public class ProjectsM2Controller {
                     base.feeRows(), base.feeCycle(), base.penalty(), base.payInfo(),
                     base.corpAccount(), base.wxQrUrl(), base.reducePolicy(),
                     base.commInRate(), base.org(), base.status(),
-                    dueTotal, repayTotal, coordinators, tiers, base.litigation());
+                    dueTotal, repayTotal, coordinators, tiers, base.litigation(),
+                    null, null, null, null);
         }
 
         // 服务商 → ProjectForProvider（物理不含 commInRate / 财务汇总；feeStd 汇总展示串）
@@ -235,7 +244,8 @@ public class ProjectsM2Controller {
                 base.feeRows(), base.feeCycle(), base.penalty(), base.payInfo(),
                 base.corpAccount(), base.wxQrUrl(), base.reducePolicy(),
                 base.commInRate(), base.org(), base.status(),
-                sumCaseDue(projectId), sumRepay(projectId), coords, tiers, base.litigation());
+                sumCaseDue(projectId), sumRepay(projectId), coords, tiers, base.litigation(),
+                null, null, null, null);
     }
 
     private void requireOwnOrgProject(CurrentSubject s, long projectId) {
@@ -301,7 +311,33 @@ public class ProjectsM2Controller {
                 null,                       // repayTotalCents：同上
                 null,                       // coordinators：列表省略
                 null,                       // reduceTiers：列表省略
-                litigationOf(rs));
+                litigationOf(rs),
+                null, null, null, null);    // 聚合列仅 projectListRowMapper 填
+    }
+
+    /** 列表专用 mapper：共享列 + 聚合列（批次数/在催/法务/已结清/应收/回款），供项目列表原型列展示。 */
+    private RowMapper<Project> projectListRowMapper() {
+        return (ResultSet rs, int i) -> new Project(
+                "PROPERTY_PLATFORM",
+                String.valueOf(rs.getLong("id")),
+                rs.getString("name"), rs.getString("area"),
+                rs.getString("province"), rs.getString("city"), rs.getString("district"),
+                rs.getString("prop_company"), rs.getString("contract_type"), rs.getString("contract_name"),
+                rs.getString("service_period"), parseFeeRows(rs.getString("fee_rows")), rs.getString("fee_cycle"),
+                rs.getString("penalty"), rs.getString("pay_info"), rs.getString("corp_account"),
+                rs.getString("wx_qr_url"), rs.getString("reduce_policy"), numOrNull(rs, "comm_in_rate"),
+                rs.getString("org_name"), rs.getString("status"),
+                longOrNullCol(rs, "due_total"), longOrNullCol(rs, "repay_total"),
+                null, null, litigationOf(rs),
+                intOrNullCol(rs, "batch_count"), intOrNullCol(rs, "active_cases"),
+                intOrNullCol(rs, "legal_count"), intOrNullCol(rs, "settled_count"));
+    }
+
+    private static Long longOrNullCol(ResultSet rs, String col) throws SQLException {
+        long v = rs.getLong(col); return rs.wasNull() ? null : v;
+    }
+    private static Integer intOrNullCol(ResultSet rs, String col) throws SQLException {
+        int v = rs.getInt(col); return rs.wasNull() ? null : v;
     }
 
     private static Double numOrNull(ResultSet rs, String col) throws SQLException {

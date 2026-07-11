@@ -33,11 +33,11 @@ function resetCaseFilter() { caseFilter.value = { q: '', status: '', amtMin: nul
 const filteredCases = computed(() => {
   let list = cases.value
   const f = caseFilter.value
-  if (f.q) { const q = f.q.toLowerCase(); list = list.filter((c: any) => (c.ownerName || '').includes(q) || (c.room || '').includes(q) || (c.phone || '').includes(q)) }
+  if (f.q) { const q = f.q.toLowerCase(); list = list.filter((c: any) => (c.ownerName || '').includes(q) || (c.room || '').includes(q) || (c.contactPhone || '').includes(q)) }
   if (f.status) list = list.filter((c: any) => c.status === f.status)
   if (f.amtMin != null) list = list.filter((c: any) => (c.dueCents || 0) >= f.amtMin! * 100)
   if (f.amtMax != null) list = list.filter((c: any) => (c.dueCents || 0) <= f.amtMax! * 100)
-  if (f.owner) list = list.filter((c: any) => (c.collectorName || '').includes(f.owner))
+  if (f.owner) list = list.filter((c: any) => (c.holderName || '').includes(f.owner))
   return list
 })
 
@@ -448,8 +448,8 @@ onMounted(loadAll)
             <td>{{ c.room || '—' }}</td>
             <td class="num">{{ yuan(c.dueCents) }}</td>
             <td><span class="tag" :class="statusTag(c.status)">{{ caseStatusLabel(c.status) }}</span></td>
-            <td>{{ c.collectorName || '—' }}</td>
-            <td>{{ c.phone || '—' }}</td>
+            <td>{{ c.holderName || '—' }}</td>
+            <td>{{ c.contactPhone || '—' }}</td>
             <td @click.stop><a class="btn txt" @click="openCase(c)">查看详情 ›</a></td>
           </tr>
           <tr v-if="!filteredCases.length"><td colspan="7" class="empty-cell">{{ cases.length ? '无匹配案件' : '暂无案件' }}</td></tr>
