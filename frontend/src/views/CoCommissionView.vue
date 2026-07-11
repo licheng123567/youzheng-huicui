@@ -25,6 +25,17 @@ const unpaidCount = computed(() => coDocs.value.filter((d) => !isSettled(d)).len
 const settledCount = computed(() => coDocs.value.filter(isSettled).length)
 const unpaidAmount = computed(() => coDocs.value.filter((d) => !isSettled(d)).reduce((s, d) => s + (d.amountCents || 0), 0))
 const settledAmount = computed(() => coDocs.value.filter(isSettled).reduce((s, d) => s + (d.amountCents || 0), 0))
+// 支付单**按催收员归拢**：同一催收员的多张单聚在一组,组头给单数与金额小计,组内每张单可下钻明细。
+const docGroups = computed(() => {
+  const m = new Map<string, any>()
+  for (const d of shownDocs.value) {
+    const key = String(d.collectorId ?? d.collectorName ?? '—')
+    const g = m.get(key) ?? { collectorId: key, name: d.collectorName ?? d.collectorId, docs: [] as any[], amount: 0 }
+    g.docs.push(d); g.amount += d.amountCents || 0
+    m.set(key, g)
+  }
+  return [...m.values()]
+})
 
 async function load() {
   loading.value = true
@@ -152,24 +163,33 @@ onMounted(load)
         已结算合计 <b style="color:var(--ok,#67c23a)">{{ yuan(settledAmount) }}</b>
       </span>
     </div>
+    <!-- 按催收员归拢：组头=该催收员的单数/金额小计;组内每张单可下钻明细(单支付单视角) -->
     <table>
       <thead>
         <tr>
-          <th>催收员</th><th style="width:70px">笔数</th><th>金额</th><th style="width:120px">状态</th><th style="width:140px">创建时间</th><th style="width:200px">操作</th>
+          <th>单号 / 催收员</th><th style="width:70px">笔数</th><th>金额</th><th style="width:120px">状态</th><th style="width:140px">创建时间</th><th style="width:200px">操作</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in shownDocs" :key="row.id">
-          <td>{{ row.collectorName ?? row.collectorId }}</td>
-          <td class="num">{{ row.count }}</td>
-          <td class="num">{{ yuan(row.amountCents) }}</td>
-          <td><span class="tag" :class="row.status==='SETTLED'?'suc':'war'">{{ row.status==='SETTLED'?'已结算':'未结算' }}</span></td>
-          <td class="note">{{ row.createdAt ? String(row.createdAt).slice(0,16).replace('T',' ') : '—' }}</td>
-          <td>
-            <button class="btn txt" @click="openDetail(row)">详情</button>
-            <button v-if="row.status==='PENDING_PAY'" class="btn txt" @click="confirmPay(row)">确认支付</button>
-          </td>
-        </tr>
+        <template v-for="g in docGroups" :key="g.collectorId">
+          <tr style="background:#f6f8fc">
+            <td><b>{{ g.name }}</b></td>
+            <td class="num note">{{ g.docs.length }} 张单</td>
+            <td class="num"><b>{{ yuan(g.amount) }}</b></td>
+            <td colspan="3" class="note">按催收员小计</td>
+          </tr>
+          <tr v-for="row in g.docs" :key="row.id">
+            <td style="padding-left:22px">{{ row.code ?? ('单 #' + row.id) }}</td>
+            <td class="num">{{ row.count }}</td>
+            <td class="num">{{ yuan(row.amountCents) }}</td>
+            <td><span class="tag" :class="row.status==='SETTLED'?'suc':'war'">{{ row.status==='SETTLED'?'已结算':'未结算' }}</span></td>
+            <td class="note">{{ row.createdAt ? String(row.createdAt).slice(0,16).replace('T',' ') : '—' }}</td>
+            <td>
+              <button class="btn txt" @click="openDetail(row)">详情</button>
+              <button v-if="row.status==='PENDING_PAY'" class="btn txt" @click="confirmPay(row)">确认支付</button>
+            </td>
+          </tr>
+        </template>
         <tr v-if="!shownDocs.length"><td colspan="6" class="note" style="text-align:center">{{ coDocs.length ? '该分档下暂无佣金单' : '暂无佣金支付单' }}</td></tr>
       </tbody>
     </table>

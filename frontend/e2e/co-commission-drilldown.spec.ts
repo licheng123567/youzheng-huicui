@@ -61,14 +61,16 @@ test.describe('US-M9-10 内催佣金穿透(VL)', () => {
 
     // 行级「详情」：仅当有佣金支付单行时穿透验证(种子现实可能空)
     const detailBtn = page.getByRole('button', { name: /^详情$/ })
+    await detailBtn.first().waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {})
     if (await detailBtn.count()) {
       await detailBtn.first().click()
-      const dlg = page.locator('.el-dialog').filter({ hasText: /佣金支付单详情|佣金单/ })
+      // 详情弹层是 DsDrawer(role=dialog·标题「佣金支付单详情」)，不是 el-dialog
+      const dlg = page.getByRole('dialog').filter({ hasText: '佣金支付单详情' })
       await expect(dlg).toBeVisible()
       // 快照表头穿透字段(明细快照 lines：业主/房号/回款/佣金)
-      await expect(dlg.getByText(/业主/)).toBeVisible()
-      await expect(dlg.getByText(/房号/)).toBeVisible()
-      await expect(dlg.getByText(/回款/)).toBeVisible()
+      await expect(dlg.getByText(/业主/).first()).toBeVisible()
+      await expect(dlg.getByText(/房号/).first()).toBeVisible()
+      await expect(dlg.getByText(/回款/).first()).toBeVisible()
       await expect(dlg.getByText(/佣金/).first()).toBeVisible()
     }
   })
