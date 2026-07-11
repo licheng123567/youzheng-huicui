@@ -15,6 +15,7 @@ public record PromiseDto(
         String date,
         Long amountCents,
         String state,
+        String scriptId,
         List<PromiseInstallmentDto> installments,
         String createdBy,
         String createdAt

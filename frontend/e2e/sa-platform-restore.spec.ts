@@ -29,6 +29,13 @@ test.describe('SA 平台话术库还原', () => {
     await expect(page.getByText('通话接通')).toBeVisible()
     await expect(page.getByText(/Wilson 下界趋势/)).toBeVisible()
   })
+
+  test('飞轮结算:按钮触发 recompute,回流重算成功提示', async ({ page }) => {
+    await loginRole(page, 'SA')
+    await page.getByRole('menuitem', { name: '平台话术库' }).click()
+    await page.getByRole('button', { name: '飞轮结算' }).click()
+    await expect(page.getByText(/飞轮结算完成：回流重算/)).toBeVisible()
+  })
 })
 
 test.describe('SA 项目管理还原', () => {

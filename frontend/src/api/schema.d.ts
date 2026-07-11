@@ -2332,6 +2332,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/script-lib/recompute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 飞轮结算·按真实通话结果重算话术 uses/转化率/wilson(平台护城河 BR-M5-12)
+         * @description 确定性回流:对有承诺归因(promise.script_id)的话术,按兑现/回款结果重算 uses/promise_rate/repay_rate/wilson 写回;达标 AI 提炼变体自动晋升(BR-M5-12a)。仅平台。幂等。v1.14.0
+         */
+        post: operations["recomputeFlywheel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{id}/playbook": {
         parameters: {
             query?: never;
@@ -3281,6 +3301,8 @@ export interface components {
         Promise: {
             id?: string;
             caseId?: string;
+            /** @description 促成本次承诺的话术 id(飞轮环3归因;来自 sourceSuggestionId 或 scene 回退归因;v1.14.0) */
+            scriptId?: string | null;
             /** Format: date */
             date?: string;
             amountCents?: components["schemas"]["Money"];
@@ -4253,6 +4275,11 @@ export interface components {
             intent?: string;
             cohort?: string;
             text: string;
+        };
+        /** @description 飞轮结算结果:recomputed=回流重算的话术数,promoted=达标自动晋升的变体数 */
+        FlywheelRecompute: {
+            recomputed?: number;
+            promoted?: number;
         };
         /** @description 话术飞轮:funnel 转化漏斗(通话接通→命中承诺信号→登记承诺→承诺兑现回款);wilsonTrend 月度 Wilson 下界趋势 */
         ScriptFlywheel: {
@@ -8211,6 +8238,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScriptFlywheel"];
+                };
+            };
+        };
+    };
+    recomputeFlywheel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlywheelRecompute"];
                 };
             };
         };

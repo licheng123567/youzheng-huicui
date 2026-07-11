@@ -1521,6 +1521,11 @@ public class DevSeeder implements CommandLineRunner {
     //   co_commission(co1×B-CH-M3-S2=8%、co2=6%) + batch1 回款归属回填(co1·15%)
     //   SETTLED co_pay_doc 关联 batch1 已结明细 → "已结"提成
     //   承诺 FULFILLED×2/BROKEN×1 → 兑现率 67%；通话结果标记 activity 4接通/1无人接听 → 接通率 80%
+    private Long scriptIdByScene(String scene) {
+        return jdbc.query("SELECT id FROM script_lib WHERE scene = ? ORDER BY id LIMIT 1",
+                rs -> rs.next() ? rs.getLong(1) : null, scene);
+    }
+
     // 话术飞轮 + 作战手册 v2：承诺跨月混合状态(飞轮漏斗/Wilson趋势数据源)、项目1作战手册第2版(版本对比 diff)。
     private void seedFlywheelAndPlaybookV2(Long projId) {
         Long sa = jdbc.query("SELECT id FROM account WHERE role_template='SA' ORDER BY id LIMIT 1",
@@ -1531,17 +1536,21 @@ public class DevSeeder implements CommandLineRunner {
             Long[] cs = jdbc.query("SELECT id FROM \"case\" WHERE project_id = ? ORDER BY id LIMIT 6",
                     (rs, i) -> rs.getLong(1), projId).toArray(new Long[0]);
             if (cs.length >= 4) {
+                // 归因话术:分期引导(AI_MINED·WINNER,为自动晋升铺料给它足量 FULFILLED)、首催开场(EXPERT)、催缴施压(AI_MINED)。
+                Long sFenqi = scriptIdByScene("分期引导");
+                Long sKaichang = scriptIdByScene("首催开场");
+                Long sShiya = scriptIdByScene("催缴施压");
                 Object[][] rows = {
-                    {cs[0], 120000, "FULFILLED", "95 days"}, {cs[1], 80000, "FULFILLED", "92 days"},
-                    {cs[2], 60000, "BROKEN", "88 days"},     {cs[3], 50000, "FULFILLED", "62 days"},
-                    {cs[0], 90000, "PENDING", "58 days"},    {cs[1], 70000, "FULFILLED", "30 days"},
-                    {cs[2], 40000, "FULFILLED", "28 days"},  {cs[3], 55000, "BROKEN", "5 days"},
-                    {cs[0], 65000, "FULFILLED", "3 days"},
+                    {cs[0], 120000, "FULFILLED", "95 days", sFenqi},   {cs[1], 80000, "FULFILLED", "92 days", sFenqi},
+                    {cs[2], 60000, "BROKEN", "88 days", sShiya},       {cs[3], 50000, "FULFILLED", "62 days", sFenqi},
+                    {cs[0], 90000, "PENDING", "58 days", sKaichang},   {cs[1], 70000, "FULFILLED", "30 days", sFenqi},
+                    {cs[2], 40000, "FULFILLED", "28 days", sKaichang}, {cs[3], 55000, "BROKEN", "5 days", sShiya},
+                    {cs[0], 65000, "FULFILLED", "3 days", sFenqi},
                 };
                 for (Object[] r : rows) {
-                    jdbc.update("INSERT INTO promise(case_id, date, amount_cents, state, created_by, created_at)"
-                            + " VALUES (?, now()::date, ?, ?, ?, now() - (?)::interval)",
-                            r[0], r[1], r[2], sa, r[3]);
+                    jdbc.update("INSERT INTO promise(case_id, date, amount_cents, state, created_by, created_at, script_id)"
+                            + " VALUES (?, now()::date, ?, ?, ?, now() - (?)::interval, ?)",
+                            r[0], r[1], r[2], sa, r[3], r[4]);
                 }
             }
         }

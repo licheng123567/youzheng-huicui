@@ -67,11 +67,13 @@ public class ScriptAiController {
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
     private final AuditService audit;
+    private final FlywheelService flywheel;
 
-    public ScriptAiController(JdbcTemplate jdbc, ObjectMapper json, AuditService audit) {
+    public ScriptAiController(JdbcTemplate jdbc, ObjectMapper json, AuditService audit, FlywheelService flywheel) {
         this.jdbc = jdbc;
         this.json = json;
         this.audit = audit;
+        this.flywheel = flywheel;
     }
 
     // ── [1] GET /script-lib ──────────────────────────────────────────────────
@@ -476,6 +478,18 @@ public class ScriptAiController {
     private static Map<String, Object> ok() {
         return Map.of("ok", true);
     }
+    // ── POST /script-lib/recompute —— 飞轮结算：真实通话结果回流重算话术统计（BR-M5-12 环6） ──
+    @PostMapping("/script-lib/recompute")
+    @RequirePermission("ai.config")
+    public Map<String, Object> recomputeFlywheel() {
+        CurrentSubject s = requirePlatform();
+        FlywheelService.Result r = flywheel.recomputeAll(s);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("recomputed", r.recomputed());
+        out.put("promoted", r.promoted());
+        return out;
+    }
+
     // ── GET /script-lib/flywheel —— 话术有效性飞轮（BR-M5-12·平台护城河） ──
     // 漏斗从 call_recording/promise/repay_line 真实聚合；wilsonTrend 按月算承诺兑现率 Wilson 下界。
     @GetMapping("/script-lib/flywheel")
@@ -526,14 +540,8 @@ public class ScriptAiController {
         m.put("pct", base > 0 ? Math.round(n * 100.0 / base) : 0);
         return m;
     }
-    /** Wilson 95% 置信下界（z=1.96）；n=0 → 0。 */
+    /** Wilson 95% 置信下界——委托 common.WilsonStats（飞轮排序权威统一口径）。 */
     private static double wilsonLower(long ok, long n) {
-        if (n <= 0) return 0.0;
-        double z = 1.96, p = (double) ok / n;
-        double denom = 1 + z * z / n;
-        double centre = p + z * z / (2 * n);
-        double margin = z * Math.sqrt(p * (1 - p) / n + z * z / (4.0 * n * n));
-        double lo = (centre - margin) / denom;
-        return Math.max(0.0, lo);
+        return com.youzheng.huicui.common.WilsonStats.lower(ok, n);
     }
 }

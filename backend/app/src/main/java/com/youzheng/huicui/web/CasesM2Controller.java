@@ -530,11 +530,26 @@ public class CasesM2Controller {
                         + "），可用减免额度引导一次性结清");
             }
 
-            // 话术库推荐：现行/候选条目按 Wilson 置信下界降序取前 3（BR-M5-12a），映射为可采纳的 StrategyCard。
+            // 话术库推荐（飞轮环2）：先由案件画像确定性派生 cohort/scene（ScriptMatch），
+            // 再按 cohort/scene 命中 + Wilson 降序取前 3；命中空回退全库 Top3（绝不返空卡）。
+            // 语义匹配（embedding 向量检索）为后置接缝：script_lib.embedding 仍死列。
+            //   TODO(RAG): ... ORDER BY embedding <=> :caseVec LIMIT k
+            Integer contactCnt = jdbc.queryForObject(
+                    "SELECT count(*) FROM contact WHERE case_id = ?", Integer.class, caseId);
+            boolean hasContact = contactCnt != null && contactCnt > 0;
+            String lastMark = jdbc.query(
+                    "SELECT ar.result_mark FROM ai_review ar JOIN call_recording cr ON cr.id = ar.call_id"
+                            + " WHERE cr.case_id = ? ORDER BY ar.updated_at DESC NULLS LAST, ar.id DESC LIMIT 1",
+                    rs -> rs.next() ? rs.getString(1) : null, caseId);
+            boolean lastRefused = "REFUSED".equals(lastMark);
+            int bp = brokenPromises == null ? 0 : brokenPromises;
+            String coCohort = ScriptMatch.cohort(months, due, callCnt == null ? 0 : callCnt, hasContact, lastRefused);
+            String coScene = ScriptMatch.scene(callCnt == null ? 0 : callCnt, hasContact, bp, pendingPromise != null);
             List<Object> cards = jdbc.query(
                     "SELECT id, scene, intent, cohort, promise_rate, repay_rate, wilson, variant->>'text' AS vtext"
                             + " FROM script_lib WHERE status IN ('EFFECTIVE','CANDIDATE')"
-                            + " ORDER BY wilson DESC NULLS LAST, uses DESC, id LIMIT 3",
+                            + " ORDER BY (CASE WHEN cohort = ? OR scene = ? THEN 0 ELSE 1 END),"
+                            + "          wilson DESC NULLS LAST, uses DESC, id LIMIT 3",
                     (rs, i) -> {
                         Map<String, Object> card = new LinkedHashMap<>();
                         card.put("id", "script-" + rs.getLong("id"));
@@ -559,7 +574,7 @@ public class CasesM2Controller {
                                 : (it.contains("缴费") || it.contains("催费")) ? "PAYLINK"
                                 : (it.contains("联系") || it.contains("信任")) ? "FOLLOWUP" : "NONE");
                         return (Object) card;
-                    });
+                    }, coCohort, coScene);
 
             Map<String, Object> strategy = new LinkedHashMap<>();
             strategy.put("points", points);
