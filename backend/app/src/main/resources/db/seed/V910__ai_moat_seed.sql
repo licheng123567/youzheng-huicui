@@ -73,7 +73,7 @@ BEGIN
         '{"llm":{"provider":"deepseek","model":"deepseek-chat","temperature":0.3,"maxTokens":2048},'
         '"asr":{"provider":"bailian","model":"paraformer-8k-v2","hotwords":["物业费","滞纳金","分期"]},'
         '"prompts":{"preCall":"……(通话前策略提示词)","postReview":"……(通话后复盘提示词)","riskRules":"……(风险检测规则)"},'
-        '"flywheel":{"autoIterate":true,"trigger":"uses>=300 AND wilson_uplift>=0.02","adoptMode":"FORCE_MANUAL","liveHint":false}}'::jsonb,
+        '"flywheel":{"autoIterate":true,"trigger":"uses>=5 AND wilson_uplift>=0.02","adoptMode":"FORCE_MANUAL","liveHint":false}}'::jsonb,
         said);
   END IF;
 END $$;
