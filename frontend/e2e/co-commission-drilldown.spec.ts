@@ -66,6 +66,25 @@ test.describe('US-M9-10 内催佣金穿透(VL)', () => {
     }
   })
 
+  test('佣金支付单已结算/未结算分档：tab 切换过滤，合计随档展示', async ({ page }) => {
+    // 分档 segctrl 三档恒在（对齐平台↔服务商对账体验，服务商一眼看清哪些付了）
+    const seg = page.locator('.segctrl', { hasText: '已结算' })
+    await expect(seg.locator('span', { hasText: /^全部/ })).toBeVisible()
+    await expect(seg.locator('span', { hasText: /^未结算/ })).toBeVisible()
+    await expect(seg.locator('span', { hasText: /^已结算/ })).toBeVisible()
+    // 合计条：未结算/已结算金额分别展示
+    await expect(page.getByText(/未结算合计/)).toBeVisible()
+    await expect(page.getByText(/已结算合计/)).toBeVisible()
+    // 切到「已结算」档：表内只应出现已结算标签，不应出现未结算标签（种子有一结一未结）
+    await seg.locator('span', { hasText: /^已结算/ }).click()
+    const rows = page.locator('.card table').last().locator('tbody tr')
+    if (await rows.filter({ hasText: '催收员' }).count() === 0) {
+      const badges = rows.locator('.tag')
+      const n = await badges.count()
+      for (let i = 0; i < n; i++) await expect(badges.nth(i)).not.toHaveText('未结算')
+    }
+  })
+
   test('确认支付→佣金单变 SETTLED', async ({ page }) => {
     // 「佣金支付单」面板恒在；状态机 PENDING_PAY→确认支付→SETTLED 说明文案可见
     await expect(page.getByText(/PENDING_PAY/)).toBeVisible()
@@ -77,8 +96,8 @@ test.describe('US-M9-10 内催佣金穿透(VL)', () => {
       // 二次确认（el-message-box 或对话框）
       const confirm = page.getByRole('button', { name: /确定|确认/ })
       if (await confirm.count()) await confirm.first().click().catch(() => {})
-      // 确认后该行状态标签变「已结」(SETTLED 中文显示)
-      await expect(page.getByText('已结').first()).toBeVisible()
+      // 确认后该行状态标签变「已结算」(SETTLED 中文显示)
+      await expect(page.getByText('已结算').first()).toBeVisible()
     }
   })
 })

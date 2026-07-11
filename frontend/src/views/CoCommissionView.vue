@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { channelLabel } from '../constants/enums'
@@ -14,6 +14,17 @@ const newKey = () => (crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().t
 const coco = ref<any[]>([])   // 佣金名册（按人聚合）
 const coDocs = ref<any[]>([]) // 佣金单
 const loading = ref(false)
+
+// 佣金支付单按结算状态分档（服务商一眼看清哪些付了、哪些没付）：
+//   待支付=PENDING_PAY（组了单还没确认支付）、已结算=SETTLED（确认支付=锁定）。
+const payTab = ref<'all' | 'unpaid' | 'settled'>('all')
+const isSettled = (d: any) => d.status === 'SETTLED'
+const shownDocs = computed(() => coDocs.value.filter((d) =>
+  payTab.value === 'all' ? true : payTab.value === 'settled' ? isSettled(d) : !isSettled(d)))
+const unpaidCount = computed(() => coDocs.value.filter((d) => !isSettled(d)).length)
+const settledCount = computed(() => coDocs.value.filter(isSettled).length)
+const unpaidAmount = computed(() => coDocs.value.filter((d) => !isSettled(d)).reduce((s, d) => s + (d.amountCents || 0), 0))
+const settledAmount = computed(() => coDocs.value.filter(isSettled).reduce((s, d) => s + (d.amountCents || 0), 0))
 
 async function load() {
   loading.value = true
@@ -113,24 +124,37 @@ onMounted(load)
     </table>
 
     <div class="sec-title">佣金支付单（GET /co-pay-docs · PENDING_PAY → 确认支付 → SETTLED）</div>
+    <!-- 已结算 / 未结算 分档：服务商对催收员的支付情况一目了然（对齐平台↔服务商对账体验） -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      <span class="segctrl">
+        <span :class="{ on: payTab === 'all' }" @click="payTab = 'all'">全部 {{ coDocs.length }}</span>
+        <span :class="{ on: payTab === 'unpaid' }" @click="payTab = 'unpaid'">未结算 {{ unpaidCount }}</span>
+        <span :class="{ on: payTab === 'settled' }" @click="payTab = 'settled'">已结算 {{ settledCount }}</span>
+      </span>
+      <span class="note" style="margin:0">
+        未结算合计 <b style="color:var(--warn,#e6a23c)">{{ yuan(unpaidAmount) }}</b> ·
+        已结算合计 <b style="color:var(--ok,#67c23a)">{{ yuan(settledAmount) }}</b>
+      </span>
+    </div>
     <table>
       <thead>
         <tr>
-          <th>催收员</th><th style="width:70px">笔数</th><th>金额</th><th style="width:120px">状态</th><th style="width:200px">操作</th>
+          <th>催收员</th><th style="width:70px">笔数</th><th>金额</th><th style="width:120px">状态</th><th style="width:140px">创建时间</th><th style="width:200px">操作</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in coDocs" :key="row.id">
+        <tr v-for="row in shownDocs" :key="row.id">
           <td>{{ row.collectorName ?? row.collectorId }}</td>
           <td class="num">{{ row.count }}</td>
           <td class="num">{{ yuan(row.amountCents) }}</td>
-          <td><span class="tag" :class="row.status==='SETTLED'?'suc':'war'">{{ row.status==='SETTLED'?'已结':'待支付' }}</span></td>
+          <td><span class="tag" :class="row.status==='SETTLED'?'suc':'war'">{{ row.status==='SETTLED'?'已结算':'未结算' }}</span></td>
+          <td class="note">{{ row.createdAt ? String(row.createdAt).slice(0,16).replace('T',' ') : '—' }}</td>
           <td>
             <button class="btn txt" @click="openDetail(row)">详情</button>
             <button v-if="row.status==='PENDING_PAY'" class="btn txt" @click="confirmPay(row)">确认支付</button>
           </td>
         </tr>
-        <tr v-if="!coDocs.length"><td colspan="5" class="note" style="text-align:center">暂无佣金支付单</td></tr>
+        <tr v-if="!shownDocs.length"><td colspan="6" class="note" style="text-align:center">{{ coDocs.length ? '该分档下暂无佣金单' : '暂无佣金支付单' }}</td></tr>
       </tbody>
     </table>
 
