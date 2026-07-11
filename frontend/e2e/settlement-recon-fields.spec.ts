@@ -1,30 +1,51 @@
 import { test, expect } from '@playwright/test'
 import { loginRole } from './helpers'
 
-// BR-M9-12a 对账列表按批次汇总 + M-10 字段修复：
-// 平台 SA 进结算，IN/OUT 切换后对账汇总表展示批次号(batch)、比例(commRate×100%)、
-// 应结佣金(dueCents/100) 正确，无字段漂移空列。
-test.describe('BR-M9-12a 对账汇总字段(SA·双线)', () => {
+// v1.16.0 平台双线总账（GET /recon/rollup-dual）：
+// SA 进「结算对账」（收佣/付佣两菜单已合并为一条），批次总账一行同时给
+// 收佣(应收/已收/未收) + 付佣(应付/已付/未付) + 毛利；「明细」抽屉出案件级双线收付佣状态。
+test.describe('v1.16.0 平台批次双线总账(SA)', () => {
   test.beforeEach(async ({ page }) => {
     await loginRole(page, 'SA')
     await page.goto('/settlement')
-    await expect(page.getByText('对账汇总')).toBeVisible()
+    await expect(page.getByText('平台双线总账')).toBeVisible()
   })
 
-  for (const side of ['IN', 'OUT'] as const) {
-    test(`${side} 线对账三列(批次/比例/应结)有值不漂移`, async ({ page }) => {
-      // 切换 side（el-radio-button 文案含 IN/OUT 或 收佣/付佣）
-      const sideBtn = page.getByText(side === 'IN' ? /IN|收佣/ : /OUT|付佣/).first()
-      if (await sideBtn.count()) await sideBtn.click().catch(() => {})
+  test('菜单只有一条「结算对账」，无收佣/付佣独立入口', async ({ page }) => {
+    await expect(page.getByRole('menuitem', { name: '结算对账' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: '收佣对账' })).toHaveCount(0)
+    await expect(page.getByRole('menuitem', { name: '付佣对账' })).toHaveCount(0)
+  })
 
-      const recon = page.locator('table').first()
-      await expect(recon).toBeVisible()
-      const firstRow = recon.locator('tbody tr').first()
-      await expect(firstRow).toBeVisible()
+  test('总账表双线列头齐全且首行有值', async ({ page }) => {
+    const t = page.locator('table').first()
+    await expect(t).toBeVisible()
+    for (const h of ['应收', '已收', '未收', '应付', '已付', '未付', '毛利', '收佣%', '付佣%']) {
+      await expect(t.locator('thead').getByText(h, { exact: true })).toBeVisible()
+    }
+    const firstRow = t.locator('tbody tr').first()
+    await expect(firstRow).toBeVisible()
+    await expect(t.getByText('%').first()).toBeVisible()
+  })
 
-      // 比例列含百分号（commRate×100%）；应结列含金额；批次列非空 → 无漂移空列
-      await expect(recon.getByText('%').first()).toBeVisible()
-      await expect(firstRow.getByText('—', { exact: true })).toHaveCount(0)
-    })
-  }
+  test('「明细」抽屉出案件级双线收付佣状态列', async ({ page }) => {
+    await page.locator('table tbody tr').first().getByText('明细', { exact: true }).click()
+    const drawer = page.getByRole('dialog')
+    await expect(drawer.getByText('案件收付佣明细')).toBeVisible()
+    await expect(drawer.getByText('收佣状态')).toBeVisible()
+    await expect(drawer.getByText('付佣状态')).toBeVisible()
+    await expect(drawer.getByText('承接服务商').first()).toBeVisible()
+  })
+
+  test('平台老书签 /settlement-out 重定向回 /settlement', async ({ page }) => {
+    await page.goto('/settlement-out')
+    await expect(page).toHaveURL(/\/settlement$/)
+    await expect(page.getByText('平台双线总账')).toBeVisible()
+  })
+
+  test('「单据」跳支付申请单 Tab', async ({ page }) => {
+    await page.locator('table tbody tr').first().getByText('单据', { exact: true }).click()
+    await expect(page.getByText('收佣单(IN·向物业)')).toBeVisible()
+    await expect(page.locator('table tbody tr').first()).toBeVisible()
+  })
 })

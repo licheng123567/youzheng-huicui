@@ -907,8 +907,8 @@ public class DevSeeder implements CommandLineRunner {
                             + "base_cents, comm_cents, status, version) "
                             + "VALUES (?, 'OUT', ?, ?, ?::numeric, ?::jsonb, 360000, ?, 'PENDING', 1) RETURNING id",
                     Long.class, prPendingNo, batchId, vlAcct, payOutRate.toPlainString(), lines1, comm1);
-            // 占位锁定：settled 保持 FALSE，仅写 payment_request_id（PAID 才置 settled=TRUE）
-            jdbc.update("UPDATE repay_line SET payment_request_id = ? WHERE id = ? AND payment_request_id IS NULL",
+            // 占位锁定（V929 双线）：settled_out 保持 FALSE，仅写本线 pr_id_out（PAID 才置 settled_out=TRUE）
+            jdbc.update("UPDATE repay_line SET pr_id_out = ? WHERE id = ? AND pr_id_out IS NULL",
                     prPending, line1);
             jdbc.update("INSERT INTO activity(case_id, type, actor_id, content, ref_type, ref_id) "
                             + "VALUES (?, 'OPLOG', ?, '生成付佣支付申请单(PENDING)', 'payment_request', ?)",
@@ -928,8 +928,8 @@ public class DevSeeder implements CommandLineRunner {
                             + "base_cents, comm_cents, status, completed_by, completed_at, version) "
                             + "VALUES (?, 'OUT', ?, ?, ?::numeric, ?::jsonb, 120000, ?, 'PAID', ?, now(), 2) RETURNING id",
                     Long.class, prPaidNo, batchId, vlAcct, payOutRate.toPlainString(), lines3, comm3, vlAcct);
-            // 锁定明细：PAID → settled=TRUE + 绑定单
-            jdbc.update("UPDATE repay_line SET payment_request_id = ?, settled = TRUE WHERE id = ?", prPaid, line3);
+            // 锁定明细（V929 双线）：OUT PAID → settled_out=TRUE + 绑定本线单
+            jdbc.update("UPDATE repay_line SET pr_id_out = ?, settled_out = TRUE WHERE id = ?", prPaid, line3);
             // 凭证（OUT 线=PAYMENT 支付凭证）。uq_voucher_payment_request 每单一张，幂等。
             jdbc.update("INSERT INTO voucher(payment_request_id, type, file_url, uploaded_by) "
                             + "VALUES (?, 'PAYMENT', ?, ?)",
@@ -937,6 +937,46 @@ public class DevSeeder implements CommandLineRunner {
             jdbc.update("INSERT INTO activity(case_id, type, actor_id, content, ref_type, ref_id) "
                             + "VALUES (?, 'OPLOG', ?, '完成付佣支付申请单(PAID·留痕凭证)', 'payment_request', ?)",
                     c3, vlAcct, prPaid);
+        }
+
+        // 4b) IN 收佣线单据对（V929 双线演示：line1 同时在 OUT PENDING 与 IN PENDING——双线独立占用；
+        //     line3 OUT 已付、IN 已收——双线独立结清）。IN 生成方=平台（admin），comm_rate=0.30 固化 comm_in_rate。
+        Long saAcct = jdbc.query("SELECT id FROM account WHERE username = 'admin'",
+                rs -> rs.next() ? rs.getLong(1) : null);
+        if (saAcct != null) {
+            final java.math.BigDecimal commInRate = new java.math.BigDecimal("0.3000");
+            String prInPendingNo = "PR-IN-" + batchId + "-1";
+            Long prInPending = jdbc.query("SELECT id FROM payment_request WHERE no = ?",
+                    rs -> rs.next() ? rs.getLong(1) : null, prInPendingNo);
+            if (prInPending == null) {
+                long commIn1 = com.youzheng.huicui.common.Commission.lineCommissionCents(360000L, commInRate); // 108000
+                String linesIn1 = "[{\"lineId\":" + line1 + ",\"caseId\":" + c1
+                        + ",\"ownerName\":\"张三\",\"room\":\"1-101\",\"repayCents\":360000,\"commCents\":" + commIn1 + "}]";
+                prInPending = jdbc.queryForObject(
+                        "INSERT INTO payment_request(no, side, batch_id, generated_by, comm_rate, lines, "
+                                + "base_cents, comm_cents, status, version) "
+                                + "VALUES (?, 'IN', ?, ?, ?::numeric, ?::jsonb, 360000, ?, 'PENDING', 1) RETURNING id",
+                        Long.class, prInPendingNo, batchId, saAcct, commInRate.toPlainString(), linesIn1, commIn1);
+                jdbc.update("UPDATE repay_line SET pr_id_in = ? WHERE id = ? AND pr_id_in IS NULL",
+                        prInPending, line1);
+            }
+            String prInPaidNo = "PR-IN-" + batchId + "-2";
+            Long prInPaid = jdbc.query("SELECT id FROM payment_request WHERE no = ?",
+                    rs -> rs.next() ? rs.getLong(1) : null, prInPaidNo);
+            if (prInPaid == null) {
+                long commIn3 = com.youzheng.huicui.common.Commission.lineCommissionCents(120000L, commInRate); // 36000
+                String linesIn3 = "[{\"lineId\":" + line3 + ",\"caseId\":" + c3
+                        + ",\"ownerName\":\"王五\",\"room\":\"3-303\",\"repayCents\":120000,\"commCents\":" + commIn3 + "}]";
+                prInPaid = jdbc.queryForObject(
+                        "INSERT INTO payment_request(no, side, batch_id, generated_by, comm_rate, lines, "
+                                + "base_cents, comm_cents, status, completed_by, completed_at, version) "
+                                + "VALUES (?, 'IN', ?, ?, ?::numeric, ?::jsonb, 120000, ?, 'PAID', ?, now(), 2) RETURNING id",
+                        Long.class, prInPaidNo, batchId, saAcct, commInRate.toPlainString(), linesIn3, commIn3, saAcct);
+                jdbc.update("UPDATE repay_line SET pr_id_in = ?, settled_in = TRUE WHERE id = ?", prInPaid, line3);
+                jdbc.update("INSERT INTO voucher(payment_request_id, type, file_url, uploaded_by) "
+                                + "VALUES (?, 'RECEIPT', ?, ?)",
+                        prInPaid, "https://example.com/placeholder-receipt.pdf", saAcct);
+            }
         }
 
         // 5) co_pay_doc（PENDING_PAY）：催收员内部结算占位，勾选 line2（C-1002 / 480000）
@@ -1608,9 +1648,9 @@ public class DevSeeder implements CommandLineRunner {
                 + " WHERE collector_id_at_repay IS NULL AND batch_id ="
                 + " (SELECT id FROM batch WHERE no = 'B-CH-2026-01' LIMIT 1)", co1);
 
-        // 5) 已结算单据：SETTLED co_pay_doc 关联 batch1 settled=true 那笔明细 → "已结"提成可见
+        // 5) 已结算单据：SETTLED co_pay_doc 关联 batch1 付佣已结(settled_out=true·V929)那笔明细 → "已结"提成可见
         Long settledLine = jdbc.query(
-                "SELECT id FROM repay_line WHERE settled = true AND collector_id_at_repay = ? ORDER BY id LIMIT 1",
+                "SELECT id FROM repay_line WHERE settled_out = true AND collector_id_at_repay = ? ORDER BY id LIMIT 1",
                 rs -> rs.next() ? rs.getLong(1) : null, co1);
         if (settledLine != null) {
             Integer hasDoc = jdbc.queryForObject(

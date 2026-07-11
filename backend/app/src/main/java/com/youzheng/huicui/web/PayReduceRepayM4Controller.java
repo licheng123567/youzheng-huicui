@@ -377,7 +377,8 @@ public class PayReduceRepayM4Controller {
         maybeSettle(c, caseId);
 
         return new RepayLineDto(String.valueOf(repayId), String.valueOf(caseId),
-                c.ownerName(), c.room(), amountCents, channel, paidAt.toString(), false, null);
+                c.ownerName(), c.room(), amountCents, channel, paidAt.toString(), false, null,
+                null, null, null, null, null, null, null, null, null, null);
     }
 
     // ── [7] reverseRepayLine  POST /repay-lines/{id}/reverse ────────────────
@@ -398,11 +399,11 @@ public class PayReduceRepayM4Controller {
         if (Boolean.TRUE.equals(rl.reversed)) {
             return ok();                                        // 幂等：已冲正再冲正仍 200
         }
-        // BLOCKER-1·冲正时序：已纳入未撤销支付申请单（payment_request_id 指向 PENDING 或 PAID 单）→409，
-        //   须先 revoke 支付申请单再冲正。否则 PENDING 单绑定的 line 被冲正后 complete 仍会把 reversed=true
-        //   的明细结算为 PAID（资金错配）。仅 VOIDED（已撤销，明细已解绑）不挡——实际解绑后 payment_request_id
-        //   已置 NULL，此分支等同 null。
-        if (rl.paymentRequestId != null && isPaymentRequestActive(rl.paymentRequestId)) {
+        // BLOCKER-1·冲正时序（V929 双线）：任一线绑活跃单（pr_id_in/pr_id_out 指向 PENDING 或 PAID 单）→409，
+        //   须先 revoke 对应支付申请单再冲正。否则 PENDING 单绑定的 line 被冲正后 complete 仍会把 reversed=true
+        //   的明细结算为 PAID（资金错配）。VOIDED 撤销时明细已解绑（本线列置 NULL），不会落入此分支。
+        if ((rl.prIdIn != null && isPaymentRequestActive(rl.prIdIn))
+                || (rl.prIdOut != null && isPaymentRequestActive(rl.prIdOut))) {
             throw new ApiException(BizError.STATE_409,
                     "回款已纳入未撤销支付申请单，须先撤销该单再冲正: " + repayId);
         }
@@ -514,7 +515,7 @@ public class PayReduceRepayM4Controller {
 
     private record PayLinkRow(long id, long caseId, String status, String channel, String lastChannel) {}
     private record ReductionRow(long id, long caseId, String state, long amountCents) {}
-    private record RepayLineRow(long id, long caseId, Boolean reversed, Long paymentRequestId) {}
+    private record RepayLineRow(long id, long caseId, Boolean reversed, Long prIdIn, Long prIdOut) {}
 
     private PayLinkRow lockPayLink(long id) {
         try {
@@ -543,9 +544,9 @@ public class PayReduceRepayM4Controller {
     private RepayLineRow lockRepayLine(long id) {
         try {
             return jdbc.queryForObject(
-                    "SELECT id, case_id, reversed, payment_request_id FROM repay_line WHERE id = ? FOR UPDATE",
+                    "SELECT id, case_id, reversed, pr_id_in, pr_id_out FROM repay_line WHERE id = ? FOR UPDATE",
                     (rs, i) -> new RepayLineRow(rs.getLong("id"), rs.getLong("case_id"),
-                            rs.getBoolean("reversed"), (Long) rs.getObject("payment_request_id")),
+                            rs.getBoolean("reversed"), (Long) rs.getObject("pr_id_in"), (Long) rs.getObject("pr_id_out")),
                     id);
         } catch (EmptyResultDataAccessException e) {
             throw new ApiException(BizError.NOT_FOUND_404, "回款明细不存在");

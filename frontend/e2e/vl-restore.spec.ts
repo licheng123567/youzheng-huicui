@@ -39,10 +39,15 @@ test.describe('服务商负责人 UI 还原', () => {
     await expect(page.getByText(/单号|暂无支付申请单/).first()).toBeVisible()
   })
 
-  test('对照：平台(SA)在付佣线有「生成支付申请单」入口（BR-M9-12e 平台组单）', async ({ page }) => {
+  test('对照：平台(SA)有付佣组单入口（BR-M9-12e 平台组单·v1.16.0 双线总账）', async ({ page }) => {
+    // v1.16.0：/settlement-out 对平台已并入 /settlement 双线总账；组单入口 = 未收/未付可点标签。
     await loginRole(page, 'SA')
     await page.goto('/settlement-out')
-    await expect(page.getByText('对账汇总')).toBeVisible()
-    await expect(page.getByRole('button', { name: /生成支付申请单/ })).toBeVisible()
+    await expect(page).toHaveURL(/\/settlement$/)
+    await expect(page.getByText('平台双线总账')).toBeVisible()
+    // 付佣列存在（表头）且任一「未付」标签可点开付佣组单抽屉（种子批次有未付明细）
+    await expect(page.locator('table thead').getByText('未付', { exact: true })).toBeVisible()
+    await page.locator('button:has(.tag.war)').first().click()
+    await expect(page.getByRole('dialog').getByText(/生成(收佣支付申请单|付佣支付单)/)).toBeVisible()
   })
 })

@@ -32,18 +32,22 @@ export const PATH2LABEL: Record<string, string> = {
 }
 
 export const NAV_BY_ROLE: Record<string, NavItem[]> = {
-  SA: [{ group: '业务' }, 'workbench', 'dispatch', 'projects', 'cases', { group: '能力' }, 'playbookLib', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'reconOut', 'billing', 'recharge', 'sms', { group: '系统' }, 'orgMgmt', 'members', 'settings', 'reports', 'audit', { group: '工具' }, 'appDownload'],
-  SE: [{ group: '业务' }, 'workbench', 'dispatch', 'projects', 'cases', { group: '能力' }, 'playbookLib', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'reconOut', 'billing', { group: '系统' }, 'members', 'audit', { group: '报表' }, 'reports', { group: '工具' }, 'appDownload'],
+  // 平台侧（SA/SE）财务只留一条「结算对账」（reconIn=/settlement 平台双线总账 v1.16.0）：
+  // 收佣/付佣两菜单曾同指 SettlementView 仅差 side——对平台是同一屏，合并；PL/PC/VL 各自单线菜单不受影响。
+  SA: [{ group: '业务' }, 'workbench', 'dispatch', 'projects', 'cases', { group: '能力' }, 'playbookLib', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'billing', 'recharge', 'sms', { group: '系统' }, 'orgMgmt', 'members', 'settings', 'reports', 'audit', { group: '工具' }, 'appDownload'],
+  SE: [{ group: '业务' }, 'workbench', 'dispatch', 'projects', 'cases', { group: '能力' }, 'playbookLib', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'billing', { group: '系统' }, 'members', 'audit', { group: '报表' }, 'reports', { group: '工具' }, 'appDownload'],
   PL: [{ group: '业务' }, 'workbench', 'projects', 'cases', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'billing', 'recharge', 'sms', { group: '管理' }, 'reports', 'members', 'audit', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
   PC: [{ group: '业务' }, 'workbench', 'cases', 'callLog', 'myLinks', { group: '项目' }, 'projects', { group: '能力' }, 'qc', 'legal', 'evidence', { group: '财务' }, 'reconIn', { group: '我的' }, 'myStats', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
   VL: [{ group: '业务' }, 'workbench', 'providerSea', 'projects', 'qc', 'cases', { group: '财务' }, 'reconOut', 'coCommission', 'recharge', 'billing', { group: '管理' }, 'reports', 'members', 'audit', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
   CO: [{ group: '业务' }, 'workbench', 'myCases', 'providerSea', 'callLog', 'myLinks', { group: '能力' }, 'qc', { group: '我的' }, 'myStats', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
 }
 
-// 对账菜单标题按角色视角相对命名（对标原型 navLabel）：物业(PL/PC)=付佣、服务商(VL) reconOut=收佣、平台用本名。
+// 对账菜单标题按角色视角相对命名（对标原型 navLabel）：物业(PL/PC)=付佣、服务商(VL) reconOut=收佣、
+// 平台(SA/SE)=「结算对账」（v1.16.0 双线总账单菜单）。
 export function navLabel(path: string, role: string): string {
   const base = PATH2LABEL[path]
   if (path === '/settlement' && (role === 'PL' || role === 'PC')) return '付佣对账'
+  if (path === '/settlement' && (role === 'SA' || role === 'SE')) return '结算对账'
   if (path === '/settlement-out' && role === 'VL') return '收佣对账'
   // 公海收权后两侧看到的池不同（BR-M3-29）。平台侧菜单叫「平台公海」；
   // 服务商侧沿用原型的「案件公海」（页内含 待接单/服务商公海/开放抢单池 三个 tab，
