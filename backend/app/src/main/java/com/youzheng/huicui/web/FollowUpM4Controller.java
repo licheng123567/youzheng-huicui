@@ -144,10 +144,13 @@ public class FollowUpM4Controller {
         List<Map<String, Object>> insts = installmentsInput(body); // 解析校验（非法→422）
 
         long actorId = parseAccountId(s);
+        // 飞轮环3 归因：优先取采纳的策略卡 sourceSuggestionId="script-{N}"；缺失则按本案 scene 回退归因。
+        Long scriptId = parseScriptId(optStr(body, "sourceSuggestionId"));
+        if (scriptId == null) scriptId = fallbackAttributeScript(caseId);
         Long promiseId = jdbc.queryForObject(
-                "INSERT INTO promise(case_id, date, amount_cents, state, created_by)"
-                        + " VALUES (?, ?::date, ?, 'PENDING', ?) RETURNING id",
-                Long.class, caseId, date, amountCents, actorId);
+                "INSERT INTO promise(case_id, date, amount_cents, state, created_by, script_id)"
+                        + " VALUES (?, ?::date, ?, 'PENDING', ?, ?) RETURNING id",
+                Long.class, caseId, date, amountCents, actorId, scriptId);
 
         for (Map<String, Object> inst : insts) {
             jdbc.update(
@@ -544,6 +547,31 @@ public class FollowUpM4Controller {
                 activityId);
     }
 
+    /** 解析 StrategyCard.id "script-{N}" → 话术 id；非法/缺失 → null。 */
+    private static Long parseScriptId(String sourceSuggestionId) {
+        if (sourceSuggestionId == null) return null;
+        String v = sourceSuggestionId.trim();
+        if (!v.startsWith("script-")) return null;
+        try { return Long.valueOf(v.substring("script-".length())); }
+        catch (NumberFormatException e) { return null; }
+    }
+
+    /** 回退归因（前端未传 sourceSuggestionId 时）：按本案 scene/cohort 选一条现行话术，保证回流有料。 */
+    private Long fallbackAttributeScript(long caseId) {
+        Integer callCnt = jdbc.queryForObject("SELECT count(*) FROM call_recording WHERE case_id = ?", Integer.class, caseId);
+        Integer broken = jdbc.queryForObject("SELECT count(*) FROM promise WHERE case_id = ? AND state = 'BROKEN'", Integer.class, caseId);
+        Integer pending = jdbc.queryForObject("SELECT count(*) FROM promise WHERE case_id = ? AND state = 'PENDING'", Integer.class, caseId);
+        Integer contacts = jdbc.queryForObject("SELECT count(*) FROM contact WHERE case_id = ?", Integer.class, caseId);
+        String scene = ScriptMatch.scene(
+                callCnt == null ? 0 : callCnt, contacts != null && contacts > 0,
+                broken == null ? 0 : broken, pending != null && pending > 0);
+        // 命中 scene 的现行话术优先，否则全库 wilson 最高（绝不返回 null 让归因彻底断，除非库空）。
+        return jdbc.query(
+                "SELECT id FROM script_lib WHERE status = 'EFFECTIVE'"
+                        + " ORDER BY (CASE WHEN scene = ? THEN 0 ELSE 1 END), wilson DESC NULLS LAST, uses DESC LIMIT 1",
+                rs -> rs.next() ? rs.getLong(1) : null, scene);
+    }
+
     private PromiseDto loadPromise(long promiseId) {
         return jdbc.queryForObject(
                 "SELECT * FROM promise WHERE id = ?", promiseRowMapper(), promiseId);
@@ -571,6 +599,7 @@ public class FollowUpM4Controller {
                     dateStr(rs.getTimestamp("date")),
                     longOrNull(rs, "amount_cents"),
                     state,
+                    idOrNull(rs, "script_id"),
                     installments,
                     idOrNull(rs, "created_by"),
                     ts(rs.getTimestamp("created_at")));

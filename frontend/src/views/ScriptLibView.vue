@@ -55,6 +55,17 @@ async function loadFlywheel() {
   const { data } = await api.GET('/script-lib/flywheel', {} as any)
   flywheel.value = data ?? { funnel: [], wilsonTrend: [], note: '' }
 }
+// 飞轮结算:按真实通话结果(承诺兑现/回款)回流重算话术 wilson/转化率(BR-M5-12 环6)。
+const recomputing = ref(false)
+async function recompute() {
+  recomputing.value = true
+  const { data, error } = await api.POST('/script-lib/recompute', {} as any)
+  recomputing.value = false
+  if (error) { ElMessage.error('结算失败：' + ((error as any)?.message ?? '')); return }
+  const r = data as any
+  ElMessage.success(`飞轮结算完成：回流重算 ${r?.recomputed ?? 0} 条${r?.promoted ? '、自动晋升 ' + r.promoted + ' 条' : ''}`)
+  load(); loadFlywheel()
+}
 
 // 新建话术对话框。数组/对象字段初始即初始化，防白屏。
 const dlg = ref(false)
@@ -91,6 +102,7 @@ onMounted(() => { load(); loadFlywheel() })
       <div class="t"><span class="bar"></span>话术库</div>
       <div class="ops">
         <span class="note" style="margin:0">GET /script-lib · 飞轮护城河</span>
+        <button class="btn df sm" :disabled="recomputing" @click="recompute">{{ recomputing ? '结算中…' : '飞轮结算' }}</button>
         <button class="btn" @click="openDlg">新建话术</button>
       </div>
     </div>
