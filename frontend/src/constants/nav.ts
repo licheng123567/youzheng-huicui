@@ -79,9 +79,22 @@ const DRILLDOWN_PATHS: Record<string, string[]> = {
   PL: ['/batches'], PC: ['/batches'], VL: ['/batches'],
 }
 
-/** 路由守卫判定单一入口：通用页 / 本角色菜单页(含子路径) / 本角色可下钻的详情页。 */
+// 角色级老书签重定向（v1.16.0）：平台(SA/SE)的 /settlement-out 已并入 /settlement 双线总账。
+// 守卫在越权判定前先查此表——命中即 redirect（非拦截回 dashboard）；e2e-nav-lint 同源消费。
+const ROLE_REDIRECTS: Record<string, Record<string, string>> = {
+  SA: { '/settlement-out': '/settlement' },
+  SE: { '/settlement-out': '/settlement' },
+}
+
+/** 该角色访问 path 是否应重定向；返回目标路由或 null。router 守卫与 nav-lint 共用（SSOT）。 */
+export function redirectPath(role: string, path: string): string | null {
+  return ROLE_REDIRECTS[role]?.[path] ?? null
+}
+
+/** 路由守卫判定单一入口：通用页 / 本角色菜单页(含子路径) / 本角色可下钻的详情页 / 有角色级重定向的老书签。 */
 export function isAllowedPath(role: string, path: string, universalPaths: string[]): boolean {
   if (universalPaths.includes(path)) return true
+  if (redirectPath(role, path)) return true   // 重定向源路径不算越权（守卫会先转走）
   if (allowedPaths(role).some((p) => path === p || path.startsWith(p + '/'))) return true
   return (DRILLDOWN_PATHS[role] ?? []).some((p) => path.startsWith(p + '/'))
 }

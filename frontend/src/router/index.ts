@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuth } from '../stores/auth'
-import { isAllowedPath } from '../constants/nav'
+import { isAllowedPath, redirectPath } from '../constants/nav'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -88,8 +88,9 @@ router.beforeEach(async (to) => {
   // ensureMe 里 token 失效会 logout；此时按未登录处理
   if (!auth.isAuthed) return { name: 'login', query: { redirect: to.fullPath } }
   const role = auth.me?.role
-  // 平台角色老书签兼容(v1.16.0 菜单合并)：/settlement-out 对 SA/SE 已并入 /settlement 双线总账。
-  if ((role === 'SA' || role === 'SE') && to.path === '/settlement-out') return { path: '/settlement' }
+  // 角色级老书签重定向（nav.ts ROLE_REDIRECTS 单一真源）：如 SA/SE 的 /settlement-out → /settlement（v1.16.0 菜单合并）。
+  const rd = role ? redirectPath(role, to.path) : null
+  if (rd) return { path: rd }
   if (role && !isAllowedPath(role, to.path, UNIVERSAL_PATHS)) return { path: '/dashboard' }
   return true
 })
