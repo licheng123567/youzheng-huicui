@@ -14,8 +14,9 @@ import { downloadAuthedFile } from '../utils/download'
 const auth = useAuth()
 const router = useRouter()
 // 平台/物业口径统一走 useRoleFields（单一真源，避免多处 ['SA','SE']/['PL','PC'] 定义漂移）。
-// 物业角色(PL/PC)：风险看板只「上报」不「处置」——对标原型 §质检 role==='PL'||'PC' 仅 escalate；
-// 看板处置(标记/转质检/通知)是服务商(VL)对本商催收员风险的动作(故按钮 !isProperty)；物业对催收员风险只上报平台。
+// 处置/上报按后端 row.ownScope 权威判定(BR-M5-07a 谁的员工谁处置):
+//   ownScope=true(本组织员工违规)→「处置」;false(非本组织/平台)→「上报」或平台「复核处置」。
+//   PL 对本物业协调员(PC)违规=处置;对催收员违规=上报。平台只复核处置、无上报。
 const { isPlatform, isProperty } = useRoleFields()
 // 归属方(VL/PL/PC 有 qc.dispose)：可见本组织整改任务 + 提交整改回执。
 const isOwner = computed(() => auth.has('qc.dispose'))
@@ -73,7 +74,10 @@ async function escalate(row: any) {
 }
 // 复核（平台）：确认属实时可选处理决定(分档) + 沟通内容 → 通知归属方与当事人；停用真置账号停用
 const rdlg = ref(false); const rform = ref<any>({})
-function openReview(row: any) { rform.value = { id: row.id, verdict: 'CONFIRMED', note: '', decision: 'INTERVIEW', decisionNote: '' }; rdlg.value = true }
+function openReview(row: any) { rform.value = { id: row.id, verdict: 'CONFIRMED', note: '', decision: 'INTERVIEW', decisionNote: '', violatorOrgName: row.violatorOrgName, violatorRole: row.violatorRole }; rdlg.value = true }
+// 违规员工角色中文名 + 反馈对象(催收员→服务商负责人/协调员→物业负责人)
+const violatorRoleLabel = (r?: string) => r === 'CO' ? '催收员' : r === 'PC' ? '协调员' : (r || '')
+const feedbackTarget = (r?: string) => r === 'CO' ? '服务商负责人' : r === 'PC' ? '物业负责人' : '组织负责人'
 async function submitReview() {
   const f = rform.value
   const body: any = { verdict: f.verdict, note: f.note }
@@ -108,7 +112,7 @@ onMounted(load)
           <th>项目</th>
           <th>批次</th>
           <th>电话</th>
-          <th>催收员</th>
+          <th>违规员工</th>
           <th>风险类型</th>
           <th style="width:70px">级别</th>
           <th style="width:160px">片段（点击定位播放）</th>
@@ -122,7 +126,11 @@ onMounted(load)
           <td>{{ row.projectName || '—' }}</td>
           <td>{{ row.batchCode || '—' }}</td>
           <td>{{ row.phone || '—' }}</td>
-          <td>{{ row.collectorName || row.collector || '—' }}</td>
+          <td>
+            {{ row.collectorName || row.collector || '—' }}
+            <span v-if="row.violatorRole" class="tag inf" style="font-size:11px;margin-left:4px">{{ violatorRoleLabel(row.violatorRole) }}</span>
+            <div v-if="row.violatorOrgName" class="mini" style="color:var(--sec)">{{ row.violatorOrgName }}</div>
+          </td>
           <td>{{ row.type || row.riskType || '—' }}</td>
           <td><span class="tag" :class="levelTag(row.level)" :title="row.level">{{ riskLevelLabel(row.level) }}</span></td>
           <td>
@@ -139,9 +147,9 @@ onMounted(load)
             </template>
           </td>
           <td>
-            <button v-if="auth.has('qc.dispose') && !isProperty" class="btn txt" @click="openDispose(row)">处置</button>
-            <button v-if="auth.has('qc.escalate')" class="btn txt" @click="escalate(row)">上报</button>
-            <button v-if="auth.has('qc.review')" class="btn txt" @click="openReview(row)">复核</button>
+            <button v-if="auth.has('qc.dispose') && row.ownScope" class="btn txt" @click="openDispose(row)">处置</button>
+            <button v-if="auth.has('qc.escalate') && !isPlatform && !row.ownScope" class="btn txt" @click="escalate(row)">上报</button>
+            <button v-if="auth.has('qc.review')" class="btn txt" @click="openReview(row)">复核处置</button>
             <span v-if="row.reviewed" class="tag suc" style="margin-left:4px;font-size:11px" :title="row.reviewed">{{ riskVerdictLabel(row.reviewed) }}</span>
           </td>
         </tr>
@@ -204,7 +212,7 @@ onMounted(load)
       <template #footer><el-button @click="ddlg=false">取消</el-button><el-button type="primary" @click="submitDispose">提交处置</el-button></template>
     </DsDrawer>
 
-    <DsDrawer v-model="rdlg" title="平台复核">
+    <DsDrawer v-model="rdlg" title="平台复核处置">
       <el-form label-width="80px">
         <el-form-item label="判定">
           <el-select v-model="rform.verdict">
@@ -221,7 +229,7 @@ onMounted(load)
           </el-form-item>
           <el-form-item label="沟通内容"><el-input v-model="rform.decisionNote" type="textarea" :rows="2" placeholder="随通知发给归属方与当事人（如整改要求/期限）" /></el-form-item>
           <div class="alert" :class="rform.decision === 'DEACTIVATE' ? 'warn' : 'info'" style="margin:0 0 6px">
-            {{ rform.decision === 'DEACTIVATE' ? '⚠ 停用将立即停用当事人账号（无法登录），并通知归属方与当事人。' : '处理决定与沟通内容将通知归属方负责人与当事人，并建整改任务跟踪。' }}
+            {{ rform.decision === 'DEACTIVATE' ? '⚠ 停用将立即停用当事人账号（无法登录），' : '处理决定将' }}反馈给<b>{{ rform.violatorOrgName || '归属组织' }} · {{ feedbackTarget(rform.violatorRole) }}</b>与当事人执行整改，并建整改任务跟踪。
           </div>
         </template>
         <el-form-item label="说明"><el-input v-model="rform.note" type="textarea" :rows="2" placeholder="复核备注（可选）" /></el-form-item>

@@ -19,5 +19,8 @@ public record RiskRecordDto(
         String level,
         String segmentTs,
         String reviewed,
-        String recordingId
+        String recordingId,
+        String violatorOrgName,
+        String violatorRole,
+        Boolean ownScope
 ) {}

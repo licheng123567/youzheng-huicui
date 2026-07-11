@@ -792,6 +792,17 @@ public class DevSeeder implements CommandLineRunner {
                             + "type, level, segment_ts, reviewed) "
                             + "VALUES (?, ?, ?, ?, ?, '用语不规范', 'LOW', '00:30', NULL)",
                     caseS3Id, recId, coHolder, providerOrg, propertyOrg);
+            // PC 协调员违规(BR-M5-07a：协调员违规→物业负责人 PL 处置；平台处置→反馈 PL)。
+            Long pcAccount = jdbc.query(
+                    "SELECT id FROM account WHERE role_template = 'PC' AND org_id = ? AND status = 'ACTIVE' ORDER BY id LIMIT 1",
+                    rs -> rs.next() ? rs.getLong(1) : null, propertyOrg);
+            if (pcAccount != null) {
+                jdbc.update(
+                        "INSERT INTO risk_record(case_id, call_id, collector_id, provider_id, property_id, "
+                                + "type, level, segment_ts, reviewed) "
+                                + "VALUES (?, ?, ?, ?, ?, '承诺口径不当', 'MID', '01:40', NULL)",
+                        caseS3Id, recId, pcAccount, providerOrg, propertyOrg);
+            }
         }
 
         // B) dispose_task 1 条（挂 HIGH 风险，供平台监管视图 listDisposeTasks 返 200；两侧不可见）。
