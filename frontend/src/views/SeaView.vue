@@ -6,8 +6,8 @@ import { useAuth } from '../stores/auth'
 import DsDrawer from '../components/DsDrawer.vue'
 
 // M3 公海：GET /sea(SeaCase 含竞争态/来源徽标/正在查看N人)。动作按 /me 权限点门控(FE authz)。
-// 池分段按**侧别**收（BR-M3-29）：平台侧(SA/SE)=平台公海+开放池——服务商公海明细是服务商内务，
-// 平台不看（后端对平台的 pool=provider 也已改为空集）；服务商侧(VL/CO)=本商公海+开放池——
+// 池分段按**侧别**收（BR-M3-29；v1.18.0 开放池停用后两侧均无开放池 Tab）：平台侧(SA/SE)=平台公海——
+// 服务商公海明细是服务商内务，平台不看（后端对平台的 pool=provider 也已改为空集）；服务商侧(VL/CO)=本商公海——
 // 平台公海对他们从来是空集，留着分段只是暴露一个永远为空的概念。物业(PL/PC)无 sea.view，进不了本页。
 const auth = useAuth()
 const isPlatformSide = computed(() => auth.me?.role === 'SA' || auth.me?.role === 'SE')
@@ -194,7 +194,7 @@ async function loadEvents() {
 }
 onMounted(() => {
   // 路由守卫已按角色放行到这里，auth.me 必已就位。平台侧默认落平台公海——
-  // 它进来要干的活(再派/开放抢单)都在平台公海行上,而 provider 池对平台已是空集。
+  // 它进来要干的活(单案再派)都在平台公海行上,而 provider 池对平台已是空集。
   if (isPlatformSide.value) pool.value = 'platform'
   load(); loadEvents()
 })
@@ -236,7 +236,7 @@ const evTag = (ev: string) => EV_TAG[ev] ?? 'inf'
       <div class="ops"><span class="note" style="margin:0">GET /sea · 共 {{ total }} · 动作按 /me 权限门控</span></div>
     </div>
 
-    <!-- 池筛选分段（/sea 必填 pool · 平台侧=平台公海+开放池 / 服务商侧=待接单(仅VL)+本商公海+开放池 BR-M3-29） -->
+    <!-- 池筛选分段（/sea 必填 pool · 平台侧=平台公海 / 服务商侧=待接单(仅VL)+本商公海；v1.18.0 开放池停用 BR-M3-29） -->
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
       <span class="segctrl">
         <span v-if="isPlatformSide" :class="{ on: pool === 'platform' }" @click="pool = 'platform'; load()">平台公海</span>
@@ -244,7 +244,6 @@ const evTag = (ev: string) => EV_TAG[ev] ?? 'inf'
           @click="pool = 'provider'; subTab = 'accept'; load()">待接单<span v-if="pendingRows.length" class="tag dan" style="margin-left:4px">{{ pendingRows.length }}</span></span>
         <span v-if="!isPlatformSide" :class="{ on: pool === 'provider' && subTab === 'list' }"
           @click="pool = 'provider'; subTab = 'list'; load()">服务商公海</span>
-        <span :class="{ on: pool === 'open' }" @click="pool = 'open'; load()">开放抢单池</span>
       </span>
     </div>
 
@@ -312,12 +311,9 @@ const evTag = (ev: string) => EV_TAG[ev] ?? 'inf'
             <span v-else>—</span>
           </td>
           <td @click.stop>
-            <!-- CO：抢单（本商公海已承接(S2)/开放池；S1 待接单还没进公海，不可抢） -->
-            <button v-if="auth.has('case.claim') && ['PROVIDER_SEA','OPEN_POOL'].includes(row.pool) && row.status!=='PENDING_DISPATCH'" class="btn txt"
+            <!-- CO：抢单（仅本商公海已承接 S2·组织内工作分配；v1.18.0 开放池停用，跨商抢单取消） -->
+            <button v-if="auth.has('case.claim') && row.pool==='PROVIDER_SEA' && row.status!=='PENDING_DISPATCH'" class="btn txt"
               :disabled="acting===row.id+'抢单'" @click="act(row.id,'/cases/{id}/claim','抢单')">抢单</button>
-            <!-- SA：开放抢单（平台公海案件→开放池） -->
-            <button v-if="auth.has('case.dispatch') && row.pool==='PLATFORM_SEA'" class="btn txt"
-              :disabled="acting===row.id+'开放抢单'" @click="act(row.id,'/cases/{id}/open-for-claim','开放抢单')">开放抢单</button>
             <!-- SA/SE：单案再派（平台公海案件→改派目标服务商 US-M3-02） -->
             <button v-if="auth.has('case.dispatch') && row.pool==='PLATFORM_SEA'" class="btn txt"
               :disabled="acting===row.id+'再派'" @click="openRedispatch(row.id)">再派</button>
@@ -334,7 +330,7 @@ const evTag = (ev: string) => EV_TAG[ev] ?? 'inf'
     </template>
 
     <div class="alert info" style="margin-top:12px">
-      按角色登录看不同动作：CO(jx_co1) 见抢单 / VL(jx_vl) 见承接拒接 / SA(admin) 见开放抢单。服务端 x-permission+状态机双重校验。
+      按角色登录看不同动作：CO(jx_co1) 见抢单(本商公海) / VL(jx_vl) 见承接拒接 / SA(admin) 见再派。服务端 x-permission+状态机双重校验。
     </div>
 
     <DsDrawer v-model="adlg" title="指派催收员" :width="480">

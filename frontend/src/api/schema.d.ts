@@ -484,7 +484,11 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** 平台为批次设置开放抢单付佣比例(开放抢单前置·未设不可开放 BR-M9-18) */
+        /**
+         * 【已停用 v1.18.0】开放抢单业务下线——停用桩恒 409(付佣比例统一在派单/双佣确认时设定)
+         * @deprecated
+         * @description 开放抢单停用(v1.18.0)：催收员个人跨商抢单让个体行为产生组织义务(佣金结算/质检责任)，与组织对组织商业模型断裂；服务商执行不佳走 批次结项→重派。端点保留避免破坏性变更，调用恒返 409。
+         */
         put: operations["setBatchOpenRate"];
         post?: never;
         delete?: never;
@@ -502,7 +506,7 @@ export interface paths {
         };
         /**
          * 公海列表(平台全局公海 / 服务商待接单·公海，按 scope)
-         * @description 可见矩阵(BR-M3-29 收敛)：platform=仅平台方(SA/SE)；provider=仅本商 VL/CO(**平台方返回空集——平台不查看服务商公海明细，仅靠 T1/T2 预警与聚合**)；open=平台方+VL/CO(全平台开放抢单池 BR-M3-15)。物业角色(PL/PC)无 sea.view 权限点，公海对其不存在(403)。有权限但池不可见时返回空页而非 403(权限点在门口、scope 裁剪在池内)。
+         * @description 可见矩阵(BR-M3-29 收敛)：platform=仅平台方(SA/SE)；provider=仅本商 VL/CO(**平台方返回空集——平台不查看服务商公海明细，仅靠 T1/T2 预警与聚合**)；open=【已停用 v1.18.0】恒返回空集(历史概念保留避免枚举破坏)。物业角色(PL/PC)无 sea.view 权限点，公海对其不存在(403)。有权限但池不可见时返回空页而非 403(权限点在门口、scope 裁剪在池内)。
          */
         get: operations["listSea"];
         put?: never;
@@ -712,9 +716,11 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 平台运营/超管对平台公海案件标记为开放抢单(进开放池·向全平台符合条件催收员开放 BR-M3-15)
-         * @description 平台侧二选一处置(派单 vs 开放抢单)。前置：该批次须先由平台设"开放抢单付佣比例"(BR-M9-18)，
-         *     未设 → 409 BIZ_OPEN_RATE_REQUIRED。作用对象=平台公海案件。
+         * 【已停用 v1.18.0】开放抢单业务下线——停用桩恒 409(BR-M3-15/BR-M9-18 作废)
+         * @deprecated
+         * @description 开放抢单停用(v1.18.0·系统未上线无存量)：开放池让催收员个人跨商抢单、却由其服务商承担佣金
+         *     结算与质检责任——个体行为产生组织义务；「服务商执行不佳」由 批次结项→重派(v1.17.0)闭环覆盖，
+         *     催收员抢单仅限本服务商公海(S2)。存量 S4 案件已由 V931 迁回平台公海。端点保留避免破坏性变更，调用恒 409。
          */
         post: operations["openCaseForClaim"];
         delete?: never;
@@ -1349,7 +1355,7 @@ export interface paths {
         };
         /**
          * 平台批次双线总账(v1.16.0)。一行批次同时给 收佣(应收/已收/未收)+付佣(应付/已付/未付)+毛利
-         * @description 平台专属视角(SA 全量/SE 按 data_range 裁剪)；物业/服务商→403。付佣生效率=COALESCE(payOutRate,openRate) 与组单口径一致；两率皆空时 payOutRate/dueOutCents/unsettledOutCents/grossCents 省略、settledOutCents=0。
+         * @description 平台专属视角(SA 全量/SE 按 data_range 裁剪)；物业/服务商→403。付佣生效率=payOutRate(v1.18.0 去 openRate 兜底)；未设付佣比例时 payOutRate/dueOutCents/unsettledOutCents/grossCents 省略、settledOutCents=0。
          */
         get: operations["getReconRollupDual"];
         put?: never;
@@ -3092,13 +3098,12 @@ export interface components {
             code?: string;
             message?: string;
         };
-        /** @description 批次案件状态分布(v1.17.0·批次运营迷你分布条)。s0=待派单 s1=待接单 s2=服务商公海 s3=私海进行中 s4=开放抢单池 settled=已结清 closed=撤案/坏账/作废 */
+        /** @description 批次案件状态分布(v1.17.0·批次运营迷你分布条；v1.18.0 去 s4——开放抢单停用)。s0=待派单 s1=待接单 s2=服务商公海 s3=私海进行中 settled=已结清 closed=撤案/坏账/作废 */
         PoolDist: {
             s0?: number;
             s1?: number;
             s2?: number;
             s3?: number;
-            s4?: number;
             settled?: number;
             closed?: number;
         };
@@ -3772,7 +3777,7 @@ export interface components {
             paymentRequestIdIn?: string | null;
             /** @description 收佣(IN)单号(平台+物业) */
             prNoIn?: string | null;
-            /** @description 本笔付佣=round(amount×COALESCE(payOutRate,openRate))(平台+服务商;无生效率省略) */
+            /** @description 本笔付佣=round(amount×payOutRate)(平台+服务商;无生效率省略；v1.18.0 去 openRate 兜底) */
             commOutCents?: components["schemas"]["Money"];
             /** @description 付佣线已结(OUT 单 PAID)(平台+服务商) */
             settledOut?: boolean;
@@ -3820,7 +3825,7 @@ export interface components {
             settledInCents?: components["schemas"]["Money"];
             /** @description 未收佣 */
             unsettledInCents?: components["schemas"]["Money"];
-            /** @description 付佣生效率=COALESCE(payOutRate,openRate)·分数 */
+            /** @description 付佣生效率=payOutRate·分数(v1.18.0 去 openRate 兜底) */
             payOutRate?: components["schemas"]["Rate"];
             /** @description 应付佣 */
             dueOutCents?: components["schemas"]["Money"];

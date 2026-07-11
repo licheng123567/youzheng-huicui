@@ -405,16 +405,12 @@ public class MemberM1Controller {
                     || snap.holderId() == null || snap.holderId() != memberId) {
                 continue;   // 并发已变更，跳过
             }
-            // 按 origin_pool 判回 S2/S4：期望持有人=被停用成员本人。回 S2 时 resolveReleaseTarget 内置 t2 重置。
+            // 释放恒回 S2 服务商公海（v1.18.0 开放池停用）：期望持有人=被停用成员本人，t2 重置内置。
             Transition t = state.resolveReleaseTarget(snap, memberId, Instant.now().plusSeconds(t2));
             int n = state.transition(caseId, t);
             if (n > 0) {
                 released++;
-                // 案件级归属维护：回开放池(S4) → 离开本商私海跨商开放，清 provider_id=NULL；
-                //   回服务商公海(S2) → 仍属本商，保留 provider_id（与手动 release / 自动 TC 同口径）。
-                if (CaseStateService.POOL_OPEN_POOL.equals(t.toPool())) {
-                    state.clearCaseProvider(caseId);
-                }
+                // 案件仍属本商，provider_id 保留（本商其他 CO 可见/可再抢）。
                 state.audit(s, "case.release", caseId, "成员停用自动释放私海", snap,
                         state.lockCase(caseId));
             }

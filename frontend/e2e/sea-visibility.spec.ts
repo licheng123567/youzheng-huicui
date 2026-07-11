@@ -1,19 +1,20 @@
 import { test, expect } from '@playwright/test'
 import { loginAs, loginRole } from './helpers'
 
-// BR-M3-29 公海可见性收敛。三条产品规则,三组断言:
-//   ① 平台方只有平台公海+开放池——**服务商公海分段不存在**(明细是服务商内务,平台靠 T1/T2 预警);
-//   ② 服务商侧只有本商公海+开放池——**平台公海分段不存在**(对他们从来是空集,留着只是暴露概念);
+// BR-M3-29 公海可见性收敛（v1.18.0 开放抢单停用后两侧均无开放池分段）。三条产品规则,三组断言:
+//   ① 平台方只有平台公海——**服务商公海/开放池分段不存在**(明细是服务商内务,平台靠 T1/T2 预警);
+//   ② 服务商侧只有待接单+本商公海——**平台公海/开放池分段不存在**;
 //   ③ 物业角色无公海概念——菜单无入口、直敲 URL 被守卫弹回(后端还有 sea.view 403 兜底,那层由后端测试钉)。
 test.describe('BR-M3-29 公海可见性收敛', () => {
-  test('SA 平台侧:撮合派单→平台公海 Tab,池分段默认平台公海、不含「服务商公海」', async ({ page }) => {
+  test('SA 平台侧:案件运营→平台公海 Tab,池分段默认平台公海、不含「服务商公海/开放抢单池」', async ({ page }) => {
     await loginRole(page, 'SA')
     await page.getByRole('menuitem', { name: '案件运营' }).click()
     await page.locator('.segctrl').first().getByText('平台公海').click()
-    // SeaView 的池分段控件（含「开放抢单池」，用它区分于页级 Tab）
-    const poolSeg = page.locator('.segctrl', { hasText: '开放抢单池' })
+    // SeaView 的池分段控件（含「平台公海」项且带 on 态；开放池分段已随 v1.18.0 停用移除）
+    const poolSeg = page.locator('.segctrl').nth(1)
     await expect(poolSeg.locator('span', { hasText: '平台公海' })).toHaveClass(/on/)
     await expect(poolSeg.locator('span', { hasText: '服务商公海' })).toHaveCount(0)
+    await expect(page.getByText('开放抢单池')).toHaveCount(0)
   })
 
   test('VL 服务商侧:分段不含「平台公海」', async ({ page }) => {

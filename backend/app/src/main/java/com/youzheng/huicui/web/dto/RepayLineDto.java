@@ -13,7 +13,7 @@ package com.youzheng.huicui.web.dto;
  *   legacy settled/paymentRequestId 已废弃为「按视角映射」：PROVIDER 视角=OUT 线值；其余（平台/物业）=IN 线值——
  *     保证旧前端（SettlementView 未占用过滤）对 PL/PC(IN) 与 VL(OUT) 行为逐位不变。
  *   收佣线（平台+物业可见）：commInCents=round(amount×comm_in_rate)、settledIn、paymentRequestIdIn、prNoIn。
- *   付佣线（平台+服务商可见）：commOutCents=round(amount×COALESCE(pay_out_rate,open_rate))、settledOut、
+ *   付佣线（平台+服务商可见）：commOutCents=round(amount×pay_out_rate)（v1.18.0 去 open_rate 兜底）、settledOut、
  *     paymentRequestIdOut、prNoOut；批次无付佣生效率时 commOutCents=null。
  *   仅平台可见：providerIdAtRepay/providerName（到账归属快照，支撑 OUT 组单「一单一家」的前端分组勾选）。
  */

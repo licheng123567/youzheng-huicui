@@ -105,7 +105,7 @@ public class PaymentRequestM9Controller {
         // 双线绑定：generated_by 服务端派生（绝不接受前端传）。
         long generatedBy = deriveGeneratorAndAssert(s, side, batch);     // 错线→403 BIZ_WRONG_SETTLE_SIDE
 
-        // 固化比率（防 H-02 历史失真）：IN=batch.comm_in_rate；OUT=batch.pay_out_rate（开放抢单则 open_rate 兜底）。
+        // 固化比率（防 H-02 历史失真）：IN=batch.comm_in_rate；OUT=batch.pay_out_rate（v1.18.0 去 open_rate 兜底）。
         BigDecimal commRate = resolveCommRate(side, batch);              // 缺率→422
 
         // 事务内逐笔 FOR UPDATE 行锁校验未结（BR-M9-12a 手动组单）。
@@ -611,13 +611,13 @@ public class PaymentRequestM9Controller {
 
     // ════════════════════════════ 比率 / 佣金 ════════════════════════════════
 
-    /** 固化生效比率：IN=comm_in_rate；OUT=pay_out_rate（开放抢单则 open_rate 兜底）。缺率→422。 */
+    /** 固化生效比率：IN=comm_in_rate；OUT=pay_out_rate（v1.18.0 开放抢单停用，去 open_rate 兜底）。缺率→422。 */
     private BigDecimal resolveCommRate(String side, BatchRow batch) {
         BigDecimal rate;
         if (SIDE_IN.equals(side)) {
             rate = batch.commInRate;
         } else {
-            rate = batch.payOutRate != null ? batch.payOutRate : batch.openRate;
+            rate = batch.payOutRate;
         }
         if (rate == null) {
             throw new ApiException(BizError.VALIDATION_422, "批次未设置本线生效比率，无法组单");
@@ -710,15 +710,15 @@ public class PaymentRequestM9Controller {
     // ════════════════════════════ 批次 / PR 加载 ═════════════════════════════
 
     private record BatchRow(long id, Long providerId, long projectId,
-                            BigDecimal commInRate, BigDecimal payOutRate, BigDecimal openRate) {}
+                            BigDecimal commInRate, BigDecimal payOutRate) {}
 
     private BatchRow loadBatch(long batchId) {
         try {
             return jdbc.queryForObject(
-                    "SELECT id, provider_id, project_id, comm_in_rate, pay_out_rate, open_rate FROM batch WHERE id = ?",
+                    "SELECT id, provider_id, project_id, comm_in_rate, pay_out_rate FROM batch WHERE id = ?",
                     (rs, i) -> new BatchRow(rs.getLong("id"), (Long) rs.getObject("provider_id"),
                             rs.getLong("project_id"), rs.getBigDecimal("comm_in_rate"),
-                            rs.getBigDecimal("pay_out_rate"), rs.getBigDecimal("open_rate")),
+                            rs.getBigDecimal("pay_out_rate")),
                     batchId);
         } catch (EmptyResultDataAccessException e) {
             throw new ApiException(BizError.NOT_FOUND_404, "批次不存在: " + batchId);

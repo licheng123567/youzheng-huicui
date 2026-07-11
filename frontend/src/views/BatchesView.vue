@@ -14,7 +14,7 @@ import * as XLSX from 'xlsx'
 // GET /batches → BatchView(平台双线/物业只收佣/服务商只付佣)。SA 派单(M3)；物业可导入批次/作废(批次2)。
 const auth = useAuth()
 // 撮合派单与平台公海是同一批待派案件的两个视角（原型即同一模板）——合并为本页两个 Tab：
-//   「批次派单」= 批次粒度首派/重派/开放费率/作废；「平台公海」= 案件粒度再派/开放抢单/竞争态（内嵌 SeaView 平台形态）。
+//   「批次运营」= 批次粒度派单/重派/结项/作废；「平台公海」= 案件粒度单案再派/竞争态（内嵌 SeaView 平台形态；v1.18.0 开放抢单停用）。
 // 仅平台(SA/SE)在裸 /batches 会看到 Tab；PL/PC/VL 只从 /batches/{id} 详情下钻进来，不涉及。
 const isPlatform = computed(() => auth.me?.role === 'SA' || auth.me?.role === 'SE')
 const platformTab = ref<'dispatch' | 'sea'>('dispatch')
@@ -108,16 +108,6 @@ async function submitDispatch() {
   if (error) { ElMessage.error((form.value.redispatch ? '重派' : '派单') + '失败：' + ((error as any)?.message ?? '')); return }
   ElMessage.success(form.value.redispatch ? '已重派' : '已派单'); load()
 }
-// 开放抢单费率：PUT /batches/{id}/open-rate
-async function setOpenRate(row: any) {
-  try {
-    const { value } = await ElMessageBox.prompt('开放抢单费率(分数 0-1，如 0.18=18%)', '设置开放费率 ' + row.code, { inputValidator: (v) => (Number(v) >= 0 && Number(v) <= 1) || '须 0-1 分数' })
-    const { error } = await api.PUT('/batches/{id}/open-rate', { params: { path: { id: row.id } }, body: { openRate: Number(value) } as any })
-    if (error) { ElMessage.error('设置失败：' + ((error as any)?.message ?? '')); return }
-    ElMessage.success('已设开放费率（案件入开放抢单池）'); load()
-  } catch { /* 取消 */ }
-}
-
 // ── 批次导入向导（3 步：① 填信息 + 逐条录入 → ② 提交校验 → ③ 查看结果）──
 const impDlg = ref(false)
 const impStep = ref(0) // 0=录入, 1=校验中, 2=结果
@@ -265,7 +255,7 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
       <span :class="{ on: platformTab === 'sea' }" @click="platformTab = 'sea'">平台公海</span>
     </div>
 
-    <!-- 平台公海：内嵌 SeaView（其自身按 isPlatformSide 渲染 平台公海+开放抢单池，含再派/开放抢单/事件流水） -->
+    <!-- 平台公海：内嵌 SeaView（其自身按 isPlatformSide 渲染 平台公海，含单案再派/事件流水；v1.18.0 开放池停用） -->
     <SeaView v-if="isPlatform && platformTab === 'sea'" />
 
   <div class="card" v-show="!isPlatform || platformTab === 'dispatch'">
@@ -304,8 +294,8 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
           <td class="num">{{ yuan(row.repaidTotalCents) }}</td>
           <td class="num">{{ pct(row.repayRate) }}</td>
           <td>
-            <!-- 迷你状态分布：待派/待接/商公海/在催/开放/结清 -->
-            <span v-if="row.poolDist" class="pooldist" :title="`待派${row.poolDist.s0} 待接${row.poolDist.s1} 商公海${row.poolDist.s2} 在催${row.poolDist.s3} 开放${row.poolDist.s4} 结清${row.poolDist.settled} 关闭${row.poolDist.closed}`">
+            <!-- 迷你状态分布：待派/待接/商公海/在催/结清 -->
+            <span v-if="row.poolDist" class="pooldist" :title="`待派${row.poolDist.s0} 待接${row.poolDist.s1} 商公海${row.poolDist.s2} 在催${row.poolDist.s3} 结清${row.poolDist.settled} 关闭${row.poolDist.closed}`">
               <span v-if="row.poolDist.s0" class="tag inf">待派{{ row.poolDist.s0 }}</span>
               <span v-if="row.poolDist.s1 + row.poolDist.s2" class="tag war">在商{{ row.poolDist.s1 + row.poolDist.s2 }}</span>
               <span v-if="row.poolDist.s3" class="tag pri">在催{{ row.poolDist.s3 }}</span>
@@ -328,7 +318,6 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
             <a v-if="auth.has('case.dispatch') && !row.providerId && !(row.engagementCount > 0)" class="btn txt" :class="{ 'is-disabled': acting===row.id }" @click="acting===row.id || openDispatch(row.id)">派单</a>
             <a v-if="auth.has('case.dispatch') && !row.providerId && row.engagementCount > 0" class="btn txt" @click="openDispatch(row.id, true)">重派</a>
             <a v-if="auth.has('case.dispatch') && row.providerId" class="btn txt dgc" @click="openCloseEngagement(row)">结项</a>
-            <a v-if="auth.has('case.dispatch')" class="btn txt" @click="setOpenRate(row)">开放费率</a>
             <a v-if="isPlatform && (row.engagementCount ?? 0) > 0" class="btn txt" @click="openEngagements(row)">承接历史</a>
             <a v-if="auth.has('case.void')" class="btn txt dgc" @click="voidBatch(row)">作废</a>
           </td>

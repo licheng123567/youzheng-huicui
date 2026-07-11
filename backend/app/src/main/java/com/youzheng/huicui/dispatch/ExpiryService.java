@@ -49,11 +49,7 @@ public class ExpiryService {
             if (snap == null || !CaseStateService.POOL_PRIVATE.equals(snap.pool())) continue;
             Transition t = state.resolveReleaseTarget(snap, snap.holderId(), Instant.now().plusSeconds(t2));
             if (state.transition(id, t) > 0) {
-                // 案件级归属维护：回服务商公海(S2) → 仍属本商，保留 provider_id；
-                //   回开放池(S4) → 离开本商私海跨商开放，清 provider_id=NULL（与手动 release 同口径）。
-                if (CaseStateService.POOL_OPEN_POOL.equals(t.toPool())) {
-                    state.clearCaseProvider(id);
-                }
+                // 释放恒回服务商公海 S2（v1.18.0 开放池停用），案件仍属本商，provider_id 保留。
                 writeActivity(id, "自动释放：持有催收员无跟进超时（CFG-TC）");
                 // 纯定时自动释放也写 audit_log，使 ProvidersController.listReleaseRecords 覆盖全（不漏纯定时 TC）。
                 // before_snap 带退回前 providerId（snap 读 c.provider_id）；口径与手动 case.release 一致，actor=system。

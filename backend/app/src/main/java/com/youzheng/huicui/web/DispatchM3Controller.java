@@ -291,29 +291,16 @@ public class DispatchM3Controller {
         return sec == null ? DEFAULT_T2_SECONDS : sec;
     }
 
-    // ── [3] PUT /batches/{id}/open-rate ──────────────────────────────────────
-    // 前置态：批次存在 → 后置态：batch.open_rate=openRate（不改任何案件状态）。
+    // ── [3] PUT /batches/{id}/open-rate ──【已停用 v1.18.0·停用桩恒 409】────
+    // 开放抢单业务下线（见 PlatformDispatchM3Controller 类注释）：open_rate 不再有写入路径，
+    // 结算侧 open_rate 兜底已一并收敛为只认 pay_out_rate。鉴权口径保持不放宽。
     @PutMapping("/batches/{id}/open-rate")
     @RequirePermission("case.dispatch")
-    @Transactional
     public Map<String, Object> setBatchOpenRate(@PathVariable String id, @RequestBody(required = false) OpenRateInput in) {
-        CurrentSubject s = requirePlatform();
-        long batchId = parseId(id, "批次");
-        if (in == null || in.openRate() == null) {
-            throw new ApiException(BizError.VALIDATION_422, "openRate 必填");
-        }
-        BigDecimal commInRate = loadCommInRateOr404(batchId);
-        // 防倒挂 BR-M9-18：开放比率 > 收佣比例 → 422 BIZ_PAYOUT_INVERT。
-        if (in.openRate().compareTo(commInRate) > 0) {
-            throw new ApiException(BizError.BIZ_PAYOUT_INVERT, "开放抢单比率不得大于收佣比例");
-        }
-        int n = jdbc.update("UPDATE batch SET open_rate = ?, updated_at = now() WHERE id = ?",
-                in.openRate(), batchId);
-        if (n == 0) {
-            throw new ApiException(BizError.NOT_FOUND_404, "批次不存在: " + id);
-        }
-        caseState.audit(s, "batch.open-rate", batchId, "openRate=" + in.openRate(), null, null);
-        return ok();
+        requirePlatform();
+        parseId(id, "批次");                                   // 非法形态 → 404（口径不变）
+        throw new ApiException(BizError.STATE_409,
+                "开放抢单已停用(v1.18.0)：付佣比例统一在派单/双佣确认时设定，无开放费率概念");
     }
 
     // ── [3'] PUT /batches/{id}/commission-rates ──────────────────────────────
