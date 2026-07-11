@@ -21,13 +21,11 @@ test.describe('v1.1.0 工作台 + 派单决策', () => {
     await loginAs(page, 'admin')
     await page.getByRole('menuitem', { name: '案件运营' }).click()
     await expect(page).toHaveURL(/\/batches/)
-    // v1.17.0：「派单」仅未派批次渲染（已派批次走「重派」，同一对话框含同一指标面板）；
-    // fresh 种子库所有批次均已派 → 用恒在的「重派」入口触发对话框。
-    await page.locator('a.btn.txt').filter({ hasText: /^重派$/ }).first().click()
-    await page.getByRole('button', { name: /加载各服务商指标/ }).click()
-    // v1.17.0 批次运营表新增「服务商」列后页面到处是服务商名——断言收窄到派单抽屉内
+    // v1.17.0 动作按状态互斥：未派批次(如种子 B-CH-M3-S0)才有「派单」；打开即自动加载指标(不再手点加载)。
+    await page.locator('tbody tr', { hasText: 'B-CH-M3-S0' }).getByText('派单', { exact: true }).click()
+    // 批次运营表新增「服务商」列后页面到处是服务商名——断言收窄到派单抽屉内
     const drawer = page.getByRole('dialog').filter({ hasText: '服务商指标' })
     await expect(drawer.getByText('近30天回款率')).toBeVisible()        // 指标表头
-    await expect(drawer.getByText('捷信催收')).toBeVisible()
+    await expect(drawer.getByText('捷信催收').first()).toBeVisible()   // 下拉与指标表均含
   })
 })

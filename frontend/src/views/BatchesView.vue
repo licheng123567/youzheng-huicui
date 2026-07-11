@@ -34,15 +34,16 @@ async function load() {
   total.value = data?.meta?.total ?? 0
 }
 
-// M3 派单/重派：WHOLE(整批) / SPLIT(拆分: splitBy=count 按件数 / cases 勾选具体案件→caseIds，US-M3-01)
+// M3 派单/重派（用户定：批次一律整体派 WHOLE，不拆分——同批一个服务商，催不动走 结项→重派）。
+// 动作按状态互斥：未派+无承接史→「派单」；未派+有承接史(结项过)→「重派」；已派→只有「结项」。
 const dlg = ref(false)
-const dispCases = ref<any[]>([]); const caseSel = ref<any[]>([])
-const form = ref<any>({ batchId: '', providerId: '', payOutRate: 0.2, mode: 'WHOLE', splitBy: 'count', splitCount: 10, redispatch: false })
+const form = ref<any>({ batchId: '', providerId: '', payOutRate: 0.2, redispatch: false })
 // 重派软警示：上一承接段（服务商/结项原因）——结项后重派对象含派回原商由平台裁量，仅提示不拦截（v1.17.0）
 const lastSeg = ref<any>(null)
 function openDispatch(id: string, redispatch = false) {
-  form.value = { batchId: id, providerId: '', payOutRate: 0.2, mode: 'WHOLE', splitBy: 'count', splitCount: 10, redispatch }
-  dispCases.value = []; caseSel.value = []; lastSeg.value = null; dlg.value = true
+  form.value = { batchId: id, providerId: '', payOutRate: 0.2, redispatch }
+  lastSeg.value = null; dlg.value = true
+  loadMetrics()                      // 服务商下拉数据源 + 指标决策辅助（BR-M3-24）
   if (redispatch) loadLastSegment(id)
 }
 async function loadLastSegment(batchId: string) {
@@ -89,27 +90,17 @@ async function openEngagements(row: any) {
   ehItems.value = (data as any)?.items ?? []
 }
 const dt = (s?: string | null) => (s ? s.slice(0, 10) : '至今')
-// 派单决策辅助：服务商客观经营指标(BR-M3-24)
+// 派单决策辅助：服务商客观经营指标(BR-M3-24)——同时是服务商下拉的数据源（选商即选名，不再手填 org id）
 const metrics = ref<any[]>([])
 async function loadMetrics() {
+  if (metrics.value.length) return   // 会话内缓存
   const { data, error } = await api.GET('/dispatch/provider-metrics', {})
   if (error) { ElMessage.error('加载服务商指标失败（需 case.dispatch）'); return }
   metrics.value = (data as any)?.items ?? []
 }
-async function loadDispatchCases() {
-  const { data } = await api.GET('/cases', { params: { query: { batchId: form.value.batchId, page: 1, size: 200 } } as any })
-  dispCases.value = (data as any)?.items ?? []
-  if (!dispCases.value.length) ElMessage.info('该批次暂无可派案件')
-}
 async function submitDispatch() {
-  if (!form.value.providerId) { ElMessage.warning('请填服务商 org id'); return }
-  const body: any = { mode: form.value.mode, providerId: form.value.providerId, payOutRate: form.value.payOutRate }
-  if (form.value.mode === 'SPLIT') {
-    if (form.value.splitBy === 'cases') {
-      if (!caseSel.value.length) { ElMessage.warning('请勾选案件'); return }
-      body.caseIds = caseSel.value.map((c) => String(c.id))   // caseIds 优先(D3)
-    } else body.splitCount = form.value.splitCount
-  }
+  if (!form.value.providerId) { ElMessage.warning('请选择服务商'); return }
+  const body: any = { mode: 'WHOLE', providerId: form.value.providerId, payOutRate: form.value.payOutRate }
   acting.value = form.value.batchId
   const ep = form.value.redispatch ? '/batches/{id}/redispatch' : '/batches/{id}/dispatch'
   const { error } = await api.POST(ep as any, { params: { path: { id: form.value.batchId } }, body })
@@ -333,8 +324,9 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
           <td v-if="showPayOutRate" class="num">{{ ratePct(row.payOutRate) }}</td>
           <td><span class="tag" :class="statusTag(row.status)" :title="row.status">{{ caseStatusLabel(row.status) }}</span></td>
           <td>
-            <a v-if="auth.has('case.dispatch') && !row.providerId" class="btn txt" :class="{ 'is-disabled': acting===row.id }" @click="acting===row.id || openDispatch(row.id)">派单</a>
-            <a v-if="auth.has('case.dispatch')" class="btn txt" @click="openDispatch(row.id, true)">重派</a>
+            <!-- 动作按状态互斥（用户定）：未派+无承接史→派单；未派+结项过→重派(带上一段警示)；已派→只有结项 -->
+            <a v-if="auth.has('case.dispatch') && !row.providerId && !(row.engagementCount > 0)" class="btn txt" :class="{ 'is-disabled': acting===row.id }" @click="acting===row.id || openDispatch(row.id)">派单</a>
+            <a v-if="auth.has('case.dispatch') && !row.providerId && row.engagementCount > 0" class="btn txt" @click="openDispatch(row.id, true)">重派</a>
             <a v-if="auth.has('case.dispatch') && row.providerId" class="btn txt dgc" @click="openCloseEngagement(row)">结项</a>
             <a v-if="auth.has('case.dispatch')" class="btn txt" @click="setOpenRate(row)">开放费率</a>
             <a v-if="isPlatform && (row.engagementCount ?? 0) > 0" class="btn txt" @click="openEngagements(row)">承接历史</a>
@@ -356,35 +348,31 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
         <template v-if="lastSeg.periodRepayRate != null">· 期间回款率 {{ pct(lastSeg.periodRepayRate) }}</template>
       </div>
       <el-form label-width="120px">
-        <el-form-item label="方式"><el-radio-group v-model="form.mode"><el-radio-button label="WHOLE">整批</el-radio-button><el-radio-button label="SPLIT">拆分</el-radio-button></el-radio-group></el-form-item>
-        <template v-if="form.mode==='SPLIT'">
-          <el-form-item label="拆分依据"><el-radio-group v-model="form.splitBy"><el-radio-button label="count">按件数</el-radio-button><el-radio-button label="cases">勾选案件</el-radio-button></el-radio-group></el-form-item>
-          <el-form-item v-if="form.splitBy==='count'" label="拆分件数"><el-input-number v-model="form.splitCount" :min="1" /><span style="margin-left:8px;color:#909399">按入池序选 N 个(D3)</span></el-form-item>
-          <el-form-item v-else label="勾选案件">
-            <el-button size="small" @click="loadDispatchCases">加载本批案件</el-button>
-            <el-table :data="dispCases" border size="small" max-height="240" style="margin-top:6px" @selection-change="(v:any)=>caseSel=v">
-              <el-table-column type="selection" width="40" />
-              <el-table-column prop="ownerName" label="业主" /><el-table-column prop="room" label="房号" />
-              <el-table-column label="状态"><template #default="{row}"><span :title="row.status">{{ caseStatusLabel(row.status) }}</span></template></el-table-column><el-table-column prop="acctNo" label="户号" />
-            </el-table>
-            <span style="color:#606266">已选 {{ caseSel.length }} 件（US-M3-01 同批部分案件派不同服务商）</span>
-          </el-form-item>
-        </template>
+        <!-- 用户定：批次一律整体派给一个服务商（不拆分）；服务商=下拉搜索选择（不手填 id） -->
+        <el-form-item label="服务商" required>
+          <el-select v-model="form.providerId" filterable placeholder="搜索/选择服务商" style="width:320px">
+            <el-option v-for="m in metrics" :key="m.providerId" :value="m.providerId"
+              :label="m.providerName">
+              <span>{{ m.providerName }}</span>
+              <span style="float:right;color:#909399;font-size:12px">
+                在催{{ m.activeCases }} · {{ m.collectorCount }}人 · 近30天回款率 {{ m.recentRepayRate!=null?(m.recentRepayRate*100).toFixed(1)+'%':'—' }}
+              </span>
+            </el-option>
+          </el-select>
+        </el-form-item>
         <el-form-item label="服务商指标">
-          <el-button size="small" @click="loadMetrics">加载各服务商指标（决策辅助 BR-M3-24）</el-button>
-          <el-table v-if="metrics.length" :data="metrics" border size="small" style="margin-top:6px;cursor:pointer" @row-click="(r:any)=>form.providerId=r.providerId">
+          <el-table v-if="metrics.length" :data="metrics" border size="small" style="cursor:pointer" @row-click="(r:any)=>form.providerId=r.providerId">
             <el-table-column prop="providerName" label="服务商" />
             <el-table-column label="在催"><template #default="{row}">{{ row.activeCases }}</template></el-table-column>
             <el-table-column label="催收员"><template #default="{row}">{{ row.collectorCount }}</template></el-table-column>
             <el-table-column label="人均持仓"><template #default="{row}">{{ row.avgHolding?.toFixed(1) }}</template></el-table-column>
             <el-table-column label="近30天回款率"><template #default="{row}">{{ row.recentRepayRate!=null?(row.recentRepayRate*100).toFixed(1)+'%':'—' }}</template></el-table-column>
           </el-table>
-          <span style="color:#909399;font-size:12px">仅客观指标陈列，不评分/不加权（BR-M3-24）。点行填服务商 id。</span>
+          <span style="color:#909399;font-size:12px">仅客观指标陈列，不评分/不加权（BR-M3-24）。点行即选中该服务商。</span>
         </el-form-item>
-        <el-form-item label="服务商 org id"><el-input v-model="form.providerId" placeholder="点上表行或手填" /></el-form-item>
         <el-form-item label="付佣比例(小数)"><el-input-number v-model="form.payOutRate" :min="0" :max="1" :step="0.01" /><span style="margin-left:8px;color:#909399">0.2=20%（须≤收佣，防倒挂）</span></el-form-item>
       </el-form>
-      <template #footer><el-button @click="dlg=false">取消</el-button><el-button type="primary" :loading="acting===form.batchId" @click="submitDispatch">{{ form.redispatch?'重派':(form.mode==='SPLIT'?'拆分派单':'整批派单') }}</el-button></template>
+      <template #footer><el-button @click="dlg=false">取消</el-button><el-button type="primary" :loading="acting===form.batchId" @click="submitDispatch">{{ form.redispatch?'整批重派':'整批派单' }}</el-button></template>
     </DsDrawer>
 
     <!-- v1.17.0 结项确认（终止当前服务商承接·全部收回+承诺保留） -->
