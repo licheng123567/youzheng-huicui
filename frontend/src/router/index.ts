@@ -35,6 +35,8 @@ const router = createRouter({
         // 组织额度详情（平台从列表点组织进入；子路径由 isAllowedPath 的 startsWith 放行）
         { path: 'quota/:orgId', name: 'quota-org', component: () => import('../views/QuotaOrgView.vue') },
         { path: 'sms', name: 'sms', component: () => import('../views/SmsView.vue') },
+        // 组织短信通道详情（平台从列表点物业进入；子路径由 isAllowedPath 的 startsWith 放行）
+        { path: 'sms/:orgId', name: 'sms-org', component: () => import('../views/SmsOrgView.vue') },
         { path: 'script-lib', name: 'script-lib', component: () => import('../views/ScriptLibView.vue') },
         { path: 'org-mgmt', name: 'org-mgmt', component: () => import('../views/OrgMgmtView.vue') },
         { path: 'my-settle', redirect: '/my-stats' },   // 我的结算已并入「我的业绩·结算」(/my-stats)；保留重定向兼容老书签

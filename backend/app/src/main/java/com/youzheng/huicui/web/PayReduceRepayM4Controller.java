@@ -63,11 +63,15 @@ public class PayReduceRepayM4Controller {
     private final CaseScopeM4Service scope;
     private final com.youzheng.huicui.integration.SmsService sms;
 
+    private final com.youzheng.huicui.integration.SmsConfigService smsCfg;
+
     public PayReduceRepayM4Controller(JdbcTemplate jdbc, CaseScopeM4Service scope,
-                                      com.youzheng.huicui.integration.SmsService sms) {
+                                      com.youzheng.huicui.integration.SmsService sms,
+                                      com.youzheng.huicui.integration.SmsConfigService smsCfg) {
         this.jdbc = jdbc;
         this.scope = scope;
         this.sms = sms;
+        this.smsCfg = smsCfg;
     }
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ISO_INSTANT;
@@ -95,14 +99,14 @@ public class PayReduceRepayM4Controller {
         long amountCents = c.reduceAfterCents() != null ? c.reduceAfterCents() : c.dueCents();
 
         if ("SMS".equals(channel)) {
-            // BR-M4-14a：同案最近一条 SMS pay_link < 冷却窗口 → 409 BIZ_SMS_COOLDOWN。
-            requireSmsCooldownPassed(caseId);
+            // BR-M4-14a：同案最近一条 SMS pay_link < 冷却窗口 → 409 BIZ_SMS_COOLDOWN（按该物业配置）。
+            requireSmsCooldownPassed(caseId, c.orgId());
             // 余量不足→409 BIZ_QUOTA_EXHAUSTED（M9 预付费，地基期不接，不触发）。TODO(M9)。
         }
         // WECHAT_COPY 不限频、不扣条数。
 
         String token = UUID.randomUUID().toString();
-        Timestamp expiresAt = Timestamp.from(Instant.now().plusSeconds(payLinkTtlSeconds()));
+        Timestamp expiresAt = Timestamp.from(Instant.now().plusSeconds(smsCfg.payLinkTtlSeconds(c.orgId())));
         Long actorId = actorId(s);
 
         Long payLinkId = jdbc.queryForObject(
@@ -143,7 +147,7 @@ public class PayReduceRepayM4Controller {
         String effectiveChannel = requested != null ? requested : nz2(pl.lastChannel, pl.channel);
 
         if ("SMS".equals(effectiveChannel)) {
-            requireSmsCooldownPassed(pl.caseId);                // 冷却未到→409 BIZ_SMS_COOLDOWN
+            requireSmsCooldownPassed(pl.caseId, c.orgId());     // 冷却未到→409 BIZ_SMS_COOLDOWN（按该物业配置）
         }
         jdbc.update("UPDATE pay_link SET last_channel = ?, last_sent_at = now(), updated_at = now() WHERE id = ?",
                 effectiveChannel, payLinkId);
@@ -457,10 +461,15 @@ public class PayReduceRepayM4Controller {
         return sum == null ? 0L : sum;
     }
 
-    // ── SMS 冷却 / TTL 配置 ───────────────────────────────────────────────────
+    // ── SMS 冷却 / TTL 配置（v1.21.0：按组织解析，见 SmsConfigService）──────────
+    //
+    // 修既有 bug：此前 smsSetting() 读 settings.sms->>'cooldownSeconds'（秒），而 UI/契约写的是
+    //   'cooldownMinutes'（分）→ SA 在参数配置页改冷却时间**永远不生效**，恒走 6h 兜底。
+    // 现改由 SmsConfigService 四级解析：org_sms_config（该物业的权威配置）→ settings.sms
+    //   （平台默认，两个键都吃）→ yml → 常量。
 
     /** BR-M4-14a：同案最近一条 SMS 渠道 pay_link 创建时间在冷却窗口内 → 409 BIZ_SMS_COOLDOWN。 */
-    private void requireSmsCooldownPassed(long caseId) {
+    private void requireSmsCooldownPassed(long caseId, Long orgId) {
         // COALESCE(last_channel,channel)/COALESCE(last_sent_at,created_at)：既覆盖「指定渠道重发」的最新发送时刻，
         // 也兼容还没被重发过的老行(last_channel/last_sent_at 为空时回落创建态)。
         Timestamp last = jdbc.query(
@@ -469,33 +478,8 @@ public class PayReduceRepayM4Controller {
                 rs -> rs.next() ? rs.getTimestamp("t") : null, caseId);
         if (last == null) return;
         long elapsed = Instant.now().getEpochSecond() - last.toInstant().getEpochSecond();
-        if (elapsed < smsCooldownSeconds()) {
+        if (elapsed < smsCfg.cooldownSeconds(orgId)) {
             throw new ApiException(BizError.BIZ_SMS_COOLDOWN, "同案缴费短信冷却未到，请稍后再发");
-        }
-    }
-
-    private long payLinkTtlSeconds() {
-        return smsSetting("payLinkTtlSeconds", DEFAULT_PAYLINK_TTL_SECONDS);
-    }
-
-    private long smsCooldownSeconds() {
-        return smsSetting("cooldownSeconds", DEFAULT_SMS_COOLDOWN_SECONDS);
-    }
-
-    /** 读 settings.sms 域 JSON 字段（取最新版本），缺/异常退兜底——配置读不致 5xx。 */
-    private long smsSetting(String key, long dflt) {
-        try {
-            Long v = jdbc.query(
-                    "SELECT sms ->> ? AS v FROM settings WHERE domain = 'SMS' ORDER BY version DESC LIMIT 1",
-                    rs -> {
-                        if (!rs.next()) return null;
-                        String raw = rs.getString("v");
-                        if (raw == null || raw.isBlank()) return null;
-                        try { return Long.valueOf(raw.trim()); } catch (NumberFormatException e) { return null; }
-                    }, key);
-            return v == null ? dflt : v;
-        } catch (RuntimeException e) {
-            return dflt;
         }
     }
 

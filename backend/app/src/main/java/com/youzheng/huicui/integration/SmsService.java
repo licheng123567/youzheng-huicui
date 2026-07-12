@@ -29,25 +29,20 @@ public class SmsService {
 
     private final JdbcTemplate jdbc;
     private final ZhixunyunSmsClient sms;
-    private final String signName;
     private final String publicBaseUrl;
-    private final String tplVerify;
-    private final String tplPayLink;
     private final com.youzheng.huicui.common.BalanceService balance;
+    /** v1.21.0：签名/模板/冷却一律按组织解析（四级兜底 org→settings→yml→常量），见 SmsConfigService。 */
+    private final SmsConfigService cfg;
 
     public SmsService(JdbcTemplate jdbc, ZhixunyunSmsClient sms,
                       com.youzheng.huicui.common.BalanceService balance,
-                      @Value("${huicui.sms.sign-name:}") String signName,
-                      @Value("${huicui.sms.public-base-url:}") String publicBaseUrl,
-                      @Value("${huicui.sms.templates.verify-code:}") String tplVerify,
-                      @Value("${huicui.sms.templates.pay-link:}") String tplPayLink) {
+                      SmsConfigService cfg,
+                      @Value("${huicui.sms.public-base-url:}") String publicBaseUrl) {
         this.jdbc = jdbc;
         this.sms = sms;
         this.balance = balance;
-        this.signName = signName;
+        this.cfg = cfg;
         this.publicBaseUrl = trimSlash(publicBaseUrl);
-        this.tplVerify = tplVerify;
-        this.tplPayLink = tplPayLink;
     }
 
     /** sms_record.template 的固定取值（便于 /sms-records 按类别统计与计费对账）。 */
@@ -73,10 +68,13 @@ public class SmsService {
     public String sendVerificationCode(String phone) {
         String code = String.format("%06d", rnd.nextInt(1_000_000));
         try {
+            // 验证码=平台级短信（登录前无组织上下文）：签名走平台默认(settings→yml)，模板恒用 yml 全局报备模板。
+            String verifySign = cfg.resolveSignName(null);
+            String tplVerify = cfg.ymlTemplateId(SmsConfigService.KIND_NOTIFY);   // NOTIFY 分支返回 verify-code 模板
             if (!tplVerify.isBlank()) {
-                sms.sendSms(phone, null, tplVerify, List.of(code, "5"), signName);   // 模板变量 [验证码, 有效分钟]
+                sms.sendSms(phone, null, tplVerify, List.of(code, "5"), verifySign);   // 模板变量 [验证码, 有效分钟]
             } else {
-                sms.sendSms(phone, "您的验证码是" + code + "，5分钟内有效，请勿泄露。", null, null, signName);
+                sms.sendSms(phone, "您的验证码是" + code + "，5分钟内有效，请勿泄露。", null, null, verifySign);
             }
         } catch (ApiException e) {
             recordSms(null, null, null, template(TPL_VERIFY_CODE), "FAILED", e.getMessage());
@@ -98,20 +96,35 @@ public class SmsService {
             recordSms(orgId, caseId, projectId, template(TPL_PAY_LINK), "FAILED", "案件无主号");
             return;
         }
+        // v1.21.0 平台 kill-switch：该组织短信通道被停用 → 不发、不扣额度。
+        if (!cfg.smsEnabled(orgId)) {
+            recordSms(orgId, caseId, projectId, template(TPL_PAY_LINK), "FAILED", "该组织短信通道已停用");
+            return;
+        }
         if (billable(orgId) && !chargeSms(orgId, caseId, 1)) {
             recordSms(orgId, caseId, projectId, template(TPL_PAY_LINK), "FAILED", "短信额度不足");
             return;
         }
+        // v1.21.0 按组织解析：签名 + 该物业的**生效**模板（ACTIVE；DRAFT/REJECTED 绝不用于发送）。
+        String sign = cfg.resolveSignName(orgId);
+        java.util.Optional<SmsConfigService.Tpl> orgTpl = cfg.resolveTemplate(orgId, SmsConfigService.KIND_PAY_LINK);
+        String tplLabel = orgTpl.map(t -> TPL_PAY_LINK + "(#" + t.id() + ")").orElse(TPL_PAY_LINK);
         try {
-            if (!tplPayLink.isBlank()) {
-                sms.sendSms(phone, null, tplPayLink, List.of(payUrl), signName);
+            if (orgTpl.isPresent()) {
+                // 变量按报备时提交的 var_order 绑定（缺值填空串，绝不错位——见 SmsVars 注释）。
+                java.util.Map<String, String> ctx = new java.util.HashMap<>();
+                ctx.put(SmsVars.PAY_URL, payUrl);
+                sms.sendSms(phone, null, orgTpl.get().gatewayTemplateId(),
+                        cfg.bindVars(orgTpl.get().varOrder(), ctx), sign);
+            } else if (!cfg.ymlTemplateId(SmsConfigService.KIND_PAY_LINK).isBlank()) {
+                sms.sendSms(phone, null, cfg.ymlTemplateId(SmsConfigService.KIND_PAY_LINK), List.of(payUrl), sign);
             } else {
-                sms.sendSms(phone, "您有一笔物业费待缴，请点击缴费：" + payUrl, null, null, signName);
+                sms.sendSms(phone, "您有一笔物业费待缴，请点击缴费：" + payUrl, null, null, sign);
             }
-            recordSms(orgId, caseId, projectId, template(TPL_PAY_LINK), "SENT", null);
+            recordSms(orgId, caseId, projectId, template(tplLabel), "SENT", null);
         } catch (ApiException e) {
             log.warn("缴费链接短信发送失败 case={}: {}", caseId, e.getMessage());
-            recordSms(orgId, caseId, projectId, template(TPL_PAY_LINK), "FAILED", e.getMessage());
+            recordSms(orgId, caseId, projectId, template(tplLabel), "FAILED", e.getMessage());
         }
     }
 

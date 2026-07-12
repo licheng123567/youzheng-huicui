@@ -93,8 +93,6 @@ function openSms() {
   }
   smsDlg.value = true
 }
-function addSmsTpl() { smsForm.value.templates.push({ id: '', name: '', content: '' }) }
-function delSmsTpl(i: number) { smsForm.value.templates.splice(i, 1) }
 async function saveSms() {
   const f = smsForm.value
   if (f.cooldownMinutes < 0) { ElMessage.error('冷却分钟不能为负'); return }
@@ -396,13 +394,13 @@ onMounted(() => { load(); loadMore() })
           <el-date-picker v-model="smsForm.effectiveAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="留空=立即生效" style="width:100%" />
         </el-form-item>
       </el-form>
-      <el-divider content-position="left">短信模板（平台统一配置 BR-M9-09）<el-button size="small" type="primary" plain @click="addSmsTpl">+ 新增模板</el-button></el-divider>
-      <el-table :data="smsForm.templates" border size="small">
-        <el-table-column label="id" width="120"><template #default="{row}"><el-input v-model="row.id" size="small" /></template></el-table-column>
-        <el-table-column label="名称" width="140"><template #default="{row}"><el-input v-model="row.name" size="small" /></template></el-table-column>
-        <el-table-column label="内容"><template #default="{row}"><el-input v-model="row.content" size="small" type="textarea" :rows="2" /></template></el-table-column>
-        <el-table-column label="操作" width="70"><template #default="{$index}"><el-button size="small" text type="danger" @click="delSmsTpl($index)">删除</el-button></template></el-table-column>
-      </el-table>
+      <!-- v1.21.0：短信模板已由「短信通道」按组织接管（org_sms_template + 平台代报备流程）。
+           此处仅保留平台默认值（组织未单独配置时的兜底）。原来的模板编辑表格是「只写不读」的——
+           后端从不读 settings.sms.templates，填了也不会生效，故移除以免误导。 -->
+      <div class="alert info" style="margin-top:10px">
+        <span>以上为<b>平台默认值</b>（组织未单独配置时兜底，同时用于登录验证码短信）。各物业的签名与模板请在
+          <a class="link" @click="$router.push('/sms')">【短信通道】</a>按组织配置——那里的模板走「平台代向运营商报备 → 回填模板ID → 生效」流程。</span>
+      </div>
       <template #footer><el-button @click="smsDlg=false">取消</el-button><el-button type="primary" @click="saveSms">保存新版本</el-button></template>
     </DsDrawer>
   </div>
