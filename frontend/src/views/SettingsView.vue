@@ -53,10 +53,12 @@ function domainData(domain: string) {
 }
 // 卡头「编辑」→ 分发到对应抽屉。入口跟着卡片走，而不是页面顶部一排代码名按钮。
 const matrixOpen = ref(false)
-// 按业务顺序排：后端按域名字母序回，「结案原因」排第一很怪。
+// 五个域**一律出卡**（按业务顺序），哪怕后端没有该域的行——
+// GET /settings 只回「已存在的配置行」，干净库里没有 CLOSE_REASONS 就没有卡，那个域就**永远配不了**。
+// 这是 CI 干净库逮到的真 bug（本地库因 E2E 反复写入而恰好有行，掩盖了它）。
 const DOMAIN_ORDER = ['TIMERS', 'ROTATION', 'MARK_CODES', 'CLOSE_REASONS', 'SMS']
-const orderedItems = computed(() => [...items.value].sort(
-  (a, b) => DOMAIN_ORDER.indexOf(a.domain) - DOMAIN_ORDER.indexOf(b.domain)))
+const orderedItems = computed(() => DOMAIN_ORDER.map(
+  (d) => items.value.find((x) => x.domain === d) ?? { domain: d, version: 0, effectiveAt: null }))
 
 function editDomain(domain: string) {
   if (domain === 'TIMERS') openTimers()
@@ -322,10 +324,14 @@ onMounted(() => { load(); loadMore(); loadIntegrations() })
       <div class="card-h" style="padding-bottom:6px">
         <div class="t" style="font-size:14px">
           {{ DOMAIN_META[row.domain]?.label ?? settingsDomainLabel(row.domain) }}
-          <span class="tag inf" style="margin-left:6px" :title="row.domain">v{{ row.version }}</span>
+          <span class="tag" :class="row.version ? 'inf' : 'war'" style="margin-left:6px" :title="row.domain">
+            {{ row.version ? 'v' + row.version : '未配置' }}
+          </span>
         </div>
         <div class="ops" style="display:flex;align-items:center;gap:10px">
-          <span class="note" style="margin:0">生效时间 {{ row.effectiveAt ? String(row.effectiveAt).slice(0,16).replace('T',' ') : '立即' }}</span>
+          <span class="note" style="margin:0">
+            {{ row.version ? ('生效时间 ' + (row.effectiveAt ? String(row.effectiveAt).slice(0,16).replace('T',' ') : '立即')) : '尚未配置，走系统默认值' }}
+          </span>
           <button v-if="auth.has('settings.manage')" class="btn sm" @click="editDomain(row.domain)">编辑</button>
         </div>
       </div>
