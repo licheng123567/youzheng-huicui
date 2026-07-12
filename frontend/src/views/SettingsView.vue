@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import { roleTemplateLabel, dataScopeLabel, settingsDomainLabel, scriptSourceLabel, scriptStatusLabel } from '../constants/enums'
+import { DOMAIN_META, fieldLabel, fieldDesc, fieldValue } from '../constants/settingsMeta'
 import { permLabel } from '../constants/permissions'
 import DsDrawer from '../components/DsDrawer.vue'
 import type { components } from '../api/schema'
@@ -17,6 +18,24 @@ const auth = useAuth()
 const items = ref<any[]>([])
 const fmt = (v: any) => v == null ? '—' : JSON.stringify(v)
 const domainOf = (x: any) => x.timers ?? x.rotation ?? x.markCodes ?? x.closeReasons ?? x.sms
+
+// 域内容摊平成「键→值」给人话表格用。数组型域（标记码/结案原因）本身就是一张清单，
+// 包一层假键名反而绕，直接以域名作键展示整条清单。
+function flatFields(row: any): Record<string, any> {
+  const v = domainOf(row)
+  if (v == null) return {}
+  if (Array.isArray(v)) return { [row.domain === 'MARK_CODES' ? 'markCodes' : 'closeReasons']: v }
+  return v
+}
+
+// AI 配置分组。live=这一组是否真的被代码读取——只有飞轮的 trigger 在 FlywheelService 里被读；
+// llm/asr/prompts 存着但没人读（客户端 Phase 3 才写），必须在页面上说清楚，否则又是一个「配了不生效」的坑。
+const AI_GROUPS = [
+  { key: 'flywheel', label: '话术飞轮', live: true },
+  { key: 'llm', label: '大模型 LLM', live: false },
+  { key: 'asr', label: '语音转写 ASR', live: false },
+  { key: 'prompts', label: '提示词', live: false },
+]
 
 async function load() {
   const { data, error } = await api.GET('/settings', {})
@@ -201,6 +220,54 @@ async function saveAi() {
   if (error) { ElMessage.error('保存失败：' + ((error as any)?.message ?? '')); return }
   ElMessage.success('AI 配置已更新'); aiDlg.value = false; loadMore()
 }
+// ── 三方通道（v1.23.0·GET/PUT /integrations）──
+// 用户诉求：「易保全、LLM、ASR 这些三方端口的 key，后台没有配置界面。」
+// 只做真接得通的两个：易保全(存证) + 智讯云(短信)。LLM/ASR 的客户端还没写（Phase 3），
+// 给它们做输入框只会造出「填了不生效」的空壳页——AI 区域已显式标注「待接入」。
+const integrations = ref<any[]>([])
+const FIELD_CN: Record<string, string> = {
+  baseUrl: '接口地址', smsBaseUrl: '普通短信接口地址', videoBaseUrl: '视频短信接口地址',
+  appKey: 'appKey', appKeySecret: 'appKey 密钥', secretName: 'SecretName', secretKey: 'SecretKey',
+}
+const SRC_CN: Record<string, string> = { DB: '后台维护', ENV: '环境变量', NONE: '未配置' }
+// 每个通道有哪些密钥字段——**不能从 secretsMasked 的键推**：未配置时后端不回该键（null 被剥掉），
+// 于是抽屉里一个输入框都没有，全新部署的用户根本填不了 key。这个洞是 E2E 抓出来的。
+const SECRET_KEYS: Record<string, string[]> = {
+  EBAOQUAN: ['appKey', 'appKeySecret'],
+  SMS: ['secretName', 'secretKey'],
+}
+async function loadIntegrations() {
+  if (!auth.has('settings.manage')) return
+  const { data } = await api.GET('/integrations', {})
+  integrations.value = (data as any) ?? []
+}
+const inDlg = ref(false)
+const inForm = ref<any>({ provider: '', name: '', enabled: false, settings: {}, secrets: {}, masked: {}, cryptoReady: true })
+function openIntegration(row: any) {
+  // 密钥回显的是掩码，绝不能把掩码当明文写回去 → secrets 一律留空，留空即「不改」。
+  inForm.value = {
+    provider: row.provider, name: row.name, enabled: row.enabled, cryptoReady: row.cryptoReady,
+    settings: { ...(row.settings ?? {}) },
+    secrets: Object.fromEntries((SECRET_KEYS[row.provider] ?? []).map((k) => [k, ''])),
+    masked: row.secretsMasked ?? {},
+  }
+  inDlg.value = true
+}
+async function submitIntegration() {
+  const f = inForm.value
+  // 空串在契约里表示「清除该密钥」；没填的键直接不传，语义才是「不改」。
+  const secrets: Record<string, string> = {}
+  for (const [k, v] of Object.entries(f.secrets as Record<string, string>)) {
+    if (v && String(v).trim()) secrets[k] = String(v).trim()
+  }
+  const { error } = await api.PUT('/integrations/{provider}', {
+    params: { path: { provider: f.provider } },
+    body: { enabled: f.enabled, settings: f.settings, secrets } as any,
+  })
+  if (error) { ElMessage.error('保存失败：' + ((error as any)?.message ?? '')); return }
+  ElMessage.success('已保存（改完即刻生效，无需重启）'); inDlg.value = false; loadIntegrations()
+}
+
 // 话术库：新建 + 变体晋升
 const scDlg = ref(false); const scForm = ref<any>({ scene: '首催开场', intent: '', cohort: '', text: '' })
 async function createScript() {
@@ -213,7 +280,7 @@ async function promote(s: any) {
   if (error) { ElMessage.error('晋升失败：' + ((error as any)?.message ?? '')); return }
   ElMessage.success('变体已晋升'); loadMore()
 }
-onMounted(() => { load(); loadMore() })
+onMounted(() => { load(); loadMore(); loadIntegrations() })
 </script>
 
 <template>
@@ -231,25 +298,32 @@ onMounted(() => { load(); loadMore() })
       <button class="btn sm" @click="openSms">编辑短信配置(SMS)</button>
     </div>
 
-    <table>
-      <thead>
-        <tr>
-          <th style="width:140px">配置域</th><th style="width:80px">版本</th><th style="width:200px">生效时间</th><th>配置内容</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="row in items" :key="row.domain">
-          <td><b :title="row.domain">{{ settingsDomainLabel(row.domain) }}</b></td>
-          <td class="num">{{ row.version }}</td>
-          <td>{{ row.effectiveAt }}</td>
-          <td><code style="font-size:12px">{{ fmt(domainOf(row)) }}</code></td>
-        </tr>
-        <tr v-if="!items.length"><td colspan="4" class="note" style="text-align:center">暂无配置数据（仅平台可见）</td></tr>
-      </tbody>
-    </table>
-    <div class="alert info">
-      域：TIMERS(计时器) / ROTATION(轮转·持有上限) / MARK_CODES(标记码) / CLOSE_REASONS(结案原因) / SMS。
+    <!-- 人话化（v1.23.0）：此前这里把 JSON 原样 dump 出来（{"holdCap":50}），只有写代码的人看得懂。
+         现在每个域一张卡：中文域名 + 这个域管什么 + 每个参数的中文名/当前值/一句话说明。 -->
+    <div v-for="row in items" :key="row.domain" class="card" style="margin-bottom:12px;box-shadow:none;border:1px solid var(--bd)">
+      <div class="card-h" style="padding-bottom:6px">
+        <div class="t" style="font-size:14px">
+          {{ DOMAIN_META[row.domain]?.label ?? settingsDomainLabel(row.domain) }}
+          <span class="tag inf" style="margin-left:6px" :title="row.domain">v{{ row.version }}</span>
+        </div>
+        <div class="ops"><span class="note" style="margin:0">生效时间 {{ row.effectiveAt ? String(row.effectiveAt).slice(0,16).replace('T',' ') : '立即' }}</span></div>
+      </div>
+      <div class="note" style="margin:0 0 8px">{{ DOMAIN_META[row.domain]?.desc }}</div>
+      <table>
+        <thead><tr><th style="width:170px">参数</th><th style="width:200px">当前值</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr v-for="(v, k) in flatFields(row)" :key="k">
+            <td><b>{{ fieldLabel(String(k)) }}</b><div class="note" style="margin:0;font-size:11px">{{ k }}</div></td>
+            <td>{{ fieldValue(String(k), v) }}</td>
+            <td class="note" style="margin:0">{{ fieldDesc(String(k)) || '—' }}</td>
+          </tr>
+          <tr v-if="!Object.keys(flatFields(row)).length">
+            <td colspan="3" class="note" style="text-align:center">未配置（走系统默认值）</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
+    <div v-if="!items.length" class="note" style="text-align:center;padding:24px 0">暂无配置数据（仅平台可见）</div>
 
     <div class="sec-title" style="justify-content:space-between">
       <span style="display:flex;align-items:center;gap:8px">权限矩阵（GET /permission-matrix · 功能×角色×权限码×数据范围 BR-M1-04c）</span>
@@ -270,15 +344,89 @@ onMounted(() => { load(); loadMore() })
       </tbody>
     </table>
 
+    <!-- 三方通道（v1.23.0）：密钥加密落库，读接口只回掩码 -->
+    <template v-if="auth.has('settings.manage')">
+      <div class="sec-title">
+        三方通道
+        <span style="font-size:12px;color:var(--sec);font-weight:400">密钥加密存储，页面只回显后四位；改完即刻生效，无需重启</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:190px">通道</th>
+            <th style="width:100px">状态</th>
+            <th style="width:100px">配置来源</th>
+            <th>接口地址 / 密钥</th>
+            <th style="width:140px">最近修改</th>
+            <th style="width:70px">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="ig in integrations" :key="ig.provider">
+            <td><b>{{ ig.name }}</b><div class="note" style="margin:0;font-size:11px">{{ ig.provider }}</div></td>
+            <td>
+              <span class="tag" :class="ig.enabled ? (ig.configured ? 'suc' : 'dan') : 'inf'">
+                {{ ig.enabled ? (ig.configured ? '已启用' : '启用但未填齐') : '未启用' }}
+              </span>
+            </td>
+            <td><span class="tag" :class="ig.source === 'NONE' ? 'war' : 'inf'">{{ SRC_CN[ig.source] ?? ig.source }}</span></td>
+            <td>
+              <div v-for="(v, k) in (ig.settings ?? {})" :key="k" class="note" style="margin:0">
+                {{ FIELD_CN[String(k)] ?? k }}：{{ v || '—' }}
+              </div>
+              <div v-for="(v, k) in (ig.secretsMasked ?? {})" :key="'s'+k" class="note" style="margin:0">
+                {{ FIELD_CN[String(k)] ?? k }}：<code>{{ v || '未配置' }}</code>
+              </div>
+            </td>
+            <td class="note" style="margin:0">
+              <span v-if="ig.updatedAt">{{ String(ig.updatedAt).slice(0,16).replace('T',' ') }} {{ ig.updatedByName || '' }}</span>
+              <span v-else>—</span>
+            </td>
+            <td><button class="btn txt" @click="openIntegration(ig)">配置</button></td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-if="integrations.length && !integrations[0].cryptoReady" class="alert warn">
+        <span>未配置主密钥 <b>HUICUI_CRYPTO_KEY</b>：无法在后台保存密钥（密钥必须加密落库）。请在部署环境注入后重启，或继续用环境变量配置三方 key。</span>
+      </div>
+      <div class="alert info">
+        <span>大模型（LLM）与语音转写（ASR）<b>暂不在此配置</b>——它们的客户端尚未接入（Phase 3）。现在给它们做密钥输入框，填了也不会被任何代码读取。</span>
+      </div>
+    </template>
+
     <div class="sec-title" style="justify-content:space-between">
       <span style="display:flex;align-items:center;gap:8px">AI 配置（GET/PUT /ai-config · 话术飞轮 LLM/ASR）</span>
       <button v-if="auth.has('ai.config')" class="btn txt" @click="openAiEdit">编辑</button>
     </div>
-    <div v-if="aiConfig" class="desc">
-      <div class="r"><div class="k">LLM</div><div class="v"><code>{{ fmt(aiConfig.llm) }}</code></div></div>
-      <div class="r"><div class="k">ASR</div><div class="v"><code>{{ fmt(aiConfig.asr) }}</code></div></div>
-      <div class="r"><div class="k">Prompts</div><div class="v"><code style="font-size:11px">{{ fmt(aiConfig.prompts) }}</code></div></div>
-      <div class="r"><div class="k">飞轮</div><div class="v"><code>{{ fmt(aiConfig.flywheel) }}</code></div></div>
+    <div class="alert warn" style="margin-top:0">
+      <span>
+        <b>LLM / ASR / 提示词目前尚未接入</b>——代码里还没有 DeepSeek / 百炼的客户端（Phase 3 待做），
+        这几项现在只是**存着**，不会被任何调用读取。真正生效的只有下面的「变体晋升条件」（飞轮自动晋升靠它）。
+      </span>
+    </div>
+    <div v-if="aiConfig">
+      <table v-for="grp in AI_GROUPS" :key="grp.key" style="margin-bottom:10px">
+        <thead>
+          <tr>
+            <th style="width:170px">
+              {{ grp.label }}
+              <span class="tag" :class="grp.live ? 'suc' : 'war'" style="margin-left:6px">{{ grp.live ? '已生效' : '待接入' }}</span>
+            </th>
+            <th style="width:220px">当前值</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(v, k) in ((aiConfig as any)[grp.key] ?? {})" :key="k">
+            <td><b>{{ fieldLabel(String(k)) }}</b><div class="note" style="margin:0;font-size:11px">{{ k }}</div></td>
+            <td>{{ fieldValue(String(k), v) }}</td>
+            <td class="note" style="margin:0">{{ fieldDesc(String(k)) || '—' }}</td>
+          </tr>
+          <tr v-if="!Object.keys((aiConfig as any)[grp.key] ?? {}).length">
+            <td colspan="3" class="note" style="text-align:center">未配置</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
     <div v-else class="note">暂无 AI 配置</div>
 
@@ -311,6 +459,29 @@ onMounted(() => { load(); loadMore() })
         <el-form-item label="ASR provider"><el-input v-model="aiForm.asr.provider" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="aiDlg=false">取消</el-button><el-button type="primary" @click="saveAi">保存</el-button></template>
+    </DsDrawer>
+
+    <DsDrawer v-model="inDlg" :title="`配置 · ${inForm.name}`" :width="520">
+      <div class="alert info" style="margin-top:0;margin-bottom:10px">
+        <span>密钥<b>加密存储</b>，页面只回显后四位。<b>留空 = 保持不变</b>；改完即刻生效，无需重启服务。</span>
+      </div>
+      <el-form label-width="150px">
+        <el-form-item label="启用该通道">
+          <el-switch v-model="inForm.enabled" />
+          <div class="note" style="margin:0;font-size:11px">未启用时：存证只落占位记录、短信不会真发出去。启用前必须填齐密钥与接口地址，否则保存会被拒绝。</div>
+        </el-form-item>
+        <el-form-item v-for="(v, k) in inForm.settings" :key="k" :label="FIELD_CN[String(k)] ?? String(k)">
+          <el-input v-model="inForm.settings[k]" />
+        </el-form-item>
+        <el-form-item v-for="(v, k) in inForm.secrets" :key="'s'+k" :label="FIELD_CN[String(k)] ?? String(k)">
+          <el-input v-model="inForm.secrets[k]" type="password" show-password
+                    :placeholder="inForm.masked?.[k] ? ('当前 ' + inForm.masked[k] + '（留空=不改）') : '未配置'" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="inDlg=false">取消</el-button>
+        <el-button type="primary" :disabled="!inForm.cryptoReady" @click="submitIntegration">保存</el-button>
+      </template>
     </DsDrawer>
 
     <DsDrawer v-model="scDlg" title="新建话术" :width="440">

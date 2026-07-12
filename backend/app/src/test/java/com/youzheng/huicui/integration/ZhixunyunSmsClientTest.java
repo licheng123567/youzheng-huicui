@@ -55,8 +55,8 @@ class ZhixunyunSmsClientTest {
     @Test
     void isEnabled_falseWhenUnconfigured() {
         // 构造器第二参为 dry-run（不影响 isEnabled，只影响是否真触网关）
-        assertFalse(new ZhixunyunSmsClient(true, false, "", "", "http://b", "http://v").isEnabled()); // 空凭据
-        assertFalse(new ZhixunyunSmsClient(false, false, "k", "s", "http://b", "http://v").isEnabled()); // 未启用
-        assertTrue(new ZhixunyunSmsClient(true, false, "k", "s", "http://b", "http://v").isEnabled());
+        assertFalse(ZhixunyunSmsClient.forTest(true, false, "", "", "http://b", "http://v").isEnabled()); // 空凭据
+        assertFalse(ZhixunyunSmsClient.forTest(false, false, "k", "s", "http://b", "http://v").isEnabled()); // 未启用
+        assertTrue(ZhixunyunSmsClient.forTest(true, false, "k", "s", "http://b", "http://v").isEnabled());
     }
 }

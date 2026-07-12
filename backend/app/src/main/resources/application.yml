@@ -43,6 +43,10 @@ logging:
 
 # 横切层
 huicui:
+  # 主密钥：三方通道密钥(易保全/短信)AES-256-GCM 落库时用它加密（V936）。
+  # 未配置 → 后台存不了密钥（写侧 409），但读/回落 yml 的老路径照常工作——不影响环境变量部署的实例。
+  crypto:
+    master-key: "${HUICUI_CRYPTO_KEY:}"
   jwt:
     secret: "${HUICUI_JWT_SECRET:}"    # 空默认；prod 必须注入，否则 ProdGuard 拒绝启动
     ttl-seconds: ${HUICUI_JWT_TTL:86400}

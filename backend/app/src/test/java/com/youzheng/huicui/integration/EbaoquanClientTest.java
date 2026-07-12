@@ -18,7 +18,7 @@ class EbaoquanClientTest {
     /** 文档 §4.1 举例：appKey + param1/2/3 + secret=d5207ae9…af0 → sign=2523044EB55944A10324AAAA3DCCEB75。 */
     @Test
     void sign_matchesDocExample() {
-        EbaoquanClient c = new EbaoquanClient(true, "https://bs.sandbox.ebaoquan.org",
+        EbaoquanClient c = EbaoquanClient.forTest(true, "https://bs.sandbox.ebaoquan.org",
                 "a7ce728fbec40519", "d5207ae9f7bee0692a1e4014f90e1af0");
         Map<String, String> params = new LinkedHashMap<>();
         params.put("appKey", "a7ce728fbec40519");
@@ -40,8 +40,8 @@ class EbaoquanClientTest {
     /** 未配置凭据（空 appKey/secret）→ isEnabled()=false，调用方走占位。 */
     @Test
     void isEnabled_falseWhenUnconfigured() {
-        assertFalse(new EbaoquanClient(true, "u", "", "").isEnabled());
-        assertFalse(new EbaoquanClient(false, "u", "k", "s").isEnabled());
-        assertTrue(new EbaoquanClient(true, "u", "k", "s").isEnabled());
+        assertFalse(EbaoquanClient.forTest(true, "u", "", "").isEnabled());
+        assertFalse(EbaoquanClient.forTest(false, "u", "k", "s").isEnabled());
+        assertTrue(EbaoquanClient.forTest(true, "u", "k", "s").isEnabled());
     }
 }

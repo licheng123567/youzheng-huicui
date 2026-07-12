@@ -47,7 +47,7 @@ class ZhixunyunSmsGatewayErrorTest {
         });
         server.start();
         String base = "http://127.0.0.1:" + server.getAddress().getPort();
-        return new ZhixunyunSmsClient(true, dryRun, "API", "KEY", base, base);
+        return ZhixunyunSmsClient.forTest(true, dryRun, "API", "KEY", base, base);
     }
 
     @AfterEach
@@ -118,20 +118,20 @@ class ZhixunyunSmsGatewayErrorTest {
 
     @Test
     void dryRun_视频短信同样不触网关() {
-        ZhixunyunSmsClient c = new ZhixunyunSmsClient(true, true, "API", "KEY", "http://127.0.0.1:1", "http://127.0.0.1:1");
+        ZhixunyunSmsClient c = ZhixunyunSmsClient.forTest(true, true, "API", "KEY", "http://127.0.0.1:1", "http://127.0.0.1:1");
         String id = c.sendVideoSms("tpl-1", "20260707120000", "13000000000", List.of("张三"));
         assertTrue(id.startsWith("DRYRUN-"));
     }
 
     @Test
     void isEnabled真值表_dryRun不影响enabled() {
-        assertTrue(new ZhixunyunSmsClient(true, false, "A", "K", "u", "v").isEnabled());
-        assertTrue(new ZhixunyunSmsClient(true, true, "A", "K", "u", "v").isEnabled());
-        assertFalse(new ZhixunyunSmsClient(false, false, "A", "K", "u", "v").isEnabled());
-        assertFalse(new ZhixunyunSmsClient(true, false, "", "K", "u", "v").isEnabled());
-        assertFalse(new ZhixunyunSmsClient(true, false, "A", "", "u", "v").isEnabled());
-        assertTrue(new ZhixunyunSmsClient(true, true, "A", "K", "u", "v").isDryRun());
-        assertFalse(new ZhixunyunSmsClient(true, false, "A", "K", "u", "v").isDryRun());
+        assertTrue(ZhixunyunSmsClient.forTest(true, false, "A", "K", "u", "v").isEnabled());
+        assertTrue(ZhixunyunSmsClient.forTest(true, true, "A", "K", "u", "v").isEnabled());
+        assertFalse(ZhixunyunSmsClient.forTest(false, false, "A", "K", "u", "v").isEnabled());
+        assertFalse(ZhixunyunSmsClient.forTest(true, false, "", "K", "u", "v").isEnabled());
+        assertFalse(ZhixunyunSmsClient.forTest(true, false, "A", "", "u", "v").isEnabled());
+        assertTrue(ZhixunyunSmsClient.forTest(true, true, "A", "K", "u", "v").isDryRun());
+        assertFalse(ZhixunyunSmsClient.forTest(true, false, "A", "K", "u", "v").isDryRun());
     }
 
     @Test
