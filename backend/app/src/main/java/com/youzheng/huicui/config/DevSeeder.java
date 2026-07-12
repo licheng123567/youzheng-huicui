@@ -170,6 +170,15 @@ public class DevSeeder implements CommandLineRunner {
                         + "WHERE c.batch_id = b.id AND b.provider_id IS NOT NULL "
                         + "AND c.provider_id IS NULL AND c.pool NOT IN ('PLATFORM_SEA', 'OPEN_POOL')");
 
+        // 承接段补开（V930）：与 V913 同款时序坑——V930 回填在 Flyway 期（种子前）执行，
+        // fresh 库回填 0 行；种子随后直插 batch.provider_id、绕过 dispatch 控制器的开段挂点。
+        // 此处按 V930 回填口径幂等补开 seq=1 进行中段，否则批次运营页「承接历史/N任角标」在 fresh 库恒空。
+        jdbc.update(
+                "INSERT INTO batch_engagement(batch_id, provider_id, seq, pay_out_rate, started_at) "
+                        + "SELECT b.id, b.provider_id, 1, COALESCE(b.pay_out_rate, b.open_rate, 0), now() "
+                        + "FROM batch b WHERE b.provider_id IS NOT NULL "
+                        + "AND NOT EXISTS (SELECT 1 FROM batch_engagement e WHERE e.batch_id = b.id)");
+
         // ── 最后种：这两项依赖前面已经种好的 ticket / risk_record / batch ──
         seedNotifications();
         seedBatchCoordinators(proj);

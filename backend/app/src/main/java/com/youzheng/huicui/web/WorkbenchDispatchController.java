@@ -157,8 +157,10 @@ public class WorkbenchDispatchController {
                 + " (SELECT count(*) FROM \"case\" c JOIN batch b ON b.id = c.batch_id"
                 + "    WHERE c.provider_id = o.id AND c.closed_at IS NULL) AS active_cases,"
                 + " (SELECT count(*) FROM account a WHERE a.org_id = o.id AND a.role_template = 'CO' AND a.status = 'ACTIVE') AS collector_cnt,"
-                + " (SELECT coalesce(sum(rl.amount_cents),0) FROM repay_line rl JOIN \"case\" c ON c.id = rl.case_id"
-                + "    JOIN batch b ON b.id = c.batch_id WHERE c.provider_id = o.id AND rl.reversed = FALSE AND rl.paid_at >= now() - interval '30 days') AS repay30,"
+                // 近30天回款按 V914 到账快照归属（v1.17.0 修粗口径）：结项/再派后旧商催回的钱仍计旧商，
+                // 不随 case.provider_id 漂移。分母 due_total 仍为当前在册盘子（分子快照/分母当前，粗指标仅陈列 BR-M3-24）。
+                + " (SELECT coalesce(sum(rl.amount_cents),0) FROM repay_line rl"
+                + "    WHERE rl.provider_id_at_repay = o.id AND rl.reversed = FALSE AND rl.paid_at >= now() - interval '30 days') AS repay30,"
                 + " (SELECT coalesce(sum(c.due_cents),0) FROM \"case\" c JOIN batch b ON b.id = c.batch_id WHERE c.provider_id = o.id) AS due_total"
                 + " FROM org o WHERE o.type = 'PROVIDER' ORDER BY o.id",
             (rs, i) -> {

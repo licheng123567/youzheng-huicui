@@ -22,5 +22,14 @@ public record BatchPlatformView(
         Boolean commInInherited,
         java.math.BigDecimal payOutRate,
         Boolean reduceDrift,
-        Boolean playbookDrift
+        Boolean playbookDrift,
+        // v1.17.0 批次运营统计（角色中立·进 BatchBase 契约，三视图同含）
+        String projectName,
+        String providerName,
+        Integer caseCount,
+        Long dueTotalCents,
+        Long repaidTotalCents,
+        java.math.BigDecimal repayRate,
+        Integer engagementCount,
+        PoolDistDto poolDist
 ) {}

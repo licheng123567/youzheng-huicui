@@ -742,6 +742,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/batches/{id}/close-engagement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 批次结项(v1.17.0)——终止当前服务商承接：S1/S2/S3 全部收回回平台公海，承诺保留，批次回 PENDING 可重派
+         * @description 「服务商催不动了」的平台动作。收回该批次当前服务商名下全部在催案件(待接单/服务商公海/私海进行中)回平台公海 S0；
+         *     带有效分期承诺的案件照收(承诺/跟进历史随案保留，重派后新服务商可见)——与 TC 到期的承诺暂缓(BR-M8-11)语义不同。
+         *     钱的归属不受影响：V914 到账快照保证旧商催回的回款/应得付佣仍归旧商。审计写 case.engagement-recall(不触发再派护栏①，
+         *     结项后重派对象含派回原商由平台裁量)。批次无进行中承接→409。
+         */
+        post: operations["closeBatchEngagement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/batches/{id}/close-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        /** 结项预览(v1.17.0)——确认框数据源：可收回统计+带有效分期承诺案件警示清单 */
+        get: operations["previewCloseEngagement"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/batches/{id}/engagements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 批次承接历史(v1.17.0)——每段 服务商/起止/付佣快照/期间回款/期间回款率/结项原因
+         * @description 期间回款按 V914 到账快照+时间窗归段(结项后补到账尾款仍归旧商·与结算口径一致)；期间回款率=期间回款÷期初剩余应收(批次总应收−开段前累计已收)。
+         */
+        get: operations["listBatchEngagements"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/cases/{id}/redispatch": {
         parameters: {
             query?: never;
@@ -3026,6 +3092,87 @@ export interface components {
             code?: string;
             message?: string;
         };
+        /** @description 批次案件状态分布(v1.17.0·批次运营迷你分布条)。s0=待派单 s1=待接单 s2=服务商公海 s3=私海进行中 s4=开放抢单池 settled=已结清 closed=撤案/坏账/作废 */
+        PoolDist: {
+            s0?: number;
+            s1?: number;
+            s2?: number;
+            s3?: number;
+            s4?: number;
+            settled?: number;
+            closed?: number;
+        };
+        /**
+         * @description 结项原因：无力催收/合作终止/物业要求/其他
+         * @enum {string}
+         */
+        CloseEngagementReasonEnum: "INCAPABLE" | "COOP_TERMINATED" | "PROPERTY_REQUEST" | "OTHER";
+        CloseEngagementInput: {
+            reason: components["schemas"]["CloseEngagementReasonEnum"];
+            /** @description 结项备注(必填留痕) */
+            note: string;
+        };
+        /** @description 带有效分期承诺(PENDING 期)的在催案件——结项收回警示项(承诺保留·新服务商可见历史) */
+        PromisedCaseWarn: {
+            caseId?: string;
+            ownerName?: string;
+            room?: string;
+            /** @description 未兑付期数 */
+            pendingInstallments?: number;
+            /**
+             * Format: date
+             * @description 最近一期到期日
+             */
+            nextDueDate?: string | null;
+        };
+        CloseEngagementResult: {
+            ok?: boolean;
+            /** @description 本次收回案件数 */
+            recalled?: number;
+            byState?: {
+                s1?: number;
+                s2?: number;
+                s3?: number;
+            };
+            promisedCases?: components["schemas"]["PromisedCaseWarn"][];
+        };
+        ClosePreview: {
+            providerId?: string;
+            providerName?: string | null;
+            recallable?: {
+                s1?: number;
+                s2?: number;
+                s3?: number;
+                total?: number;
+            };
+            promisedCases?: components["schemas"]["PromisedCaseWarn"][];
+        };
+        /** @description 承接段(V930)：批次×服务商承接生命周期。期间回款按 V914 快照+时间窗归段；期间回款率=期间回款÷期初剩余应收 */
+        BatchEngagement: {
+            id?: string;
+            /** @description 批内承接序号 1..n */
+            seq?: number;
+            providerId?: string;
+            providerName?: string;
+            /** @description 开段时点付佣快照 */
+            payOutRate?: components["schemas"]["Rate"];
+            /** Format: date-time */
+            startedAt?: string;
+            /**
+             * Format: date-time
+             * @description 空=进行中
+             */
+            endedAt?: string | null;
+            endReason?: components["schemas"]["CloseEngagementReasonEnum"] | null;
+            endNote?: string | null;
+            endedByName?: string | null;
+            /** @description 期间回款 */
+            periodRepayCents?: components["schemas"]["Money"];
+            /** @description 期初剩余应收 */
+            openingDueCents?: components["schemas"]["Money"];
+            /** @description 期间回款率(期初剩余应收为 0 时省略) */
+            periodRepayRate?: components["schemas"]["Rate"] | null;
+        };
         BatchBase: {
             id?: string;
             projectId?: string;
@@ -3049,6 +3196,21 @@ export interface components {
             reduceDrift?: boolean;
             /** @description 可选·项目级作战手册已更新而该 CUSTOM 批次有差异(供"一键同步"提示 BR-M2-18b)；仅 CUSTOM 批次有意义 */
             playbookDrift?: boolean;
+            /** @description 所属项目名(v1.17.0 批次运营列) */
+            projectName?: string;
+            /** @description 承接服务商名(未派单为空) */
+            providerName?: string | null;
+            /** @description 批内案件数(户数) */
+            caseCount?: number;
+            /** @description 批次总应收(Σcase.due_cents) */
+            dueTotalCents?: components["schemas"]["Money"];
+            /** @description 累计已收(repay_line reversed=false) */
+            repaidTotalCents?: components["schemas"]["Money"];
+            /** @description 回款率·分数(应收为 0 时省略) */
+            repayRate?: components["schemas"]["Rate"] | null;
+            /** @description 承接段数(V930·>1 表示发生过结项重派) */
+            engagementCount?: number;
+            poolDist?: components["schemas"]["PoolDist"];
         };
         /** @description 平台全视角(双线均含)。物业用 BatchForProperty、服务商用 BatchForProvider */
         Batch: components["schemas"]["BatchBase"] & {
@@ -5920,6 +6082,90 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
+    closeBatchEngagement: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 写操作幂等键(防重复提交/重试双扣)。同 key 重复请求返回首次结果。支付/结算/上传/派单等有副作用端点建议必带。 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloseEngagementInput"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloseEngagementResult"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    previewCloseEngagement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClosePreview"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    listBatchEngagements: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items?: components["schemas"]["BatchEngagement"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     redispatchCase: {
         parameters: {
             query?: never;
@@ -7918,7 +8164,7 @@ export interface operations {
     getOperationReport: {
         parameters: {
             query?: {
-                dimension?: "project" | "batch" | "month" | "collector";
+                dimension?: "project" | "batch" | "month" | "collector" | "provider";
                 month?: string;
             };
             header?: never;

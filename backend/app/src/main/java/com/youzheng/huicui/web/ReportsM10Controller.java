@@ -56,7 +56,7 @@ import java.util.UUID;
 public class ReportsM10Controller {
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ISO_INSTANT;
-    private static final Set<String> DIMENSIONS = Set.of("project", "batch", "month", "collector");
+    private static final Set<String> DIMENSIONS = Set.of("project", "batch", "month", "collector", "provider");
     private static final Set<String> FORMATS = Set.of("xlsx", "csv");
 
     private final JdbcTemplate jdbc;
@@ -108,6 +108,13 @@ public class ReportsM10Controller {
         }
         if (collectorDim) {
             where.append(" AND c.holder_id IS NOT NULL");   // 仅统计已被持有(私海)的案件
+        }
+
+        // provider 维（v1.17.0·服务商考核）：案件侧按当前归属 c.provider_id、回款侧按到账快照
+        //   rl.provider_id_at_repay（V914·结项/再派不漂移）分键聚合，FULL OUTER JOIN 合并——
+        //   与其他维「案件+回款同键」结构不同，单独分支。dim_key NULL 行=未派单/无归属。
+        if ("provider".equals(dim)) {
+            return providerDimReport(s, where.toString(), args);
         }
 
         // rows：分组聚合。LEFT JOIN repay_line(reversed=false) 防止无回款案件被过滤。
@@ -179,6 +186,49 @@ public class ReportsM10Controller {
     private void appendRangeScope(CurrentSubject s, StringBuilder where, List<Object> args) {
         com.youzheng.huicui.common.DataScope.appendRange(
                 s, where, args, "c.provider_id", "p.org_id", "p.area", "c.project_id", "c.batch_id");
+    }
+
+    /**
+     * provider 维报表（v1.17.0）：案件侧(在催盘子)按当前 c.provider_id、回款侧按 V914 到账快照
+     * rl.provider_id_at_repay，FULL OUTER JOIN 后取 org 名。同一 where(c/p/b 别名)施加两侧（args 双份）。
+     * dim_key NULL=未派单/无归属；回款率=快照回款/当前应收（分子快照分母当前盘子，注意口径混合——
+     * 服务商被结项后其催回的钱仍计入该商，而在催盘子已清零 → 回款率可能 >100% 或分母 0，rate() 兜 0。
+     */
+    private ReportDataDto providerDimReport(CurrentSubject s, String where, List<Object> args) {
+        String caseSide = "SELECT c.provider_id AS dim_key,"
+                + " COALESCE(SUM(c.due_cents),0) AS due_cents, COUNT(*) AS case_count"
+                + " FROM \"case\" c JOIN batch b ON b.id = c.batch_id JOIN project p ON p.id = c.project_id"
+                + where + " GROUP BY c.provider_id";
+        String repaySide = "SELECT rl.provider_id_at_repay AS dim_key,"
+                + " COALESCE(SUM(rl.amount_cents),0) AS repay_cents"
+                + " FROM repay_line rl JOIN \"case\" c ON c.id = rl.case_id"
+                + " JOIN batch b ON b.id = c.batch_id JOIN project p ON p.id = c.project_id"
+                + where + " AND rl.reversed = false GROUP BY rl.provider_id_at_repay";
+        String sql = "SELECT COALESCE(cs.dim_key, rp.dim_key) AS dim_key,"
+                + " COALESCE(o.name, '未派单') AS dim_name,"
+                + " COALESCE(cs.due_cents, 0) AS due_cents,"
+                + " COALESCE(rp.repay_cents, 0) AS repay_cents,"
+                + " COALESCE(cs.case_count, 0) AS case_count"
+                + " FROM (" + caseSide + ") cs"
+                + " FULL OUTER JOIN (" + repaySide + ") rp ON rp.dim_key = cs.dim_key"
+                + " LEFT JOIN org o ON o.id = COALESCE(cs.dim_key, rp.dim_key)"
+                + " ORDER BY due_cents DESC";
+        List<Object> both = new ArrayList<>(args);
+        both.addAll(args);
+        List<ReportRowDto> rows = jdbc.query(sql, rowMapper(), both.toArray());
+
+        long totalDue = 0L, totalRepay = 0L, totalCases = 0L;
+        for (ReportRowDto row : rows) {
+            totalDue += row.dueCents() == null ? 0 : row.dueCents();
+            totalRepay += row.repayCents() == null ? 0 : row.repayCents();
+            totalCases += row.caseCount() == null ? 0 : row.caseCount();
+        }
+        List<ReportKpiDto> kpis = new ArrayList<>();
+        kpis.add(ReportKpiDto.money("应收总额", totalDue));
+        kpis.add(ReportKpiDto.money("回款总额", totalRepay));
+        kpis.add(ReportKpiDto.rate("回款率", rate(totalRepay, totalDue)));
+        kpis.add(ReportKpiDto.count("案件数", totalCases));
+        return new ReportDataDto(scopeLabel(s), kpis, rows, loadCapabilityUsage(s));
     }
 
     /**

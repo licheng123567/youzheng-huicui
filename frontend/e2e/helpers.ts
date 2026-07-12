@@ -69,7 +69,7 @@ export async function openCaseByAcctNo(page: Page, acctNo: string) {
 export async function openBatchDetail(page: Page, role: RoleKey, code?: string, tab: 'cases' | 'props' = 'cases') {
   if (role === 'CO') throw new Error('CO 无批次详情入口（案件入口为私海/公海扁平清单）')
   if (role === 'SA' || role === 'SE') {
-    await page.getByRole('menuitem', { name: '撮合派单' }).click()
+    await page.getByRole('menuitem', { name: '案件运营' }).click()
     await expect(page).toHaveURL(/\/batches/)
     const row = code
       ? page.locator('tbody tr').filter({ hasText: code }).first()

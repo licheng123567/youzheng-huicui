@@ -80,24 +80,24 @@ test.describe('SA 项目管理还原', () => {
   })
 })
 
-test.describe('SA 案件管理还原', () => {
-  test('批次优先 + 项目筛选下拉', async ({ page }) => {
+test.describe('SA 案件运营（v1.17.0 案件管理并入）', () => {
+  test('老书签 /cases 对平台重定向到案件运营', async ({ page }) => {
     await loginRole(page, 'SA')
-    await page.getByRole('menuitem', { name: '案件管理' }).click()
-    await expect(page).toHaveURL(/\/cases/)
-    // 批次优先入口 + 项目筛选下拉（新增）
-    await expect(page.getByText(/选择批次查看案件明细/)).toBeVisible()
-    await expect(page.locator('select.inp').filter({ hasText: '全部项目' })).toBeVisible()
+    await page.goto('/cases')
+    await expect(page).toHaveURL(/\/batches/)
+    // 批次运营主表就位（v1.17.0 扩列：项目/户数/应收/回款率）
+    await expect(page.locator('thead').getByText('项目', { exact: true })).toBeVisible()
+    await expect(page.locator('thead').getByText('户数')).toBeVisible()
   })
 
   test('批次下钻案件明细:归属催收员/联系方式列表头就位(holderName/contactPhone)', async ({ page }) => {
     await loginRole(page, 'SA')
-    await page.getByRole('menuitem', { name: '案件管理' }).click()
-    // 点第一个批次行下钻
-    const batchRow = page.locator('tbody tr').first()
-    await batchRow.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {})
-    if (await batchRow.count()) {
-      await batchRow.click()
+    await page.getByRole('menuitem', { name: '案件运营' }).click()
+    // 点第一个批次号链接下钻
+    const codeLink = page.locator('tbody tr').first().locator('a.link').first()
+    await codeLink.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {})
+    if (await codeLink.count()) {
+      await codeLink.click()
       await expect(page).toHaveURL(/\/batches\/\d+/)
       // 案件明细表头含 归属催收员 / 联系方式（此前渲染 c.collectorName/c.phone 恒空,已改 holderName/contactPhone）
       await expect(page.locator('thead').getByText('归属催收员')).toBeVisible()

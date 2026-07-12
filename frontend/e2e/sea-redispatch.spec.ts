@@ -8,7 +8,7 @@ test.describe('US-M3-02 平台公海再派(SA)', () => {
   test.beforeEach(async ({ page }) => {
     await loginRole(page, 'SA')
     // 平台公海已并入「撮合派单」页的 Tab（保留一个菜单入口）。
-    await page.getByRole('menuitem', { name: '撮合派单' }).click()
+    await page.getByRole('menuitem', { name: '案件运营' }).click()
     await expect(page).toHaveURL(/\/batches/)
     // 顶部第一个 segctrl 是页级 Tab（批次派单/平台公海）；切到平台公海 → 内嵌 SeaView 自动落平台池。
     await page.locator('.segctrl').first().getByText('平台公海').click()
