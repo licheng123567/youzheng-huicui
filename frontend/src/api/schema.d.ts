@@ -2212,7 +2212,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 经营报表(物业/服务商/平台各口径·回款率/进度/能力用量·按项目/批次下钻 BR-M10-01/03) */
+        /**
+         * 经营报表(物业/服务商/平台各口径·回款率/进度/能力用量·按项目/批次下钻 BR-M10-01/03)
+         * @description v1.25.0 平台穿透统计：dimension 决定聚合口径，propertyId/providerId/projectId 是三把可叠加的筛子。
+         *     典型链路：property 维(各物业公司) → 点某物业(propertyId) → project 维(该物业的项目) → 点某项目(projectId) → batch 维；
+         *     服务商侧：provider 维(各服务商) → 点某服务商(providerId) → batch 维(它承接的批次)。
+         *     **providerId 过滤时回款按 V914 到账快照 provider_id_at_repay 裁剪**，不按案件当前归属——
+         *     否则批次结项换商后，前一家催回的钱会被算到后一家头上。筛子与 range scope 叠加(不放宽)：
+         *     非平台传别人家的 id 只会得到空集。非法 id 视作不筛(报表口永不报错)。
+         */
         get: operations["getOperationReport"];
         put?: never;
         post?: never;
@@ -8781,8 +8789,14 @@ export interface operations {
     getOperationReport: {
         parameters: {
             query?: {
-                dimension?: "project" | "batch" | "month" | "collector" | "provider";
+                dimension?: "project" | "batch" | "month" | "collector" | "provider" | "property";
                 month?: string;
+                /** @description 穿透筛子：只看该物业公司(project.org_id) */
+                propertyId?: string;
+                /** @description 穿透筛子：只看该服务商(案件按当前归属·回款按到账快照) */
+                providerId?: string;
+                /** @description 穿透筛子：只看该项目 */
+                projectId?: string;
             };
             header?: never;
             path?: never;
