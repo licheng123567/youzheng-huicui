@@ -84,6 +84,7 @@ public class MemberM1Controller {
     public Page<MemberDto> listMembers(
             @RequestParam(required = false) String role,
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String orgId,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size) {
         CurrentSubject s = SubjectContext.get();
@@ -106,6 +107,19 @@ public class MemberM1Controller {
         if (!s.isPlatform()) {
             where.append(" AND org_id = ?");
             args.add(orgIdLong(s));
+        }
+        // v1.21.1 orgId 过滤：与 scope 叠加（互斥而非放宽）——非平台传他人 orgId 只会得到空集，不会越权。
+        // 平台的「成员管理」页传自身 orgId → 只见平台员工，和「平台只建平台员工(BR-M1-04a)」的写口径对齐；
+        // 不传仍是全量，因为 CoordinatorPicker 要靠 role=PC 的跨组织全量给批次/项目挑物业协调员。
+        if (orgId != null && !orgId.isBlank()) {
+            long oid;
+            try {
+                oid = Long.parseLong(orgId.trim());
+            } catch (NumberFormatException e) {
+                throw new ApiException(BizError.VALIDATION_422, "orgId 非法: " + orgId);
+            }
+            where.append(" AND org_id = ?");
+            args.add(oid);
         }
 
         String base = "FROM account" + where;

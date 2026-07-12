@@ -50,6 +50,27 @@ test.describe('US-M1-04 成员管理(PL/VL)', () => {
     ).toBeVisible()
   })
 
+  // v1.21.1：平台的成员管理只管平台自己的人——列表与「新增成员」口径必须一致。
+  // 此前列表对平台是全量（混着服务商催收员/物业协调员，按钮却全是灰的），看着像能跨组织管人。
+  test('SA 成员管理只见平台员工(SA/SE)·角色下拉无 CO/PC', async ({ page }) => {
+    await loginRole(page, 'SA')
+    await page.getByRole('menuitem', { name: '成员管理' }).click()
+    await expect(page).toHaveURL(/\/members/)
+
+    // 列表只剩平台员工：不出现催收员/协调员/负责人
+    const rows = page.locator('table').first().locator('tbody tr')
+    await expect(rows.filter({ hasText: '催收员' })).toHaveCount(0)
+    await expect(rows.filter({ hasText: '协调员' })).toHaveCount(0)
+    await expect(rows.filter({ hasText: '平台超管' }).first()).toBeVisible()
+
+    // 新增成员的角色下拉同口径：只能建平台员工（后端 BR-M1-04a 也会 403 拦跨组织角色）
+    await page.getByRole('button', { name: '新增成员' }).click()
+    const dlg = page.getByRole('dialog').filter({ hasText: '新增成员' })
+    await dlg.locator('.el-select').first().click()
+    await expect(page.getByRole('option', { name: 'SE 平台员工' })).toBeVisible()
+    await expect(page.getByRole('option', { name: /催收员|协调员/ })).toHaveCount(0)
+  })
+
   test('CO/VL(无 member.manage)无「成员」菜单·直链不渲染管理操作', async ({ page }) => {
     await loginRole(page, 'CO')
     // CO 无 member.manage → 侧栏无成员菜单
