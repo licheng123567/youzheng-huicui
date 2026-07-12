@@ -59,5 +59,8 @@ public final class SettingsDtos {
             String template,
             String status,
             String failureReason,
-            String sentAt) {}
+            String sentAt,
+            // v1.21.0 短信通道按组织管理：平台拉全量时要能区分哪条属于哪个物业（NULL=验证码等平台级短信）
+            String orgId,
+            String orgName) {}
 }

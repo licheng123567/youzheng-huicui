@@ -187,6 +187,10 @@ public class DevSeeder implements CommandLineRunner {
                         + " ORDER BY org_id, type, tm DESC, id DESC"
                         + " ON CONFLICT (org_id, type) DO NOTHING");
 
+        // 短信通道按组织（v1.21.0·V934）：翠湖物业种一条 ACTIVE 缴费模板 + 一条 DRAFT（待报备），
+        // 演示「平台代报备 → 回填模板ID → 生效」链路；配置行由 V934 回填已覆盖（fresh 库时 org 已存在）。
+        seedOrgSmsTemplates(cuihu);
+
         // ── 最后种：这两项依赖前面已经种好的 ticket / risk_record / batch ──
         seedNotifications();
         seedBatchCoordinators(proj);
@@ -1235,6 +1239,28 @@ public class DevSeeder implements CommandLineRunner {
                         + "   JOIN batch b ON b.id = c.batch_id WHERE c.id = ?),"
                         + " (SELECT holder_id FROM \"case\" WHERE id = ?)) RETURNING id",
                 Long.class, caseId, batchId, amountCents, markedBy, caseId, caseId);
+    }
+
+    /** 短信模板种子（v1.21.0）：ACTIVE 缴费模板（有报备号）+ DRAFT 草稿（待报备）。幂等按 (org,name)。 */
+    private void seedOrgSmsTemplates(Long orgId) {
+        if (orgId == null) return;
+        // 配置行补齐（同 V913/V930/V932 时序坑）：V934 回填在 Flyway 期跑，那时**由 DevSeeder 建的**组织
+        // 还不存在（只有 Flyway 种子里的组织被覆盖到）→ 此处按 V934 口径给**所有物业组织**幂等补行。
+        jdbc.update("INSERT INTO org_sms_config(org_id, sign_name, cooldown_seconds, pay_link_ttl_seconds)"
+                + " SELECT id, '【有证慧催】', 21600, 604800 FROM org WHERE type = 'PROPERTY'"
+                + " ON CONFLICT (org_id) DO NOTHING");
+        // 演示：翠湖物业用自己的签名（真实场景需先向运营商报备该签名）
+        jdbc.update("UPDATE org_sms_config SET sign_name = '【翠湖物业】' WHERE org_id = ? AND sign_name = '【有证慧催】'", orgId);
+        Integer n = jdbc.queryForObject("SELECT count(*) FROM org_sms_template WHERE org_id = ?", Integer.class, orgId);
+        if (n != null && n > 0) return;
+        jdbc.update("INSERT INTO org_sms_template(org_id, kind, name, content, var_order, gateway_template_id, status)"
+                        + " VALUES (?, 'PAY_LINK', '缴费链接·标准版', '您有一笔物业费待缴，请点击缴费：{0}',"
+                        + " '[\"payUrl\"]'::jsonb, 'TPL_PAYLINK_001', 'ACTIVE')",
+                orgId);
+        jdbc.update("INSERT INTO org_sms_template(org_id, kind, name, content, var_order, status)"
+                        + " VALUES (?, 'NOTIFY', '催缴通知·草稿', '{0}业主您好，您在{1}的物业费待缴，请及时处理。',"
+                        + " '[\"ownerName\",\"projectName\"]'::jsonb, 'DRAFT')",
+                orgId);
     }
 
     /** 物业协调员账号（role_template=PC，非负责人）。绑到指定项目的物业组织下。返回 account.id。 */

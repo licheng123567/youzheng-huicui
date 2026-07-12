@@ -2717,6 +2717,138 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sms/orgs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 短信通道组织列表(v1.21.0)——每个物业的签名/模板数/本月发送量/短信余额
+         * @description 平台=全部物业组织；物业=仅本组织(服务商无短信业务→空集)。configured=false 表示该物业在吃平台默认配置。
+         */
+        get: operations["listSmsOrgs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{id}/sms-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 组织短信配置+模板列表(v1.21.0)
+         * @description 物业只能读自己的(读他人→404)。配置缺行时返回平台默认值并置 configured=false。
+         */
+        get: operations["getOrgSmsConfig"];
+        /** 平台配置某物业的短信签名/冷却/有效期/预警/通道开关(v1.21.0·物业不可编辑) */
+        put: operations["updateOrgSmsConfig"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{id}/sms-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 平台为某物业新建短信模板草稿(v1.21.0·待报备)
+         * @description status 恒为 DRAFT（不接受入参）；varOrder 须 ⊆ 变量白名单(payUrl/ownerName/amount/projectName/room/dueDate)，否则 422。报备后经 register 端点回填运营商模板ID 才生效。
+         */
+        post: operations["createOrgSmsTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sms-templates/{tplId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tplId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 平台改短信模板草稿(v1.21.0)
+         * @description 仅 DRAFT/REJECTED 可改；改 ACTIVE 的内容→422(须新建草稿重新报备)。
+         */
+        put: operations["updateOrgSmsTemplate"];
+        post?: never;
+        /** 平台删短信模板(v1.21.0·ACTIVE 不可删) */
+        delete: operations["deleteOrgSmsTemplate"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sms-templates/{tplId}/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tplId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 回填运营商报备结果(v1.21.0)——ACTIVE(带模板ID)/REJECTED(带原因)
+         * @description 报备是**线下动作**（平台向智讯云提交签名+正文，运营商审核后给模板ID）；本端点只做状态流转与回填。
+         *     result=ACTIVE 必须带 gatewayTemplateId（缺→422）且 varOrder 数须等于正文 {n} 占位符个数（防变量错位）；
+         *     同 org×kind 的旧 ACTIVE 模板同事务归档（ARCHIVED），保证「一个物业每种用途只有一个生效模板」。
+         */
+        post: operations["registerOrgSmsTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sms-records/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 短信发送统计(v1.21.0)——全量口径 KPI + 失败原因汇总
+         * @description 与 listSmsRecords 同 scope 同过滤；此前前端从首页 100 条 computed 出 KPI，超 100 条即失真。
+         */
+        get: operations["getSmsRecordStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sms-records": {
         parameters: {
             query?: never;
@@ -4243,7 +4375,7 @@ export interface components {
          */
         EvidenceStatusEnum: "ISSUING" | "ISSUED" | "FAILED";
         /**
-         * @description STT分钟/短信条/存证次/法律件
+         * @description STT分钟(预付)/短信条(预付)/存证次(后付·按次计入对账)。**LEGAL 已停用 v1.20.0**——法律文书生成不计费、不进额度体系；枚举值保留仅为兼容(删除=破坏性变更)，无写入路径、不出现在额度总览
          * @enum {string}
          */
         BillingTypeEnum: "STT" | "SMS" | "EVIDENCE" | "LEGAL";
@@ -4335,7 +4467,7 @@ export interface components {
             issuedAt?: string;
             hash?: string;
         };
-        /** @description 组织额度行(v1.19.0)：一行=一个组织×一个额度类型。balance 可为负(EVIDENCE/LEGAL 后付=欠用记账) */
+        /** @description 组织额度行(v1.19.0)：一行=一个组织×一个额度类型(v1.20.0 起只出 STT/SMS/EVIDENCE——LEGAL 法律文书已停用不计费)。balance 可为负(EVIDENCE 后付=欠用记账) */
         OrgQuota: {
             orgId?: string;
             orgName?: string;
@@ -4891,6 +5023,101 @@ export interface components {
             items?: components["schemas"]["SupervisionAction"][];
             meta?: components["schemas"]["PageMeta"];
         };
+        /**
+         * @description 模板用途。VERIFY_CODE 不入组织模板——验证码是平台级短信(发送时无组织上下文)，恒用平台全局模板
+         * @enum {string}
+         */
+        SmsTemplateKindEnum: "PAY_LINK" | "NOTIFY" | "VIDEO_NOTIFY";
+        /**
+         * @description DRAFT=待报备 / ACTIVE=已生效(有运营商模板ID) / REJECTED=运营商驳回 / ARCHIVED=被新版替换
+         * @enum {string}
+         */
+        SmsTemplateStatusEnum: "DRAFT" | "ACTIVE" | "REJECTED" | "ARCHIVED";
+        /** @description 组织短信模板(v1.21.0)。平台代向运营商报备：DRAFT→register→ACTIVE(回填模板ID)；同 org×kind 只一个 ACTIVE */
+        SmsTemplate: {
+            id?: string;
+            orgId?: string;
+            kind?: components["schemas"]["SmsTemplateKindEnum"];
+            name?: string;
+            /** @description 报备正文，占位 {0} {1}（与 varOrder 下标同构） */
+            content?: string;
+            /** @description 变量顺序(防报备错位)：payUrl/ownerName/amount/projectName/room/dueDate */
+            varOrder?: string[];
+            /** @description 运营商报备号；ACTIVE 时非空 */
+            gatewayTemplateId?: string | null;
+            status?: components["schemas"]["SmsTemplateStatusEnum"];
+            rejectReason?: string | null;
+            /** Format: date-time */
+            updatedAt?: string | null;
+        };
+        SmsTemplateInput: {
+            kind: components["schemas"]["SmsTemplateKindEnum"];
+            name: string;
+            content: string;
+            /** @description 须 ⊆ 变量白名单，否则 422 */
+            varOrder?: string[];
+        };
+        /** @description 回填运营商报备结果。ACTIVE 必带 gatewayTemplateId；REJECTED 建议带 reason */
+        SmsTemplateRegisterInput: {
+            /** @enum {string} */
+            result: "ACTIVE" | "REJECTED";
+            gatewayTemplateId?: string;
+            reason?: string;
+        };
+        /** @description 组织短信配置(v1.21.0)。平台统一配置、物业只读；configured=false 表示该物业在吃平台默认值 */
+        OrgSmsConfig: {
+            orgId?: string;
+            orgName?: string;
+            configured?: boolean;
+            signName?: string;
+            /** @description 同案短信冷却(分钟)。后端存秒，此处按分钟出入——修既有 UI 写分钟/后端读秒的键名 bug */
+            cooldownMinutes?: number;
+            /** @description 缴费链接有效期(天) */
+            payLinkTtlDays?: number;
+            /** @description 短信余额条数预警(空=不预警) */
+            warnThreshold?: number | null;
+            /** @description 组织短信通道开关(平台 kill-switch) */
+            enabled?: boolean;
+            templates?: components["schemas"]["SmsTemplate"][];
+        };
+        OrgSmsConfigInput: {
+            signName?: string;
+            cooldownMinutes?: number;
+            payLinkTtlDays?: number;
+            warnThreshold?: number | null;
+            enabled?: boolean;
+        };
+        /** @description 短信通道组织行(v1.21.0)：一行=一个物业组织 */
+        SmsOrgRow: {
+            orgId?: string;
+            orgName?: string;
+            orgType?: components["schemas"]["OrgTypeEnum"];
+            /** @description 未配置→null(吃平台默认) */
+            signName?: string | null;
+            configured?: boolean;
+            enabled?: boolean;
+            activeTemplates?: number;
+            draftTemplates?: number;
+            sentThisMonth?: number;
+            failedThisMonth?: number;
+            /** @description 短信额度余额(条)——与额度管理同源 org_balance */
+            smsBalance?: number | null;
+        };
+        SmsOrgPage: {
+            items?: components["schemas"]["SmsOrgRow"][];
+            meta?: components["schemas"]["PageMeta"];
+        };
+        /** @description 短信发送统计(v1.21.0·全量口径，取代前端 100 条 computed) */
+        SmsStats: {
+            total?: number;
+            sent?: number;
+            failed?: number;
+            delivered?: number;
+            failReasons?: {
+                reason?: string;
+                count?: number;
+            }[];
+        };
         /** @description 短信发送明细(BR-M4-16/M9-08)；失败不退条数，见 failureReason */
         SmsSendRecord: {
             id?: string;
@@ -4908,6 +5135,10 @@ export interface components {
              * @description 发送时间
              */
             sentAt?: string;
+            /** @description v1.21.0 归属组织(NULL=验证码等平台级短信) */
+            orgId?: string | null;
+            /** @description v1.21.0 */
+            orgName?: string | null;
         };
         SmsSendRecordPage: {
             items?: components["schemas"]["SmsSendRecord"][];
@@ -9184,9 +9415,230 @@ export interface operations {
             422: components["responses"]["ValidationError"];
         };
     };
+    listSmsOrgs: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SmsOrgPage"];
+                };
+            };
+        };
+    };
+    getOrgSmsConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgSmsConfig"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateOrgSmsConfig: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 写操作幂等键(防重复提交/重试双扣)。同 key 重复请求返回首次结果。支付/结算/上传/派单等有副作用端点建议必带。 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrgSmsConfigInput"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgSmsConfig"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    createOrgSmsTemplate: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 写操作幂等键(防重复提交/重试双扣)。同 key 重复请求返回首次结果。支付/结算/上传/派单等有副作用端点建议必带。 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SmsTemplateInput"];
+            };
+        };
+        responses: {
+            /** @description created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SmsTemplate"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    updateOrgSmsTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tplId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SmsTemplateInput"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SmsTemplate"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    deleteOrgSmsTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tplId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    registerOrgSmsTemplate: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 写操作幂等键(防重复提交/重试双扣)。同 key 重复请求返回首次结果。支付/结算/上传/派单等有副作用端点建议必带。 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                tplId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SmsTemplateRegisterInput"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SmsTemplate"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    getSmsRecordStats: {
+        parameters: {
+            query?: {
+                orgId?: string;
+                projectId?: string;
+                status?: components["schemas"]["SmsSendStatusEnum"];
+                from?: string;
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SmsStats"];
+                };
+            };
+        };
+    };
     listSmsRecords: {
         parameters: {
             query?: {
+                /** @description v1.21.0 按组织过滤(平台)；非平台传他人 orgId 与 range scope 叠加互斥→空集 */
+                orgId?: string;
                 /** @description 按项目过滤 */
                 projectId?: string;
                 /** @description 按案件过滤 */

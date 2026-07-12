@@ -55,6 +55,7 @@ public class SmsRecordsController {
     // x-data-scope=range，无 x-permission。projectId/caseId/status/from/to 过滤 + 分页。
     @GetMapping("/sms-records")
     public Page<SmsSendRecordDto> listSmsRecords(
+            @RequestParam(required = false) String orgId,
             @RequestParam(required = false) String projectId,
             @RequestParam(required = false) String caseId,
             @RequestParam(required = false) String status,
@@ -66,21 +67,62 @@ public class SmsRecordsController {
         Pageable pg = Pageable.of(page, size);
 
         List<Object> args = new ArrayList<>();
-        StringBuilder where = buildWhere(s, projectId, caseId, status, from, to, args);
+        StringBuilder where = buildWhere(s, orgId, projectId, caseId, status, from, to, args);
 
-        Long total = jdbc.queryForObject(
-                "SELECT count(*) FROM sms_record" + where, Long.class, args.toArray());
+        // v1.21.0：LEFT JOIN org（验证码行 org_id 为 NULL，不能用 INNER）——平台拉全量要能区分物业。
+        String base = " FROM sms_record r LEFT JOIN org o ON o.id = r.org_id" + where;
+        Long total = jdbc.queryForObject("SELECT count(*)" + base, Long.class, args.toArray());
 
         List<Object> pageArgs = new ArrayList<>(args);
         pageArgs.add(pg.size);
         pageArgs.add(pg.offset);
         // FAILED 行不剔除（失败不退条数 BR-M9-08），failure_reason 随行返回。
         List<SmsSendRecordDto> items = jdbc.query(
-                "SELECT id, case_id, project_id, template, status, failure_reason, sent_at"
-                        + " FROM sms_record" + where + " ORDER BY sent_at DESC LIMIT ? OFFSET ?",
+                "SELECT r.id, r.case_id, r.project_id, r.template, r.status, r.failure_reason, r.sent_at,"
+                        + " r.org_id, o.name AS org_name" + base
+                        + " ORDER BY r.sent_at DESC LIMIT ? OFFSET ?",
                 SMS_MAPPER, pageArgs.toArray());
 
         return Page.of(items, pg, total == null ? 0 : total);
+    }
+
+    // ── [16c] GET /sms-records/stats（v1.21.0）─────────────────────────────────
+    // 全量口径 KPI + 失败原因汇总。此前前端从首页 100 条 computed 出 KPI，超 100 条即失真。
+    @GetMapping("/sms-records/stats")
+    public java.util.Map<String, Object> getSmsRecordStats(
+            @RequestParam(required = false) String orgId,
+            @RequestParam(required = false) String projectId,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
+        CurrentSubject s = SubjectContext.get();
+        List<Object> args = new ArrayList<>();
+        StringBuilder where = buildWhere(s, orgId, projectId, null, status, from, to, args);
+        String base = " FROM sms_record r" + where;
+
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        jdbc.query("SELECT count(*) AS total,"
+                        + " count(*) FILTER (WHERE r.status = 'SENT') AS sent,"
+                        + " count(*) FILTER (WHERE r.status = 'FAILED') AS failed,"
+                        + " count(*) FILTER (WHERE r.status = 'DELIVERED') AS delivered" + base,
+                rs -> {
+                    out.put("total", rs.getInt("total"));
+                    out.put("sent", rs.getInt("sent"));
+                    out.put("failed", rs.getInt("failed"));
+                    out.put("delivered", rs.getInt("delivered"));
+                }, args.toArray());
+
+        List<java.util.Map<String, Object>> reasons = jdbc.query(
+                "SELECT COALESCE(NULLIF(r.failure_reason, ''), '未知原因') AS reason, count(*) AS cnt" + base
+                        + " AND r.status = 'FAILED' GROUP BY 1 ORDER BY cnt DESC LIMIT 20",
+                (rs, i) -> {
+                    java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("reason", rs.getString("reason"));
+                    m.put("count", rs.getInt("cnt"));
+                    return m;
+                }, args.toArray());
+        out.put("failReasons", reasons);
+        return out;
     }
 
     // ── [16b] GET /sms-records/export ─────────────────────────────────────────────
@@ -96,7 +138,7 @@ public class SmsRecordsController {
         CurrentSubject s = SubjectContext.get();
         // 过滤/scope 与 list 同口径校验（非法过滤值同样 422）；range 裁剪不串组织。
         List<Object> args = new ArrayList<>();
-        buildWhere(s, projectId, caseId, status, from, to, args);
+        buildWhere(s, null, projectId, caseId, status, from, to, args);
 
         // 文件打包通道 TBD → url 占位 null（对齐契约 exportSmsRecords 响应 { url: string|null }）。
         java.util.Map<String, Object> resp = new java.util.LinkedHashMap<>();
@@ -110,38 +152,43 @@ public class SmsRecordsController {
      * 构造 list/export 共用的 WHERE（过滤 + range scope）；非法过滤值 → 422（绝不 5xx）。
      * args 原地追加占位参数。range：平台全量；物业/服务商 → 本组织（sms_record.org_id 锚点 V5）。
      */
-    private StringBuilder buildWhere(CurrentSubject s, String projectId, String caseId,
+    private StringBuilder buildWhere(CurrentSubject s, String orgId, String projectId, String caseId,
                                      String status, String from, String to, List<Object> args) {
         StringBuilder where = new StringBuilder(" WHERE 1=1");
+        // v1.21.0 组织过滤（平台按物业下钻）；非平台传他人 orgId 与 range scope 叠加互斥 → 空集（零泄漏）。
+        if (notBlank(orgId)) {
+            where.append(" AND r.org_id = ?");
+            args.add(parseIdOr422(orgId, "orgId"));
+        }
         // 过滤值非法 → 422（不放进 SQL）。id 类入参非数字也 422（避免 Long.parseLong 抛 5xx）。
         if (notBlank(projectId)) {
-            where.append(" AND project_id = ?");
+            where.append(" AND r.project_id = ?");
             args.add(parseIdOr422(projectId, "projectId"));
         }
         if (notBlank(caseId)) {
-            where.append(" AND case_id = ?");
+            where.append(" AND r.case_id = ?");
             args.add(parseIdOr422(caseId, "caseId"));
         }
         if (notBlank(status)) {
             if (!STATUS_WHITELIST.contains(status)) {
                 throw new ApiException(BizError.VALIDATION_422, "status 非法: " + status);
             }
-            where.append(" AND status = ?");
+            where.append(" AND r.status = ?");
             args.add(status);
         }
         // from/to 为 date（含 from，不含 to+1d）。交给 PG ?::date 解析；非法日期 → 422。
         if (notBlank(from)) {
             assertDate(from, "from");
-            where.append(" AND sent_at >= ?::date");
+            where.append(" AND r.sent_at >= ?::date");
             args.add(from);
         }
         if (notBlank(to)) {
             assertDate(to, "to");
-            where.append(" AND sent_at < (?::date + INTERVAL '1 day')");
+            where.append(" AND r.sent_at < (?::date + INTERVAL '1 day')");
             args.add(to);
         }
         // range：平台全量；物业/服务商 → 本组织（sms_record.org_id 为裁剪锚点 V5）。
-        DataScope.Fragment scope = DataScope.ownOrg(s, "org_id");
+        DataScope.Fragment scope = DataScope.ownOrg(s, "r.org_id");
         where.append(scope.sql());
         for (Object p : scope.params()) args.add(p);
         return where;
@@ -154,7 +201,9 @@ public class SmsRecordsController {
             rs.getString("template"),
             rs.getString("status"),
             rs.getString("failure_reason"),
-            ts(rs.getTimestamp("sent_at")));
+            ts(rs.getTimestamp("sent_at")),
+            idOrNull(rs, "org_id"),
+            rs.getString("org_name"));
 
     private static boolean notBlank(String v) {
         return v != null && !v.isBlank();
