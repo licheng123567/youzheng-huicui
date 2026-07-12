@@ -134,6 +134,31 @@ async function rebindOwner(o: any) {
   } catch { /* 取消 */ }
 }
 
+// 停用/启用组织（平台 org.manage · BR-M1-15）：**停新单不断存量**——停用后不能被派新单、
+// 不能新建项目/导入批次；但成员照常登录、在催案件照常作业、结算照常。要收回案件另走「批次结项」。
+async function toggleOrg(o: any) {
+  const disabling = o.status === 'ACTIVE'
+  const { ElMessageBox } = await import('element-plus')
+  try {
+    if (disabling) {
+      const { value: reason } = await ElMessageBox.prompt(
+        '停用后：不再接受新派单、不能新建项目/导入批次；已承接的在催案件与结算不受影响（要收回案件请走批次结项）。请填写停用原因：',
+        '停用组织 ' + o.name,
+        { inputValidator: (v: string) => !!(v && v.trim()) || '停用原因必填' },
+      )
+      const { error } = await api.POST('/orgs/{id}/disable', { params: { path: { id: String(o.id) } }, body: { reason } as any })
+      if (error) { ElMessage.error('停用失败：' + ((error as any)?.message ?? '')); return }
+      ElMessage.success('已停用（已通知该组织负责人）')
+    } else {
+      await ElMessageBox.confirm('恢复启用后该组织可正常承接新单、新建项目。', '启用组织 ' + o.name, { type: 'info' })
+      const { error } = await api.POST('/orgs/{id}/enable', { params: { path: { id: String(o.id) } } } as any)
+      if (error) { ElMessage.error('启用失败：' + ((error as any)?.message ?? '')); return }
+      ElMessage.success('已恢复启用')
+    }
+    load()
+  } catch { /* 取消 */ }
+}
+
 // 建成员（POST /members · MemberInput）
 const cDlg = ref(false)
 const cForm = ref<any>({ username: '', name: '', phone: '', role: '', permissions: [] })
@@ -314,7 +339,7 @@ onMounted(load)
             <th style="width:110px">类型</th>
             <th style="width:110px">状态</th>
             <th>负责人账号</th>
-            <th style="width:120px">操作</th>
+            <th style="width:180px">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -323,7 +348,12 @@ onMounted(load)
             <td><span class="tag" :class="row.type==='PLATFORM' ? 'pri' : (row.type==='PROVIDER' ? 'war' : 'inf')" :title="row.type">{{ orgTypeLabel(row.type) }}</span></td>
             <td><span class="tag" :class="row.status==='ACTIVE' ? 'suc' : 'inf'" :title="row.status">{{ statusLabel(row.status) }}</span></td>
             <td>{{ row.ownerAccountId || '—' }}</td>
-            <td><button class="btn txt" @click="rebindOwner(row)">改绑负责人</button></td>
+            <td>
+              <button class="btn txt" @click="rebindOwner(row)">改绑负责人</button>
+              <button v-if="row.type !== 'PLATFORM'" class="btn txt" :class="{ dgc: row.status === 'ACTIVE' }" @click="toggleOrg(row)">
+                {{ row.status === 'ACTIVE' ? '停用' : '启用' }}
+              </button>
+            </td>
           </tr>
           <tr v-if="!orgs.length">
             <td colspan="5" style="text-align:center;color:var(--sec);padding:32px 0">暂无组织</td>

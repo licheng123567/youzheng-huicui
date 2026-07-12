@@ -184,6 +184,7 @@ public class ProjectsM2Controller {
     @Transactional
     public Project createProject(@RequestBody(required = false) Map<String, Object> body) {
         CurrentSubject s = SubjectContext.get();
+        requireOrgActive(s);                       // v1.22.0 组织停用=停新单：不能再新建项目（存量项目/案件照常）
         String name = reqStr(body, "name"), area = reqStr(body, "area");
         java.math.BigDecimal rate = reqRate(body, "commInRate");   // Rate 分数 0-1
         Long id = jdbc.queryForObject(
@@ -395,5 +396,15 @@ public class ProjectsM2Controller {
 
     private static ApiException notFound() {
         return new ApiException(BizError.NOT_FOUND_404, "project not found");
+    }
+
+    /** v1.22.0 BR-M1-15：组织被平台停用 → 停新单（不能新建项目/导入批次），但存量作业与结算不受影响。 */
+    private void requireOrgActive(CurrentSubject s) {
+        if (s.isPlatform() || s.orgId() == null) return;
+        String st = jdbc.query("SELECT status FROM org WHERE id = ?",
+                rs -> rs.next() ? rs.getString(1) : null, Long.parseLong(s.orgId()));
+        if ("DISABLED".equals(st)) {
+            throw new ApiException(BizError.STATE_409, "贵司已被平台停用，不能新建项目/导入批次（在催案件与结算不受影响）");
+        }
     }
 }

@@ -60,10 +60,16 @@ public class QcM5Controller {
     private static final Set<String> DISPOSE_ACTIONS = Set.of("mark", "to_qc", "notify");
     private static final Set<String> REVIEW_VERDICTS = Set.of("CONFIRMED", "FALSE_POSITIVE", "ESCALATED");
     private static final Set<String> RISK_LEVELS = Set.of("HIGH", "MID", "LOW");
-    // 平台处理决定分档（约谈/警告/限期整改/限制/停用）。仅 DEACTIVATE 真置账号停用；其余仅记录+通知+跟踪。
+    // 平台处理决定分档（约谈/警告/限期整改/限制/停用账号）。**没有一档会当场改别人家的账号**——
+    // 决定只是「下给归属方的要求」，由归属方负责人（VL 服务商负责人 / PL 物业负责人）在自己的成员管理里执行并回执。
+    // v1.22.0 修：此前 DEACTIVATE 会当场 UPDATE account SET status='DISABLED'，平台越过组织直接停别人家的人，
+    //   与 BR-M5-07「谁的员工谁处置」互相打架。现在它只建处置任务；归属方逾期不回执，平台才可 enforce 强停（留痕）。
     private static final Set<String> QC_DECISIONS = Set.of("INTERVIEW", "WARNING", "RECTIFY", "RESTRICT", "DEACTIVATE");
     private static final Map<String, String> DECISION_LABEL = Map.of(
             "INTERVIEW", "约谈", "WARNING", "警告", "RECTIFY", "限期整改", "RESTRICT", "限制", "DEACTIVATE", "停用账号");
+
+    /** 归属方执行停用并回执的时限；逾期后平台方可强制停用（BR-M5-07d）。 */
+    private static final long ENFORCE_GRACE_HOURS = 72;
 
     private static final String DEFAULT_TASK_TYPE = "整改培训";
 
@@ -275,13 +281,14 @@ public class QcM5Controller {
                 jdbc.update("UPDATE dispose_task SET decision = ?, target_account_id = ?, decision_note = ?, updated_at = now()"
                         + " WHERE id = ?", decision, before.collectorId(), decisionNote, existing);
             }
-            // DEACTIVATE：真置违规人账号停用（account.status=DISABLED；login 已校验非 ACTIVE→拒登）。
-            if ("DEACTIVATE".equals(decision)) {
-                jdbc.update("UPDATE account SET status = 'DISABLED', updated_at = now() WHERE id = ?", before.collectorId());
-            }
+            // v1.22.0：DEACTIVATE 不再当场停号——谁的员工谁处置（BR-M5-07）。平台只下决定、建任务、通知；
+            // 由归属方负责人在自己的成员管理执行停用并回执。逾期未回执，平台走 enforce 强制停用（留痕）。
             // 站内信：通知归属方负责人 + 当事人（处理决定 + 沟通内容）。
             String dLabel = decision == null ? "确认风险" : DECISION_LABEL.getOrDefault(decision, decision);
-            String bodyMsg = "质检风险已确认，处理决定：" + dLabel + (decisionNote == null ? "" : ("。说明：" + decisionNote));
+            String bodyMsg = "质检风险已确认，处理决定：" + dLabel + (decisionNote == null ? "" : ("。说明：" + decisionNote))
+                    + ("DEACTIVATE".equals(decision)
+                        ? "。请贵司负责人在成员管理中停用该员工账号并提交整改回执；逾期 " + ENFORCE_GRACE_HOURS + " 小时未回执，平台将强制停用。"
+                        : "");
             notify(orgOwnerAccount(before.actorOrgId()), "QC_HANDLING", "质检处理决定", bodyMsg, "risk", riskId);
             notify(before.collectorId(), "QC_HANDLING", "质检处理决定（本人）", bodyMsg, "risk", riskId);
         } else {  // FALSE_POSITIVE → 撤销：不建任务；已存 PENDING 任务置 DONE 留痕。
@@ -320,9 +327,14 @@ public class QcM5Controller {
         Long total = jdbc.queryForObject("SELECT count(*)" + base, Long.class, args.toArray());
         List<Object> pageArgs = new ArrayList<>(args);
         pageArgs.add(pg.size); pageArgs.add(pg.offset);
+        // enforceable 在 SQL 里算（口径与 enforceDisposeTask 的守卫一致，前端不复刻时限判断）：
+        //   decision=DEACTIVATE 且仍 PENDING 且尚未强停 且距下决定已超过宽限期 → 平台此刻可强制停用。
         List<QcDisposeTaskDto> items = jdbc.query(
                 "SELECT d.id, d.risk_id, o.name AS provider_name, d.task_type, d.status, d.tm,"
-                        + " d.decision, d.decision_note, ta.name AS target_name, d.receipt_note, d.receipted_at"
+                        + " d.decision, d.decision_note, ta.name AS target_name, d.receipt_note, d.receipted_at,"
+                        + " d.enforced_at, d.enforce_reason,"
+                        + " (d.decision = 'DEACTIVATE' AND d.status = 'PENDING' AND d.enforced_at IS NULL"
+                        + "  AND d.tm < now() - make_interval(hours => " + ENFORCE_GRACE_HOURS + ")) AS enforceable"
                         + base + " ORDER BY d.id DESC LIMIT ? OFFSET ?",
                 (rs, i) -> new QcDisposeTaskDto(
                         String.valueOf(rs.getLong("id")),
@@ -335,7 +347,10 @@ public class QcM5Controller {
                         rs.getString("decision_note"),
                         rs.getString("target_name"),
                         rs.getString("receipt_note"),
-                        ts(rs.getTimestamp("receipted_at"))),
+                        ts(rs.getTimestamp("receipted_at")),
+                        rs.getBoolean("enforceable"),
+                        ts(rs.getTimestamp("enforced_at")),
+                        rs.getString("enforce_reason")),
                 pageArgs.toArray());
 
         return Page.of(items, pg, total == null ? 0 : total);
@@ -370,6 +385,72 @@ public class QcM5Controller {
                 rs -> rs.next() ? (Long) rs.getObject("reviewed_by") : null, riskId);
         notify(reviewer, "QC_RECTIFIED", "整改回执已提交",
                 "归属方已提交整改回执" + (receiptNote == null ? "" : ("：" + receiptNote)), "risk", riskId);
+        return Map.of("ok", true);
+    }
+
+    // ── [7] POST /dispose-tasks/{id}/enforce  enforceDisposeTask（平台强制停用兜底 BR-M5-07d）──
+    // 停权口径（用户拍板）：**个人停权由组织自己执行**（VL/PL 在成员管理停用本组织员工），
+    //   平台只下「停用账号」的处理决定并跟踪回执。**只有归属方逾期不回执**，平台才可强制停用——
+    //   否则平台随时能停别人家的人，BR-M5-07「谁的员工谁处置」就名存实亡。
+    // 守卫（全部 409，不是 403——权限是有的，只是此刻不该用）：
+    //   决定不是 DEACTIVATE / 任务已 DONE（组织已处理）/ 已强停过（幂等）/ 未过宽限期。
+    // reason 必填：强停是打到别人家员工头上的动作，必须留下为什么。
+    @PostMapping("/dispose-tasks/{id}/enforce")
+    @RequirePermission("qc.review")
+    @Transactional
+    public Map<String, Object> enforceDisposeTask(@PathVariable("id") String id,
+                                                  @RequestBody(required = false) Map<String, Object> body) {
+        CurrentSubject s = SubjectContext.get();
+        if (!s.isPlatform()) {
+            throw new ApiException(BizError.PERM_403, "仅平台可强制执行处置");
+        }
+        long taskId = parseId(id);
+        String reason = optStr(body, "reason");
+        if (reason == null || reason.isBlank()) {
+            throw new ApiException(BizError.VALIDATION_422, "reason 必填（强制停用须留原因）");
+        }
+
+        Map<String, Object> row;
+        try {
+            row = jdbc.queryForMap(
+                    "SELECT risk_id, provider, status, decision, target_account_id, enforced_at,"
+                            + " (tm < now() - make_interval(hours => " + ENFORCE_GRACE_HOURS + ")) AS overdue"
+                            + " FROM dispose_task WHERE id = ?", taskId);
+        } catch (org.springframework.dao.EmptyResultDataAccessException e) {
+            throw new ApiException(BizError.NOT_FOUND_404, "处置任务不存在: " + id);
+        }
+        if (!"DEACTIVATE".equals(row.get("decision"))) {
+            throw new ApiException(BizError.STATE_409, "该处置决定不是「停用账号」，不可强制停用");
+        }
+        if (row.get("enforced_at") != null) {
+            throw new ApiException(BizError.STATE_409, "该任务已强制停用过");
+        }
+        if (!"PENDING".equals(row.get("status"))) {
+            throw new ApiException(BizError.STATE_409, "归属方已处理并回执，不再强制停用");
+        }
+        if (!Boolean.TRUE.equals(row.get("overdue"))) {
+            throw new ApiException(BizError.STATE_409,
+                    "尚在 " + ENFORCE_GRACE_HOURS + " 小时整改期内，请先等归属方执行并回执");
+        }
+        Object targetObj = row.get("target_account_id");
+        if (targetObj == null) {
+            throw new ApiException(BizError.STATE_409, "该任务无当事人账号，无法停用");
+        }
+        long targetId = ((Number) targetObj).longValue();
+
+        jdbc.update("UPDATE account SET status = 'DISABLED', updated_at = now() WHERE id = ?", targetId);
+        jdbc.update("UPDATE dispose_task SET status = 'DONE', enforced_at = now(), enforced_by = ?,"
+                + " enforce_reason = ?, updated_at = now() WHERE id = ?",
+                parseAccountId(s), reason, taskId);
+
+        long riskId = ((Number) row.get("risk_id")).longValue();
+        long providerOrg = ((Number) row.get("provider")).longValue();
+        String msg = "贵司未在 " + ENFORCE_GRACE_HOURS + " 小时整改期内回执，平台已强制停用该员工账号。原因：" + reason;
+        notify(orgOwnerAccount(providerOrg), "QC_HANDLING", "平台已强制停用员工账号", msg, "risk", riskId);
+        notify(targetId, "QC_HANDLING", "您的账号已被停用", msg, "risk", riskId);
+
+        riskQc.audit(s, "qc.enforce", riskId, "taskId=" + taskId + "; target=" + targetId + "; reason=" + reason,
+                null, Map.of("targetAccountId", String.valueOf(targetId), "accountStatus", "DISABLED"));
         return Map.of("ok", true);
     }
 

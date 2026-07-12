@@ -89,6 +89,7 @@ public class MasterWriteController {
     @Transactional
     public ImportResult importBatch(@RequestBody(required = false) BatchImportInput in) {
         CurrentSubject s = SubjectContext.get();
+        requireOrgActive(s);                       // v1.22.0 组织停用=停新单：不能再导入批次（存量案件照常作业）
         if (in == null) throw validation("请求体不能为空");
         if (in.projectId() == null || in.projectId().isBlank()) throw validation("projectId 必填");
         BigDecimal rate = in.commInRate();
@@ -762,6 +763,16 @@ public class MasterWriteController {
             return json.writeValueAsString(o);
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    /** v1.22.0 BR-M1-15：组织被平台停用 → 停新单（不能新建项目/导入批次），但存量作业与结算不受影响。 */
+    private void requireOrgActive(CurrentSubject s) {
+        if (s.isPlatform() || s.orgId() == null) return;
+        String st = jdbc.query("SELECT status FROM org WHERE id = ?",
+                rs -> rs.next() ? rs.getString(1) : null, Long.parseLong(s.orgId()));
+        if ("DISABLED".equals(st)) {
+            throw new ApiException(BizError.STATE_409, "贵司已被平台停用，不能新建项目/导入批次（在催案件与结算不受影响）");
         }
     }
 }
