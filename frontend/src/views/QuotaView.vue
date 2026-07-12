@@ -3,7 +3,7 @@
 //   平台(SA/SE)：**先看组织列表**（一行一个组织，四类额度横向展开）→ 点组织进 /quota/:orgId 看其
 //     用量/充值明细。SA 可充值；SE 只读（无 billing.recharge，按钮禁用带 tooltip）。
 //   物业/服务商(PL/VL)：本页直接渲染自己的组织详情（range scope 天然裁剪，无组织列表这层）。
-// 余额权威源=org_balance(V932)；EVIDENCE/LEGAL 后付费，余额可为负（欠用记账）。
+// 余额权威源=org_balance(V932)；EVIDENCE 后付费，余额可为负（欠用记账）；法律文书不计费(v1.20.0)。
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -15,8 +15,9 @@ const auth = useAuth()
 const router = useRouter()
 const isPlatform = computed(() => auth.me?.role === 'SA' || auth.me?.role === 'SE')
 
-const TYPE_ORDER = ['STT', 'SMS', 'EVIDENCE', 'LEGAL']
-const TYPE_LABEL: Record<string, string> = { STT: '录音转写', SMS: '短信', EVIDENCE: '存证', LEGAL: '法律文书' }
+const TYPE_ORDER = ['STT', 'SMS', 'EVIDENCE']
+// v1.20.0：法律文书不计费（无「法律文书余额」概念）→ 额度体系只剩三类
+const TYPE_LABEL: Record<string, string> = { STT: '录音转写', SMS: '短信', EVIDENCE: '存证' }
 const fmtQty = (v?: number | null, unit?: string | null) =>
   v == null ? '—' : (Number(v.toFixed(3)).toLocaleString('zh-CN') + (unit ?? ''))
 
@@ -52,7 +53,7 @@ onMounted(() => { if (isPlatform.value) loadOrgs() })
     <div class="card-h">
       <div class="t"><span class="bar"></span>额度管理</div>
       <div class="ops">
-        <span class="note" style="margin:0">能力额度：录音转写/短信（预付）· 存证/法律文书（后付·按次计入对账）</span>
+        <span class="note" style="margin:0">能力额度：录音转写/短信（预付·需充值）· 存证（后付·按次计入对账）</span>
       </div>
     </div>
 

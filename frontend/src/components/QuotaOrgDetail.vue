@@ -14,12 +14,13 @@ const auth = useAuth()
 const canRecharge = computed(() => auth.has('billing.recharge'))
 const isPlatform = computed(() => auth.me?.role === 'SA' || auth.me?.role === 'SE')
 
-const TYPE_LABEL: Record<string, string> = { STT: '录音转写', SMS: '短信', EVIDENCE: '存证', LEGAL: '法律文书' }
-const TYPE_ORDER = ['STT', 'SMS', 'EVIDENCE', 'LEGAL']
+// v1.20.0：法律文书不计费（无「法律文书余额」概念）→ 额度体系只剩三类
+const TYPE_LABEL: Record<string, string> = { STT: '录音转写', SMS: '短信', EVIDENCE: '存证' }
+const TYPE_ORDER = ['STT', 'SMS', 'EVIDENCE']
 // 数量不是钱（只量不金额 BR-M10-01）：3 位小数去尾零 + 单位后缀。
 const fmtQty = (v?: number | null, unit?: string | null) =>
   v == null ? '—' : (Number(v.toFixed(3)).toLocaleString('zh-CN') + (unit ?? ''))
-const unitOf = (t: string) => (t === 'STT' ? '分钟' : t === 'SMS' ? '条' : t === 'LEGAL' ? '件' : '次')
+const unitOf = (t: string) => (t === 'STT' ? '分钟' : t === 'SMS' ? '条' : '次')
 
 // ── 余额卡（GET /billing/orgs：平台按 orgId 挑本组织行；非平台 range scope 已只返自己）──
 const quotas = ref<any[]>([])
@@ -116,7 +117,7 @@ defineExpose({ reload, orgName })
     </div>
 
     <!-- 余额卡：四类额度 -->
-    <div class="kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
+    <div class="kpis" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">
       <div v-for="q in quotas" :key="q.type" class="kpi">
         <div class="n" :style="{ color: (q.balance ?? 0) < 0 ? 'var(--danger)' : undefined }">
           {{ fmtQty(q.balance, q.unit) }}
@@ -211,7 +212,7 @@ defineExpose({ reload, orgName })
     <!-- 充值抽屉（组织已确定，只选类型/数量）-->
     <DsDrawer v-model="rDlg" :title="`充值 · ${orgName}`" :width="480">
       <div class="alert info" style="margin-top:0;margin-bottom:10px">
-        <span>充值矩阵：<b>短信</b>仅物业可充；<b>录音转写</b>物业/服务商均可充；<b>存证/法律文书</b>为后付费，按次计入对账，不预充。</span>
+        <span>充值矩阵：<b>短信</b>仅物业可充；<b>录音转写</b>物业/服务商均可充；<b>存证</b>为后付费，按次计入对账，不预充。</span>
       </div>
       <el-form label-width="100px">
         <el-form-item label="额度类型" required>

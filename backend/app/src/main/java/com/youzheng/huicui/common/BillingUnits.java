@@ -16,7 +16,11 @@ public final class BillingUnits {
     public static final String EVIDENCE = "EVIDENCE";
     public static final String LEGAL = "LEGAL";
 
-    public static final String[] ALL = {STT, SMS, EVIDENCE, LEGAL};
+    /**
+     * 参与额度体系的计费类型（v1.20.0：**LEGAL 已停用**——法律文书生成不计费、不进额度体系；
+     * 类型常量与 DB/契约枚举保留仅为兼容，无写入路径）。
+     */
+    public static final String[] ALL = {STT, SMS, EVIDENCE};
 
     private static final String ORG_PROPERTY = "PROPERTY";
     private static final String ORG_PROVIDER = "PROVIDER";
@@ -31,9 +35,14 @@ public final class BillingUnits {
         return "次";
     }
 
-    /** 预付项（余额不足必须拒绝）。EVIDENCE/LEGAL 后付费，允许透支。 */
+    /** 预付项（余额不足必须拒绝）。EVIDENCE 后付费允许透支；LEGAL 已停用不计费。 */
     public static boolean isPrepaid(String type) {
         return STT.equals(type) || SMS.equals(type);
+    }
+
+    /** 是否仍参与计费（v1.20.0：LEGAL 停用——法律文书生成免费，不记用量不扣额度）。 */
+    public static boolean isBillable(String type) {
+        return STT.equals(type) || SMS.equals(type) || EVIDENCE.equals(type);
     }
 
     /** 该 org 类型能否充值该额度类型（充值矩阵）。平台自身一律 false。 */

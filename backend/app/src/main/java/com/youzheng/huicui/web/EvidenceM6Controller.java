@@ -428,10 +428,8 @@ public class EvidenceM6Controller {
                         + " VALUES (?, ?, ?, 'GENERATING', ?, ?) RETURNING id",
                 Long.class, caseId, type, templateId, note, actorId);
 
-        // v1.19.0 按件计费（LEGAL 后付费·归物业）：qty=1「件」；只在**生成**计费，
-        // 送达（POST /legal-docs/{id}/deliver）是同一件文书的后续动作，不重复计费。
-        balance.charge(loadCaseOrg(caseId).orgId(), com.youzheng.huicui.common.BillingUnits.LEGAL,
-                java.math.BigDecimal.ONE, caseId, "legal#" + legalDocId, "法律文书生成", actorId);
+        // v1.20.0：法律文书**不计费**（用户决策：系统无「法律文书余额」概念）——生成律师函/起诉状
+        // 不记用量、不扣额度。此前 v1.19.0 曾按件后付费计费，已移除。法律文书业务功能本身不受影响。
 
         // BR-M4-03/12：建议法务为有效跟进，仅持有催收员(holder)本人发起时重置 T_collector；
         // PL/PC 等其他角色发起不重置（与 promise/手记同口径）。
