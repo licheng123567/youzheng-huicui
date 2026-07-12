@@ -179,6 +179,14 @@ public class DevSeeder implements CommandLineRunner {
                         + "FROM batch b WHERE b.provider_id IS NOT NULL "
                         + "AND NOT EXISTS (SELECT 1 FROM batch_engagement e WHERE e.batch_id = b.id)");
 
+        // 余额补种（v1.19.0·同 V913/V930 时序坑）：V932 的 org_balance 回填在 Flyway 期（种子前）执行，
+        // fresh 库那时 recharge_log 还没有种子行 → 回填 0 行；此处按同口径（每 org×type 取流水最新 balance）幂等补齐。
+        jdbc.update(
+                "INSERT INTO org_balance(org_id, type, balance, updated_at)"
+                        + " SELECT DISTINCT ON (org_id, type) org_id, type, balance, tm FROM recharge_log"
+                        + " ORDER BY org_id, type, tm DESC, id DESC"
+                        + " ON CONFLICT (org_id, type) DO NOTHING");
+
         // ── 最后种：这两项依赖前面已经种好的 ticket / risk_record / batch ──
         seedNotifications();
         seedBatchCoordinators(proj);
@@ -336,10 +344,11 @@ public class DevSeeder implements CommandLineRunner {
         }
     }
 
-    private void insertUsage(Long orgId, String type, String qty, String unit, Long caseId, String ago) {
+    /** v1.19.0：unit 一律由 BillingUnits.of(type) 推导（此前传 'min'/'count' 与代码的 '分钟' 漂移，V932 已归一存量）。 */
+    private void insertUsage(Long orgId, String type, String qty, String unitIgnored, Long caseId, String ago) {
         jdbc.update("INSERT INTO billing_usage(org_id, type, qty, unit, case_id, occurred_at) "
                         + "VALUES (?, ?, ?::numeric, ?, ?, now() + (?)::interval)",
-                orgId, type, qty, unit, caseId, ago);
+                orgId, type, qty, com.youzheng.huicui.common.BillingUnits.of(type), caseId, ago);
     }
 
     private Long caseIdByAcctGlobal(String acctNo) {

@@ -232,20 +232,21 @@ public class ReportsM10Controller {
     }
 
     /**
-     * 能力用量聚合：FROM recharge_log GROUP BY type，只量不金额。
-     * 用量(qty) = 累计扣减量 = SUM(-delta) WHERE delta < 0（delta<0=扣减/消耗）。
-     * range scope：物业/服务商按 org_id 归属（recharge_log.org_id）；平台全量。
-     * caseId 恒 null（报表口径不下钻到案）；occurredAt 取该类型最近一次流水 tm。
+     * 能力用量聚合（v1.19.0 口径修正）：**FROM billing_usage GROUP BY type**，只量不金额。
+     * 此前从 recharge_log 拿 SUM(-delta) 当用量——那是**扣减流水**不是用量真表（充值/冲正混入、
+     * 且与新「额度管理」页的 billing_usage 口径打架，两个数字会越差越远）。billing_usage 才是用量 SSOT。
+     * range scope：物业/服务商按 org_id；平台全量。caseId 恒 null（报表不下钻到案）；
+     * occurredAt 取该类型最近一次用量时间。
      */
     private List<BillingUsageDto> loadCapabilityUsage(CurrentSubject s) {
-        StringBuilder where = new StringBuilder(" WHERE delta < 0");
+        StringBuilder where = new StringBuilder(" WHERE 1=1");
         List<Object> args = new ArrayList<>();
         if (!s.isPlatform()) {
             where.append(" AND org_id = ?");
             args.add(orgIdLong(s));
         }
-        String sql = "SELECT type, COALESCE(SUM(-delta), 0) AS qty, MAX(tm) AS last_tm"
-                + " FROM recharge_log" + where
+        String sql = "SELECT type, COALESCE(SUM(qty), 0) AS qty, MAX(occurred_at) AS last_tm"
+                + " FROM billing_usage" + where
                 + " GROUP BY type ORDER BY type";
         return jdbc.query(sql, (rs, i) -> {
             String type = rs.getString("type");
@@ -255,22 +256,12 @@ public class ReportsM10Controller {
                     type,                       // id：以聚合键 type 作稳定标识（无明细行 id）
                     type,
                     qty,
-                    unitOf(type),
+                    com.youzheng.huicui.common.BillingUnits.of(type),
                     null,                       // caseId 恒 null：不下钻到案
                     null, null, null, null,     // 报表聚合口径不下钻案件穿透列（业主/房号/项目/批次）
-                    last == null ? null : ISO.format(last.toInstant()));
+                    last == null ? null : ISO.format(last.toInstant()),
+                    null, null);                // orgId/orgName：报表按 scope 已裁剪，聚合行不带组织维度
         }, args.toArray());
-    }
-
-    /** BillingTypeEnum → 用量单位（BillingUsage.unit）。 */
-    private static String unitOf(String type) {
-        if (type == null) return "次";
-        return switch (type) {
-            case "STT" -> "分钟";
-            case "SMS" -> "条";
-            case "LEGAL" -> "件";
-            default -> "次";                    // EVIDENCE 及未知
-        };
     }
 
     private org.springframework.jdbc.core.RowMapper<ReportRowDto> rowMapper() {

@@ -39,8 +39,10 @@ import java.util.List;
 public class BillingController {
 
     private final JdbcTemplate jdbc;
+    private final com.youzheng.huicui.common.BalanceService balance;
 
-    public BillingController(JdbcTemplate jdbc) {
+    public BillingController(JdbcTemplate jdbc, com.youzheng.huicui.common.BalanceService balance) {
+        this.balance = balance;
         this.jdbc = jdbc;
     }
 
@@ -92,15 +94,19 @@ public class BillingController {
             }
         }
 
+        // v1.19.0 归属口径修正：STT 归**承接服务商**（COALESCE(case.provider_id, project.org_id)，
+        // 案件级归属权威），不再取 project.org_id（物业）——此前只因调用方恒是服务商才碰巧对上，
+        // 平台/物业触发时会把服务商的 STT 用量错记到物业头上。与 DevSeeder 种子口径一致。
         List<RecRow> targets = jdbc.query(
-                "SELECT r.id, r.case_id, p.org_id, COALESCE(r.duration_sec, 0) AS duration_sec"
+                "SELECT r.id, r.case_id, COALESCE(c.provider_id, p.org_id) AS bill_org,"
+                        + " COALESCE(r.duration_sec, 0) AS duration_sec"
                         + " FROM call_recording r"
                         + " JOIN \"case\" c ON c.id = r.case_id"
                         + " JOIN project p ON p.id = c.project_id"
                         + where
                         + " ORDER BY r.recorded_at NULLS LAST, r.id",
                 (rs, i) -> new RecRow(
-                        rs.getLong("id"), rs.getLong("case_id"), rs.getLong("org_id"), rs.getInt("duration_sec")),
+                        rs.getLong("id"), rs.getLong("case_id"), rs.getLong("bill_org"), rs.getInt("duration_sec")),
                 args.toArray());
 
         if (targets.isEmpty()) {
@@ -108,28 +114,21 @@ public class BillingController {
             throw new ApiException(BizError.BIZ_QUOTA_EXHAUSTED, "无可解析录音或余额已耗尽");
         }
 
-        long billingOrg = s.isPlatform() ? targets.get(0).orgId() : myOrg;
-        // 串行化本 org STT 余额读-扣-写：advisory 事务锁防并发丢失更新(审计 H-1)。@Transactional 提交时释放。
-        jdbc.queryForList("SELECT pg_advisory_xact_lock(?, ?)", (int) billingOrg, "STT".hashCode());
-        // STT 余额（最新 balance 快照）。
-        BigDecimal balance = sttBalance(billingOrg);
+        // v1.19.0：余额权威源=org_balance，扣减走 BalanceService.tryCharge（内部 upsert 行锁串行化 org×type，
+        // 取代 advisory lock）。逐条按该录音的 bill_org 计费（同批可能跨服务商）；为避死锁，先按 org id 升序
+        // 预取行锁，再走循环（锁顺序固定）。余额不足→该条 skip 并置 QUOTA_BLOCKED，不整单失败。
+        targets.stream().map(RecRow::orgId).distinct().sorted().forEach(org -> balance.lock(org, "STT"));
 
+        long actorId = Long.parseLong(s.accountId());
         int queued = 0, skipped = 0;
         for (RecRow r : targets) {
             // 时长→分钟（向上取整，至少 1 分钟）。
             long minutes = Math.max(1, (long) Math.ceil(r.durationSec() / 60.0));
             BigDecimal cost = BigDecimal.valueOf(minutes);
-            if (balance.compareTo(cost) >= 0) {
+            boolean charged = balance.tryCharge(r.orgId(), "STT", cost, r.caseId(),
+                    "rec#" + r.id(), "批量补解析扣减", actorId);
+            if (charged) {
                 jdbc.update("UPDATE call_recording SET status = 'PARSING', updated_at = now() WHERE id = ?", r.id());
-                jdbc.update(
-                        "INSERT INTO billing_usage(org_id, type, qty, unit, case_id) VALUES (?, 'STT', ?, '分钟', ?)",
-                        billingOrg, cost, r.caseId());
-                balance = balance.subtract(cost);
-                jdbc.update(
-                        "INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by)"
-                                + " VALUES (?, 'STT', ?, ?, ?, '批量补解析扣减', ?)",
-                        billingOrg, cost.negate(), balance.setScale(3, RoundingMode.HALF_UP),
-                        "rec#" + r.id(), Long.valueOf(s.accountId()));
                 queued++;
             } else {
                 jdbc.update(
@@ -145,13 +144,7 @@ public class BillingController {
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(new BatchParseResult(queued, skipped));
     }
 
-    /** STT 余额：recharge_log 最新一条 balance；无记录视为 0。 */
-    private BigDecimal sttBalance(long orgId) {
-        List<BigDecimal> rows = jdbc.query(
-                "SELECT balance FROM recharge_log WHERE org_id = ? AND type = 'STT' ORDER BY id DESC LIMIT 1",
-                (rs, i) -> rs.getBigDecimal("balance"), orgId);
-        return rows.isEmpty() ? BigDecimal.ZERO : rows.get(0);
-    }
+
 
     private static List<Long> parseIds(List<String> raw) {
         List<Long> out = new ArrayList<>();

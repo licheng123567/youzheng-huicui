@@ -10,8 +10,8 @@ export const KEY2PATH: Record<string, string | null> = {
   qc: '/risks', evidence: '/evidence',
   // 结算三线已拆独立页（收佣对账/付佣对账/内催佣金）
   reconIn: '/settlement', reconOut: '/settlement-out', coCommission: '/co-commission',
-  // 计费三项已拆（用量/充值/短信）
-  billing: '/billing', recharge: '/recharge', sms: '/sms',
+  // v1.19.0：计费明细+充值中心合并为「额度管理」（组织维度余额+用量+充值）；短信通道独立
+  quota: '/quota', sms: '/sms',
   members: '/members', orgMgmt: '/org-mgmt', settings: '/settings', playbookLib: '/script-lib',
   reports: '/reports', audit: '/audit-log', inbox: '/notifications',
   legal: '/legal', myStats: '/my-stats', myLinks: '/my-links',
@@ -26,7 +26,7 @@ export const PATH2LABEL: Record<string, string> = {
   '/dashboard': '工作台', '/batches': '案件运营', '/sea': '案件公海', '/projects': '项目管理',
   '/cases': '案件管理', '/call-records': '通话记录', '/risks': '质检/风控', '/evidence': '存证管理',
   '/settlement': '收佣对账', '/settlement-out': '付佣对账', '/co-commission': '催收员佣金',
-  '/billing': '计费明细', '/recharge': '充值中心', '/sms': '短信通道',
+  '/quota': '额度管理', '/sms': '短信通道',
   '/members': '成员管理', '/org-mgmt': '组织管理', '/settings': '参数配置', '/script-lib': '平台话术库',
   '/reports': '经营报表', '/audit-log': '操作日志', '/notifications': '消息中心',
   '/legal': '送达管理', '/my-stats': '我的业绩', '/my-links': '缴费链接',
@@ -38,11 +38,11 @@ export const NAV_BY_ROLE: Record<string, NavItem[]> = {
   // 收佣/付佣两菜单曾同指 SettlementView 仅差 side——对平台是同一屏，合并；PL/PC/VL 各自单线菜单不受影响。
   // v1.17.0 三合一：平台侧去掉独立「案件管理」菜单（cases）——案件运营(/batches)一站式承载
   // 批次运营+派单/结项+平台公海 Tab，案件明细走批次下钻；老书签 /cases、/sea 由 ROLE_REDIRECTS 转 /batches。
-  SA: [{ group: '业务' }, 'workbench', 'dispatch', 'projects', { group: '能力' }, 'playbookLib', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'billing', 'recharge', 'sms', { group: '系统' }, 'orgMgmt', 'members', 'settings', 'reports', 'audit', { group: '工具' }, 'appDownload'],
-  SE: [{ group: '业务' }, 'workbench', 'dispatch', 'projects', { group: '能力' }, 'playbookLib', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'billing', { group: '系统' }, 'members', 'audit', { group: '报表' }, 'reports', { group: '工具' }, 'appDownload'],
-  PL: [{ group: '业务' }, 'workbench', 'projects', 'cases', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'billing', 'recharge', 'sms', { group: '管理' }, 'reports', 'members', 'audit', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
+  SA: [{ group: '业务' }, 'workbench', 'dispatch', 'projects', { group: '能力' }, 'playbookLib', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'quota', 'sms', { group: '系统' }, 'orgMgmt', 'members', 'settings', 'reports', 'audit', { group: '工具' }, 'appDownload'],
+  SE: [{ group: '业务' }, 'workbench', 'dispatch', 'projects', { group: '能力' }, 'playbookLib', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'quota', { group: '系统' }, 'members', 'audit', { group: '报表' }, 'reports', { group: '工具' }, 'appDownload'],
+  PL: [{ group: '业务' }, 'workbench', 'projects', 'cases', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'quota', 'sms', { group: '管理' }, 'reports', 'members', 'audit', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
   PC: [{ group: '业务' }, 'workbench', 'cases', 'callLog', 'myLinks', { group: '项目' }, 'projects', { group: '能力' }, 'qc', 'legal', 'evidence', { group: '财务' }, 'reconIn', { group: '我的' }, 'myStats', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
-  VL: [{ group: '业务' }, 'workbench', 'providerSea', 'projects', 'qc', 'cases', { group: '财务' }, 'reconOut', 'coCommission', 'recharge', 'billing', { group: '管理' }, 'reports', 'members', 'audit', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
+  VL: [{ group: '业务' }, 'workbench', 'providerSea', 'projects', 'qc', 'cases', { group: '财务' }, 'reconOut', 'coCommission', 'quota', { group: '管理' }, 'reports', 'members', 'audit', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
   CO: [{ group: '业务' }, 'workbench', 'myCases', 'providerSea', 'callLog', 'myLinks', { group: '能力' }, 'qc', { group: '我的' }, 'myStats', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
 }
 
@@ -90,8 +90,12 @@ const DRILLDOWN_PATHS: Record<string, string[]> = {
 // 守卫在越权判定前先查此表——命中即 redirect（非拦截回 dashboard）；e2e-nav-lint 同源消费。
 const ROLE_REDIRECTS: Record<string, Record<string, string>> = {
   // v1.17.0 三合一：平台老书签 /cases、/sea 并入 /batches 案件运营（案件明细走批次下钻，公海是页内 Tab）。
-  SA: { '/settlement-out': '/settlement', '/cases': '/batches', '/sea': '/batches' },
-  SE: { '/settlement-out': '/settlement', '/cases': '/batches', '/sea': '/batches' },
+  // v1.19.0：/billing、/recharge 并入 /quota 额度管理（有该菜单的四角色各自重定向）。
+  //   **PC/CO 绝不加**：isAllowedPath 命中 redirect 即放行，加了他们就能进本无权限的页面。
+  SA: { '/settlement-out': '/settlement', '/cases': '/batches', '/sea': '/batches', '/billing': '/quota', '/recharge': '/quota' },
+  SE: { '/settlement-out': '/settlement', '/cases': '/batches', '/sea': '/batches', '/billing': '/quota', '/recharge': '/quota' },
+  PL: { '/billing': '/quota', '/recharge': '/quota' },
+  VL: { '/billing': '/quota', '/recharge': '/quota' },
 }
 
 /** 该角色访问 path 是否应重定向；返回目标路由或 null。router 守卫与 nav-lint 共用（SSOT）。 */

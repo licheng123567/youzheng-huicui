@@ -63,7 +63,11 @@ public class RecordingsM4Controller {
     private final RecordingService rec;
     private final ObjectMapper json;
 
-    public RecordingsM4Controller(JdbcTemplate jdbc, RecordingService rec, ObjectMapper json) {
+    private final com.youzheng.huicui.common.BalanceService balance;
+
+    public RecordingsM4Controller(JdbcTemplate jdbc, RecordingService rec, ObjectMapper json,
+                                  com.youzheng.huicui.common.BalanceService balance) {
+        this.balance = balance;
         this.jdbc = jdbc;
         this.rec = rec;
         this.json = json;
@@ -233,7 +237,17 @@ public class RecordingsM4Controller {
         if (!RecordingService.ST_QUOTA_BLOCKED.equals(cur) && !RecordingService.ST_READY.equals(cur)) {
             throw new ApiException(BizError.STATE_409, "仅 QUOTA_BLOCKED/READY 录音可手动补解析");
         }
-        // TODO(M5)：BR-M5-02 余额扣减；余额不足则 throw BIZ_QUOTA_EXHAUSTED(409)。地基期直接置 PARSING。
+        // v1.19.0 BR-M5-02 余额扣减（STT 预付）：归属=承接服务商（BalanceService.billingOrgOf）；
+        // 时长→分钟向上取整≥1（与批量补解析同口径）；余额不足 → BIZ_QUOTA_EXHAUSTED(409)，
+        // @Transactional 回滚 → 录音保持原状态（QUOTA_BLOCKED），正是"充值后再补"的产品语义。
+        long billOrg = balance.billingOrgOf(snap.caseId(), com.youzheng.huicui.common.BillingUnits.STT);
+        Integer durationSec = jdbc.queryForObject(
+                "SELECT COALESCE(duration_sec, 0) FROM call_recording WHERE id = ?", Integer.class, recId);
+        long minutes = Math.max(1L, (long) Math.ceil((durationSec == null ? 0 : durationSec) / 60.0));
+        balance.charge(billOrg, com.youzheng.huicui.common.BillingUnits.STT,
+                java.math.BigDecimal.valueOf(minutes), snap.caseId(),
+                "rec#" + recId, "单条补解析扣减", parseAccountId(s));
+
         int n = rec.setStatus(recId, cur, RecordingService.ST_PARSING);
         if (n == 0) {
             throw new ApiException(BizError.STATE_409, "录音状态已变更，补解析失败");
