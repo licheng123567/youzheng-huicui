@@ -60,6 +60,7 @@ export const callRecStatusLabel = (c?: string | null) => enumLabel('CallRecStatu
 export const promiseStateLabel = (c?: string | null) => enumLabel('PromiseState', c)
 export const ticketStatusLabel = (c?: string | null) => enumLabel('TicketStatus', c)
 export const legalStageLabel = (c?: string | null) => enumLabel('LegalStage', c)
+export const closeKindLabel = (c?: string | null) => enumLabel('CloseKind', c)   // 结案原因的类型（撤案/坏账）
 export const legalDocStatusLabel = (c?: string | null) => enumLabel('LegalDocStatus', c)
 export const legalDocTypeLabel = (c?: string | null) => enumLabel('LegalDocType', c)
 export const evidenceStatusLabel = (c?: string | null) => enumLabel('EvidenceStatus', c)
