@@ -44,6 +44,9 @@ public class IntegrationConfigService {
     private final String ymlSmsBaseUrl;
     private final String ymlSmsVideoBaseUrl;
 
+    // 类里有两个构造器（另一个是测试用的 fixed(...)），Spring 必须被明确告知用哪个——
+    // 否则 NoSuchMethodException: <init>() 启动即挂。CI 逮到的（本地后端是在加第二个构造器之前起的）。
+    @org.springframework.beans.factory.annotation.Autowired
     public IntegrationConfigService(
             JdbcTemplate jdbc, ObjectMapper json, CryptoService crypto,
             @Value("${huicui.ebaoquan.enabled:false}") boolean ymlEbqEnabled,
