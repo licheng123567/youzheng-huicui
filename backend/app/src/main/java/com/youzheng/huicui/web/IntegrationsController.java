@@ -64,12 +64,19 @@ public class IntegrationsController {
         for (String p : List.of(IntegrationConfigService.EBAOQUAN, IntegrationConfigService.SMS)) {
             Map<String, String> settings = new LinkedHashMap<>();
             for (String k : settingKeysOf(p)) settings.put(k, cfg.setting(p, k));
+            // 时间戳一律走 Timestamps.iso（→ 2026-07-12T07:11:04Z）。自己 to_char 出的 '+00' 不是
+            // 合法 RFC3339 date-time（要 +00:00 或 Z），schemathesis 会判响应违约——CI 逮到过。
             Map<String, Object> row = jdbc.query(
-                    "SELECT to_char(i.updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SSOF') AS ua, a.name AS by_name"
+                    "SELECT i.updated_at, a.name AS by_name"
                             + " FROM integration_config i LEFT JOIN account a ON a.id = i.updated_by"
                             + " WHERE i.provider = ?",
-                    rs -> rs.next() ? Map.of("ua", String.valueOf(rs.getString("ua")),
-                            "by", String.valueOf(rs.getString("by_name"))) : null, p);
+                    rs -> {
+                        if (!rs.next()) return null;
+                        Map<String, Object> m = new LinkedHashMap<>();
+                        m.put("ua", com.youzheng.huicui.common.Timestamps.iso(rs.getTimestamp("updated_at")));
+                        m.put("by", rs.getString("by_name"));
+                        return m;
+                    }, p);
             out.add(new IntegrationDto(
                     p, NAME.get(p),
                     cfg.enabled(p), cfg.configured(p), cfg.source(p),
