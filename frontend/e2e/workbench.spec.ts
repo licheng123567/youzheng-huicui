@@ -19,11 +19,12 @@ test.describe('US-M4 催收作业台(CO)', () => {
 })
 
 test.describe('US-M9 结算(平台)', () => {
-  test('SA 进结算→对账汇总与支付申请单区就位', async ({ page }) => {
+  test('SA 进结算→双线总账与支付申请单 Tab 就位', async ({ page }) => {
+    // v1.16.0：平台菜单合并为「结算对账」，进 PlatformReconView 批次双线总账。
     await loginAs(page, 'admin')
-    await page.getByRole('menuitem', { name: '收佣对账' }).click()
+    await page.getByRole('menuitem', { name: '结算对账' }).click()
     await expect(page).toHaveURL(/\/settlement/)
-    await expect(page.getByText('对账汇总')).toBeVisible()
+    await expect(page.getByText('平台双线总账')).toBeVisible()
     await expect(page.getByText(/支付申请单/).first()).toBeVisible()
   })
 })

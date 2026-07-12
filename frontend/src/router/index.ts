@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuth } from '../stores/auth'
-import { isAllowedPath } from '../constants/nav'
+import { isAllowedPath, redirectPath } from '../constants/nav'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -24,8 +24,9 @@ const router = createRouter({
         { path: 'cases/:id', name: 'case-detail', component: () => import('../views/CaseDetailView.vue') },
         { path: 'cases/:id/call/:callId', name: 'call-record', component: () => import('../views/CallRecordView.vue') },
         { path: 'batches/:id', name: 'batch-detail', component: () => import('../views/BatchDetailView.vue') },
-        { path: 'settlement', name: 'settlement', component: () => import('../views/SettlementView.vue') },
-        // 付佣对账与收佣对账是同一个组件：SettlementView 按角色/路由定线别(IN/OUT)并各自门控组单/撤回。
+        // 结算入口按角色分叉(v1.16.0)：平台(SA/SE)=PlatformReconView 批次双线总账；物业(PL/PC)=SettlementView IN 单线。
+        { path: 'settlement', name: 'settlement', component: () => import('../views/SettlementEntry.vue') },
+        // 付佣对账(OUT)：VL 专用，SettlementView 按路由锁 OUT 线。平台老书签在守卫里 redirect 到 /settlement。
         // 曾经指向 SettlementOutView 存根——「回款明细/支付申请单」按钮绑的是空函数,VL 点了毫无反应。
         { path: 'settlement-out', name: 'settlement-out', component: () => import('../views/SettlementView.vue') },
         { path: 'co-commission', name: 'co-commission', component: () => import('../views/CoCommissionView.vue') },
@@ -87,6 +88,9 @@ router.beforeEach(async (to) => {
   // ensureMe 里 token 失效会 logout；此时按未登录处理
   if (!auth.isAuthed) return { name: 'login', query: { redirect: to.fullPath } }
   const role = auth.me?.role
+  // 角色级老书签重定向（nav.ts ROLE_REDIRECTS 单一真源）：如 SA/SE 的 /settlement-out → /settlement（v1.16.0 菜单合并）。
+  const rd = role ? redirectPath(role, to.path) : null
+  if (rd) return { path: rd }
   if (role && !isAllowedPath(role, to.path, UNIVERSAL_PATHS)) return { path: '/dashboard' }
   return true
 })

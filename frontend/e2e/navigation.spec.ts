@@ -8,7 +8,7 @@ const SCREENS: { label: string; url: RegExp }[] = [
   { label: '项目管理', url: /\/projects/ },
   { label: '撮合派单', url: /\/batches/ },
   { label: '案件管理', url: /\/cases/ },
-  { label: '收佣对账', url: /\/settlement/ },
+  { label: '结算对账', url: /\/settlement/ },   // v1.16.0 平台双线总账（收佣/付佣两菜单合并）
   { label: '质检/风控', url: /\/risks/ },
   { label: '经营报表', url: /\/reports/ },
   { label: '存证管理', url: /\/evidence/ },

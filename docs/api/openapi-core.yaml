@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 有证慧催 · API 契约（全模块·已冻结）
-  version: 1.15.0  # v1.15.0(additive·质检处置修正): RiskRecord +violatorOrgName/violatorRole/ownScope(谁的员工谁处置判定·平台看反馈对象);平台去 qc.escalate(顶层不上报只复核处置);dispose/escalate 补通知反馈组织负责人/当事人(BR-M5-07a/b/c) | v1.14.0(additive·确定性飞轮闭环): +POST /script-lib/recompute(飞轮结算重算+达标 AI 变体自动晋升环7) | Promise +scriptId(承诺话术归因·环3) | getScriptFlywheel +scriptId(单条话术漏斗·口径修正为单调子集) | PromiseInput.sourceSuggestionId 语义落地(采纳话术卡→承诺归因) | v1.13.0(additive·SA 飞轮+作战手册): +GET /script-lib/flywheel(话术飞轮漏斗+Wilson趋势) | +GET /projects/{id}/playbook/diff(作战手册版本对比行级diff) | v1.12.0(additive·平台超管页还原): Script +wilson(话术库排序权威透出) | listCases +holderName/contactPhone(案件管理归属催收员/联系方式列) | getOperationReport dimension +collector(经营报表催收员维,已于 v1.10.0 引入合并至此) | v1.11.0(additive·计费明细穿透列): BillingUsage +ownerName/room/projectName/batchNo(caseId join,计费明细页明细行业主/房号/项目/批次列;修服务商计费明细空表——STT 用量归服务商 org 见 seed) | v1.10.0(additive·佣金名册明细): CoCommissionBatchRow +caseCount/baseCents(案件数·回款金额,支撑佣金明细待结算/已结算分档) | v1.9.0(语义收敛·统一支付逻辑): 付佣线(OUT)生成/发送/撤回改为仅平台(服务商对支付申请单只读,批次结算标记照常可见;OUT 归属由明细 provider_id_at_repay 快照推导且须一致);佣金线(服务商→催收员 co-pay-docs)不变 | v1.8.0(additive·VL 团队即时看板 US-M10-03): CollectorCapacity +todayActions/todayRepayCents(工作台看板与指派弹窗共用同端点) | v1.7.0(additive·公海可见性收敛 BR-M3-29): listSea/listSeaEvents 补 x-permission=sea.view(全契约最后两个无权限点业务读端点;PL/PC 无此点→403·公海概念消失);平台方对 pool=provider 改返回空集(不看服务商公海明细,明细归 VL/CO;平台靠 T1/T2 预警与聚合) | v1.6.0(additive·App 多角色): listCases +holderId(私海过滤;催收员端「我持有的」——不传时 range scope 对 CO 返回本服务商全部案件,并非本人持有) | v1.5.0(additive·契约外端点回写): +录音回听 audio(V921)/佣金三端点 comm-status·comm-in-rate·commission-rates(V922)/附件四端点 attachments·upload-sessions(V923)/存证证书 certificate;rebindOrgOwner 200 补 ownerSetupToken;escalate 补 note;sms-code 补 502(未启用拒发·废 000000 后门) | v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
+  version: 1.16.0  # v1.16.0(additive·平台双线总账 V929): +GET /recon/rollup-dual(平台批次维一行双线 应收/已收/未收+应付/已付/未付+毛利;platform-only) | RepayLine +双线可空字段(commInCents/settledIn/paymentRequestIdIn/prNoIn 平台+物业;commOutCents/settledOut/paymentRequestIdOut/prNoOut 平台+服务商;providerIdAtRepay/providerName 仅平台;legacy settled/paymentRequestId 废弃为按视角映射——PROVIDER=OUT 线值,其余=IN 线值);底层 repay_line 占用拆双线(同一笔回款可同时进 IN 收佣单与 OUT 付佣单,各线独立结清) | v1.15.0(additive·质检处置修正): RiskRecord +violatorOrgName/violatorRole/ownScope(谁的员工谁处置判定·平台看反馈对象);平台去 qc.escalate(顶层不上报只复核处置);dispose/escalate 补通知反馈组织负责人/当事人(BR-M5-07a/b/c) | v1.14.0(additive·确定性飞轮闭环): +POST /script-lib/recompute(飞轮结算重算+达标 AI 变体自动晋升环7) | Promise +scriptId(承诺话术归因·环3) | getScriptFlywheel +scriptId(单条话术漏斗·口径修正为单调子集) | PromiseInput.sourceSuggestionId 语义落地(采纳话术卡→承诺归因) | v1.13.0(additive·SA 飞轮+作战手册): +GET /script-lib/flywheel(话术飞轮漏斗+Wilson趋势) | +GET /projects/{id}/playbook/diff(作战手册版本对比行级diff) | v1.12.0(additive·平台超管页还原): Script +wilson(话术库排序权威透出) | listCases +holderName/contactPhone(案件管理归属催收员/联系方式列) | getOperationReport dimension +collector(经营报表催收员维,已于 v1.10.0 引入合并至此) | v1.11.0(additive·计费明细穿透列): BillingUsage +ownerName/room/projectName/batchNo(caseId join,计费明细页明细行业主/房号/项目/批次列;修服务商计费明细空表——STT 用量归服务商 org 见 seed) | v1.10.0(additive·佣金名册明细): CoCommissionBatchRow +caseCount/baseCents(案件数·回款金额,支撑佣金明细待结算/已结算分档) | v1.9.0(语义收敛·统一支付逻辑): 付佣线(OUT)生成/发送/撤回改为仅平台(服务商对支付申请单只读,批次结算标记照常可见;OUT 归属由明细 provider_id_at_repay 快照推导且须一致);佣金线(服务商→催收员 co-pay-docs)不变 | v1.8.0(additive·VL 团队即时看板 US-M10-03): CollectorCapacity +todayActions/todayRepayCents(工作台看板与指派弹窗共用同端点) | v1.7.0(additive·公海可见性收敛 BR-M3-29): listSea/listSeaEvents 补 x-permission=sea.view(全契约最后两个无权限点业务读端点;PL/PC 无此点→403·公海概念消失);平台方对 pool=provider 改返回空集(不看服务商公海明细,明细归 VL/CO;平台靠 T1/T2 预警与聚合) | v1.6.0(additive·App 多角色): listCases +holderId(私海过滤;催收员端「我持有的」——不传时 range scope 对 CO 返回本服务商全部案件,并非本人持有) | v1.5.0(additive·契约外端点回写): +录音回听 audio(V921)/佣金三端点 comm-status·comm-in-rate·commission-rates(V922)/附件四端点 attachments·upload-sessions(V923)/存证证书 certificate;rebindOrgOwner 200 补 ownerSetupToken;escalate 补 note;sms-code 补 502(未启用拒发·废 000000 后门) | v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
   contact: { name: 契约 Owner（架构师）, email: api-owner@youzheng.example }
   description: |
     从高保真原型 + PRD(BR/US) + 报告14口径抽取的全模块契约（单一事实源 SSOT）。**v1.0 已冻结（2026-06-24）**：经 codex×2 + 人工×2 共四轮独立审计、openapi-generator Spring 桩 mvn compile、Flyway 真库迁移三重验证，0 阻断/0 高。破坏性变更须升 major + 双 approve。
@@ -1163,6 +1163,21 @@ paths:
       responses:
         '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/ReconRollupPage' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }   # 跨线访问
+
+  /recon/rollup-dual:
+    get:
+      operationId: getReconRollupDual
+      tags: [settlement]
+      summary: 平台批次双线总账(v1.16.0)。一行批次同时给 收佣(应收/已收/未收)+付佣(应付/已付/未付)+毛利
+      description: '平台专属视角(SA 全量/SE 按 data_range 裁剪)；物业/服务商→403。付佣生效率=COALESCE(payOutRate,openRate) 与组单口径一致；两率皆空时 payOutRate/dueOutCents/unsettledOutCents/grossCents 省略、settledOutCents=0。'
+      x-permission: none
+      x-data-scope: platform
+      parameters:
+        - { name: period, in: query, schema: { type: string, example: '2026-06' } }
+        - { $ref: '#/components/parameters/Page' }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/ReconRollupDualPage' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }   # 非平台
 
   /cases/{id}/attachments:
     parameters: [ { $ref: '#/components/parameters/Id' } ]
@@ -2767,12 +2782,44 @@ components:
         amountCents: { $ref: '#/components/schemas/Money' }
         channel: { $ref: '#/components/schemas/ChannelEnum' }
         paidAt: { type: string, format: date }
-        settled: { type: boolean }
-        paymentRequestId: { type: [string, 'null'], description: '纳入哪张支付申请单(未结为空)' }
+        settled: { type: boolean, description: '已废弃(v1.16.0 按视角映射)：PROVIDER=settledOut,其余=settledIn。新代码用 settledIn/settledOut' }
+        paymentRequestId: { type: [string, 'null'], description: '已废弃(v1.16.0 按视角映射)：PROVIDER=paymentRequestIdOut,其余=paymentRequestIdIn' }
+        # v1.16.0 双线字段（V929 占用拆线·全部可空·按视角字段级省略）：
+        #   IN 收佣线（平台+物业可见）；OUT 付佣线（平台+服务商可见）；providerIdAtRepay/providerName 仅平台。
+        commInCents: { $ref: '#/components/schemas/Money', description: '本笔收佣=round(amount×commInRate)(平台+物业)' }
+        settledIn: { type: boolean, description: '收佣线已结(IN 单 PAID)(平台+物业)' }
+        paymentRequestIdIn: { type: [string, 'null'], description: '纳入哪张收佣(IN)单(平台+物业)' }
+        prNoIn: { type: [string, 'null'], description: '收佣(IN)单号(平台+物业)' }
+        commOutCents: { $ref: '#/components/schemas/Money', description: '本笔付佣=round(amount×COALESCE(payOutRate,openRate))(平台+服务商;无生效率省略)' }
+        settledOut: { type: boolean, description: '付佣线已结(OUT 单 PAID)(平台+服务商)' }
+        paymentRequestIdOut: { type: [string, 'null'], description: '纳入哪张付佣(OUT)单(平台+服务商)' }
+        prNoOut: { type: [string, 'null'], description: '付佣(OUT)单号(平台+服务商)' }
+        providerIdAtRepay: { type: [string, 'null'], description: '到账归属服务商快照(仅平台;OUT 组单一单一家分组用)' }
+        providerName: { type: [string, 'null'], description: '到账归属服务商名(仅平台)' }
     ReconRollup:
       type: object
       description: 对账列表按批次汇总(展示用，出单见 /payment-requests)
       properties: { batch: { type: string }, batchId: { type: string }, proj: { type: string }, period: { type: string }, baseCents: { $ref: '#/components/schemas/Money' }, cnt: { type: integer }, repayRate: { $ref: '#/components/schemas/Rate', description: '回款率·百分比(纠 string→number)' }, commRate: { $ref: '#/components/schemas/Rate' }, dueCents: { $ref: '#/components/schemas/Money' }, settledCents: { $ref: '#/components/schemas/Money' }, unsettledCents: { $ref: '#/components/schemas/Money' } }
+    ReconRollupDual:
+      type: object
+      description: '平台批次双线总账行(v1.16.0)。一行批次同时给收佣/付佣两线；付佣生效率两率皆空时 payOutRate/dueOutCents/unsettledOutCents/grossCents 省略、settledOutCents=0'
+      properties:
+        batch: { type: string }
+        batchId: { type: string }
+        proj: { type: string }
+        period: { type: [string, 'null'] }
+        baseCents: { $ref: '#/components/schemas/Money', description: '回款基数=Σ未冲正明细' }
+        cnt: { type: integer, description: '未冲正明细笔数' }
+        repayRate: { $ref: '#/components/schemas/Rate', description: '回款率·分数(无应收口径省略)' }
+        commInRate: { $ref: '#/components/schemas/Rate', description: '收佣比例·分数' }
+        dueInCents: { $ref: '#/components/schemas/Money', description: '应收佣' }
+        settledInCents: { $ref: '#/components/schemas/Money', description: '已收佣(settledIn 明细×率)' }
+        unsettledInCents: { $ref: '#/components/schemas/Money', description: '未收佣' }
+        payOutRate: { $ref: '#/components/schemas/Rate', description: '付佣生效率=COALESCE(payOutRate,openRate)·分数' }
+        dueOutCents: { $ref: '#/components/schemas/Money', description: '应付佣' }
+        settledOutCents: { $ref: '#/components/schemas/Money', description: '已付佣(settledOut 明细×率)' }
+        unsettledOutCents: { $ref: '#/components/schemas/Money', description: '未付佣' }
+        grossCents: { $ref: '#/components/schemas/Money', description: '毛利=应收佣-应付佣(应结口径)' }
     FeeLineItem:
       type: object
       description: '计费明细(仅收佣线含存证/法律**按次计入对账**的计费构成；分钟/短信为预付费充值扣减不进本单 BR-M9-10/07/08)'
@@ -2965,6 +3012,7 @@ components:
             capacityHint: { type: [integer, 'null'], description: '持仓余量提示(距持有上限余量 BR-M3-23)' }
     SeaCasePage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/SeaCase' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }
     ReconRollupPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/ReconRollup' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }
+    ReconRollupDualPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/ReconRollupDual' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }
     RiskPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/RiskRecord' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }
     RepayLinePage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/RepayLine' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }
     CoCommissionPersonPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/CoCommissionPerson' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }

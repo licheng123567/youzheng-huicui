@@ -1274,6 +1274,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/recon/rollup-dual": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 平台批次双线总账(v1.16.0)。一行批次同时给 收佣(应收/已收/未收)+付佣(应付/已付/未付)+毛利
+         * @description 平台专属视角(SA 全量/SE 按 data_range 裁剪)；物业/服务商→403。付佣生效率=COALESCE(payOutRate,openRate) 与组单口径一致；两率皆空时 payOutRate/dueOutCents/unsettledOutCents/grossCents 省略、settledOutCents=0。
+         */
+        get: operations["getReconRollupDual"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/cases/{id}/attachments": {
         parameters: {
             query?: never;
@@ -3578,9 +3598,30 @@ export interface components {
             channel?: components["schemas"]["ChannelEnum"];
             /** Format: date */
             paidAt?: string;
+            /** @description 已废弃(v1.16.0 按视角映射)：PROVIDER=settledOut,其余=settledIn。新代码用 settledIn/settledOut */
             settled?: boolean;
-            /** @description 纳入哪张支付申请单(未结为空) */
+            /** @description 已废弃(v1.16.0 按视角映射)：PROVIDER=paymentRequestIdOut,其余=paymentRequestIdIn */
             paymentRequestId?: string | null;
+            /** @description 本笔收佣=round(amount×commInRate)(平台+物业) */
+            commInCents?: components["schemas"]["Money"];
+            /** @description 收佣线已结(IN 单 PAID)(平台+物业) */
+            settledIn?: boolean;
+            /** @description 纳入哪张收佣(IN)单(平台+物业) */
+            paymentRequestIdIn?: string | null;
+            /** @description 收佣(IN)单号(平台+物业) */
+            prNoIn?: string | null;
+            /** @description 本笔付佣=round(amount×COALESCE(payOutRate,openRate))(平台+服务商;无生效率省略) */
+            commOutCents?: components["schemas"]["Money"];
+            /** @description 付佣线已结(OUT 单 PAID)(平台+服务商) */
+            settledOut?: boolean;
+            /** @description 纳入哪张付佣(OUT)单(平台+服务商) */
+            paymentRequestIdOut?: string | null;
+            /** @description 付佣(OUT)单号(平台+服务商) */
+            prNoOut?: string | null;
+            /** @description 到账归属服务商快照(仅平台;OUT 组单一单一家分组用) */
+            providerIdAtRepay?: string | null;
+            /** @description 到账归属服务商名(仅平台) */
+            providerName?: string | null;
         };
         /** @description 对账列表按批次汇总(展示用，出单见 /payment-requests) */
         ReconRollup: {
@@ -3596,6 +3637,37 @@ export interface components {
             dueCents?: components["schemas"]["Money"];
             settledCents?: components["schemas"]["Money"];
             unsettledCents?: components["schemas"]["Money"];
+        };
+        /** @description 平台批次双线总账行(v1.16.0)。一行批次同时给收佣/付佣两线；付佣生效率两率皆空时 payOutRate/dueOutCents/unsettledOutCents/grossCents 省略、settledOutCents=0 */
+        ReconRollupDual: {
+            batch?: string;
+            batchId?: string;
+            proj?: string;
+            period?: string | null;
+            /** @description 回款基数=Σ未冲正明细 */
+            baseCents?: components["schemas"]["Money"];
+            /** @description 未冲正明细笔数 */
+            cnt?: number;
+            /** @description 回款率·分数(无应收口径省略) */
+            repayRate?: components["schemas"]["Rate"];
+            /** @description 收佣比例·分数 */
+            commInRate?: components["schemas"]["Rate"];
+            /** @description 应收佣 */
+            dueInCents?: components["schemas"]["Money"];
+            /** @description 已收佣(settledIn 明细×率) */
+            settledInCents?: components["schemas"]["Money"];
+            /** @description 未收佣 */
+            unsettledInCents?: components["schemas"]["Money"];
+            /** @description 付佣生效率=COALESCE(payOutRate,openRate)·分数 */
+            payOutRate?: components["schemas"]["Rate"];
+            /** @description 应付佣 */
+            dueOutCents?: components["schemas"]["Money"];
+            /** @description 已付佣(settledOut 明细×率) */
+            settledOutCents?: components["schemas"]["Money"];
+            /** @description 未付佣 */
+            unsettledOutCents?: components["schemas"]["Money"];
+            /** @description 毛利=应收佣-应付佣(应结口径) */
+            grossCents?: components["schemas"]["Money"];
         };
         /** @description 计费明细(仅收佣线含存证/法律**按次计入对账**的计费构成；分钟/短信为预付费充值扣减不进本单 BR-M9-10/07/08) */
         FeeLineItem: {
@@ -3929,6 +4001,10 @@ export interface components {
         };
         ReconRollupPage: {
             items?: components["schemas"]["ReconRollup"][];
+            meta?: components["schemas"]["PageMeta"];
+        };
+        ReconRollupDualPage: {
+            items?: components["schemas"]["ReconRollupDual"][];
             meta?: components["schemas"]["PageMeta"];
         };
         RiskPage: {
@@ -6668,6 +6744,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReconRollupPage"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getReconRollupDual: {
+        parameters: {
+            query?: {
+                period?: string;
+                page?: components["parameters"]["Page"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReconRollupDualPage"];
                 };
             };
             403: components["responses"]["Forbidden"];

@@ -32,18 +32,22 @@ export const PATH2LABEL: Record<string, string> = {
 }
 
 export const NAV_BY_ROLE: Record<string, NavItem[]> = {
-  SA: [{ group: '业务' }, 'workbench', 'dispatch', 'projects', 'cases', { group: '能力' }, 'playbookLib', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'reconOut', 'billing', 'recharge', 'sms', { group: '系统' }, 'orgMgmt', 'members', 'settings', 'reports', 'audit', { group: '工具' }, 'appDownload'],
-  SE: [{ group: '业务' }, 'workbench', 'dispatch', 'projects', 'cases', { group: '能力' }, 'playbookLib', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'reconOut', 'billing', { group: '系统' }, 'members', 'audit', { group: '报表' }, 'reports', { group: '工具' }, 'appDownload'],
+  // 平台侧（SA/SE）财务只留一条「结算对账」（reconIn=/settlement 平台双线总账 v1.16.0）：
+  // 收佣/付佣两菜单曾同指 SettlementView 仅差 side——对平台是同一屏，合并；PL/PC/VL 各自单线菜单不受影响。
+  SA: [{ group: '业务' }, 'workbench', 'dispatch', 'projects', 'cases', { group: '能力' }, 'playbookLib', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'billing', 'recharge', 'sms', { group: '系统' }, 'orgMgmt', 'members', 'settings', 'reports', 'audit', { group: '工具' }, 'appDownload'],
+  SE: [{ group: '业务' }, 'workbench', 'dispatch', 'projects', 'cases', { group: '能力' }, 'playbookLib', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'billing', { group: '系统' }, 'members', 'audit', { group: '报表' }, 'reports', { group: '工具' }, 'appDownload'],
   PL: [{ group: '业务' }, 'workbench', 'projects', 'cases', 'qc', 'evidence', { group: '财务' }, 'reconIn', 'billing', 'recharge', 'sms', { group: '管理' }, 'reports', 'members', 'audit', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
   PC: [{ group: '业务' }, 'workbench', 'cases', 'callLog', 'myLinks', { group: '项目' }, 'projects', { group: '能力' }, 'qc', 'legal', 'evidence', { group: '财务' }, 'reconIn', { group: '我的' }, 'myStats', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
   VL: [{ group: '业务' }, 'workbench', 'providerSea', 'projects', 'qc', 'cases', { group: '财务' }, 'reconOut', 'coCommission', 'recharge', 'billing', { group: '管理' }, 'reports', 'members', 'audit', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
   CO: [{ group: '业务' }, 'workbench', 'myCases', 'providerSea', 'callLog', 'myLinks', { group: '能力' }, 'qc', { group: '我的' }, 'myStats', { group: '消息' }, 'inbox', { group: '工具' }, 'appDownload'],
 }
 
-// 对账菜单标题按角色视角相对命名（对标原型 navLabel）：物业(PL/PC)=付佣、服务商(VL) reconOut=收佣、平台用本名。
+// 对账菜单标题按角色视角相对命名（对标原型 navLabel）：物业(PL/PC)=付佣、服务商(VL) reconOut=收佣、
+// 平台(SA/SE)=「结算对账」（v1.16.0 双线总账单菜单）。
 export function navLabel(path: string, role: string): string {
   const base = PATH2LABEL[path]
   if (path === '/settlement' && (role === 'PL' || role === 'PC')) return '付佣对账'
+  if (path === '/settlement' && (role === 'SA' || role === 'SE')) return '结算对账'
   if (path === '/settlement-out' && role === 'VL') return '收佣对账'
   // 公海收权后两侧看到的池不同（BR-M3-29）。平台侧菜单叫「平台公海」；
   // 服务商侧沿用原型的「案件公海」（页内含 待接单/服务商公海/开放抢单池 三个 tab，
@@ -75,9 +79,22 @@ const DRILLDOWN_PATHS: Record<string, string[]> = {
   PL: ['/batches'], PC: ['/batches'], VL: ['/batches'],
 }
 
-/** 路由守卫判定单一入口：通用页 / 本角色菜单页(含子路径) / 本角色可下钻的详情页。 */
+// 角色级老书签重定向（v1.16.0）：平台(SA/SE)的 /settlement-out 已并入 /settlement 双线总账。
+// 守卫在越权判定前先查此表——命中即 redirect（非拦截回 dashboard）；e2e-nav-lint 同源消费。
+const ROLE_REDIRECTS: Record<string, Record<string, string>> = {
+  SA: { '/settlement-out': '/settlement' },
+  SE: { '/settlement-out': '/settlement' },
+}
+
+/** 该角色访问 path 是否应重定向；返回目标路由或 null。router 守卫与 nav-lint 共用（SSOT）。 */
+export function redirectPath(role: string, path: string): string | null {
+  return ROLE_REDIRECTS[role]?.[path] ?? null
+}
+
+/** 路由守卫判定单一入口：通用页 / 本角色菜单页(含子路径) / 本角色可下钻的详情页 / 有角色级重定向的老书签。 */
 export function isAllowedPath(role: string, path: string, universalPaths: string[]): boolean {
   if (universalPaths.includes(path)) return true
+  if (redirectPath(role, path)) return true   // 重定向源路径不算越权（守卫会先转走）
   if (allowedPaths(role).some((p) => path === p || path.startsWith(p + '/'))) return true
   return (DRILLDOWN_PATHS[role] ?? []).some((p) => path.startsWith(p + '/'))
 }

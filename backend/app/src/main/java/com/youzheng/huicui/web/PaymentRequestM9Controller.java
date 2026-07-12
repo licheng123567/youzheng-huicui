@@ -141,9 +141,10 @@ public class PaymentRequestM9Controller {
                         + " VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?, 'PENDING', 1) RETURNING id",
                 Long.class, no, side, batchId, generatedBy, commRate, linesJson, baseCents, commCents);
 
-        // 占位锁定明细：PENDING 阶段仅绑定 payment_request_id，settled 仍 FALSE（PAID 才置 TRUE）。
+        // 占位锁定明细（V929 双线独立占用）：PENDING 阶段仅绑定本线 pr_id_×，settled_× 仍 FALSE（PAID 才置 TRUE）。
+        String occupyCol = SIDE_IN.equals(side) ? "pr_id_in" : "pr_id_out";
         for (LineRow ln : lines) {
-            jdbc.update("UPDATE repay_line SET payment_request_id = ?, updated_at = now() WHERE id = ?", prId, ln.id);
+            jdbc.update("UPDATE repay_line SET " + occupyCol + " = ?, updated_at = now() WHERE id = ?", prId, ln.id);
         }
 
         audit(s, "payreq.create", prId, batchId, side,
@@ -235,7 +236,7 @@ public class PaymentRequestM9Controller {
 
     // ── [5] revokePaymentRequest  POST /payment-requests/{id}/revoke ─────────
     // 仅 PENDING（已 PAID→409 视为 BIZ_PR_PAID 语义，用 STATE_409 承载）；仅生成方线别（错线→403）；
-    //   version 乐观锁（缺/不匹配→422）；UPDATE→VOIDED 释放明细 payment_request_id=NULL,settled=FALSE。
+    //   version 乐观锁（缺/不匹配→422）；UPDATE→VOIDED 释放**本线**明细 pr_id_×=NULL,settled_×=FALSE（V929）。
     @PostMapping("/payment-requests/{id}/revoke")
     @RequirePermission("payreq.create")
     @Transactional
@@ -269,10 +270,12 @@ public class PaymentRequestM9Controller {
         if (rows == 0) {
             throw new ApiException(BizError.STATE_409, "并发冲突：单状态/版本已变更，撤销失败");
         }
-        // 释放明细：解绑 + 退结算占位。
-        jdbc.update(
-                "UPDATE repay_line SET payment_request_id = NULL, settled = FALSE, updated_at = now() WHERE payment_request_id = ?",
-                prId);
+        // 释放明细（V929）：只解绑/退占位**本线**列，另一线的占用与结清状态不受影响。
+        if (SIDE_IN.equals(pr.side)) {
+            jdbc.update("UPDATE repay_line SET pr_id_in = NULL, settled_in = FALSE, updated_at = now() WHERE pr_id_in = ?", prId);
+        } else {
+            jdbc.update("UPDATE repay_line SET pr_id_out = NULL, settled_out = FALSE, updated_at = now() WHERE pr_id_out = ?", prId);
+        }
 
         audit(s, "payreq.revoke", prId, pr.batchId, pr.side,
                 Map.of("status", ST_PENDING, "version", pr.version),
@@ -336,10 +339,12 @@ public class PaymentRequestM9Controller {
                 "INSERT INTO voucher(payment_request_id, type, file_url, uploaded_by, uploaded_at)"
                         + " VALUES (?, ?, ?, ?, now())",
                 prId, v.type, v.fileUrl, actorId);
-        // 锁定明细：PAID 才置 settled=TRUE（平台双线专属语义）。
-        jdbc.update(
-                "UPDATE repay_line SET settled = TRUE, updated_at = now() WHERE payment_request_id = ?",
-                prId);
+        // 锁定明细（V929）：PAID 才置**本线** settled_×=TRUE，另一线结清状态独立。
+        if (SIDE_IN.equals(pr.side)) {
+            jdbc.update("UPDATE repay_line SET settled_in = TRUE, updated_at = now() WHERE pr_id_in = ?", prId);
+        } else {
+            jdbc.update("UPDATE repay_line SET settled_out = TRUE, updated_at = now() WHERE pr_id_out = ?", prId);
+        }
 
         audit(s, "payreq.complete", prId, pr.batchId, pr.side,
                 Map.of("status", ST_PENDING, "version", pr.version),
@@ -423,10 +428,10 @@ public class PaymentRequestM9Controller {
             //       NULL 视为越本商）；(b) 叠加 EXISTS 至少一条本商绑定 line，防 0-line 单(NOT EXISTS 空集恒真)
             //   fail-open。与 SE 侧 appendSeFullScope 的整单口径一致。
             where.append(" AND NOT EXISTS (SELECT 1 FROM repay_line rlx"
-                    + " WHERE rlx.payment_request_id = pr.id"
+                    + " WHERE rlx.pr_id_out = pr.id"
                     + " AND (rlx.provider_id_at_repay IS NULL OR rlx.provider_id_at_repay <> ?))"
                     + " AND EXISTS (SELECT 1 FROM repay_line rly"
-                    + " WHERE rly.payment_request_id = pr.id AND rly.provider_id_at_repay = ?)");
+                    + " WHERE rly.pr_id_out = pr.id AND rly.provider_id_at_repay = ?)");
             args.add(orgIdLong(s));
             args.add(orgIdLong(s));
         }
@@ -474,8 +479,8 @@ public class PaymentRequestM9Controller {
         where.append(" AND NOT EXISTS (SELECT 1 FROM repay_line rl2"
                 + " JOIN batch b2 ON b2.id = rl2.batch_id"
                 + " JOIN project p2 ON p2.id = b2.project_id"
-                + " WHERE rl2.payment_request_id = pr.id AND (").append(oor).append("))"
-                + " AND EXISTS (SELECT 1 FROM repay_line rl3 WHERE rl3.payment_request_id = pr.id)");
+                + " WHERE (rl2.pr_id_in = pr.id OR rl2.pr_id_out = pr.id) AND (").append(oor).append("))"
+                + " AND EXISTS (SELECT 1 FROM repay_line rl3 WHERE rl3.pr_id_in = pr.id OR rl3.pr_id_out = pr.id)");
         args.addAll(oorArgs);
     }
 
@@ -507,9 +512,9 @@ public class PaymentRequestM9Controller {
         // 先 FOR UPDATE 锁住绑定 lines（与 reverse 侧 lockRepayLine 互斥；PG 不允许 FOR UPDATE 用于聚合/子查询，
         //   故先取被锁行的 reversed 标志，再在内存判定）。
         List<Boolean> reversedFlags = jdbc.query(
-                "SELECT rl.reversed FROM repay_line rl WHERE rl.payment_request_id = ? FOR UPDATE OF rl",
+                "SELECT rl.reversed FROM repay_line rl WHERE rl.pr_id_in = ? OR rl.pr_id_out = ? FOR UPDATE OF rl",
                 (rs, i) -> rs.getBoolean("reversed"),
-                prId);
+                prId, prId);
         for (Boolean reversed : reversedFlags) {
             if (Boolean.TRUE.equals(reversed)) {
                 throw new ApiException(BizError.STATE_409,
@@ -546,13 +551,14 @@ public class PaymentRequestM9Controller {
                 "SELECT count(*) FROM repay_line rl"
                         + " JOIN batch b ON b.id = rl.batch_id"
                         + " JOIN project p ON p.id = b.project_id"
-                        + " WHERE rl.payment_request_id = ?",
-                Long.class, prId);
+                        + " WHERE rl.pr_id_in = ? OR rl.pr_id_out = ?",
+                Long.class, prId, prId);
         long boundN = bound == null ? 0L : bound;
 
         // 在绑定 lines 上叠加 SE data_range 裁剪；in-range 命中数 < 总绑定数 ⇒ 有 line 越范围 → 403。
-        StringBuilder where = new StringBuilder(" WHERE rl.payment_request_id = ?");
+        StringBuilder where = new StringBuilder(" WHERE (rl.pr_id_in = ? OR rl.pr_id_out = ?)");
         List<Object> args = new ArrayList<>();
+        args.add(prId);
         args.add(prId);
         com.youzheng.huicui.common.DataScope.appendRange(
                 s, where, args, "rl.provider_id_at_repay", "p.org_id", "p.area", "b.project_id", "rl.batch_id");
@@ -632,10 +638,11 @@ public class PaymentRequestM9Controller {
     private record LineRow(long id, long caseId, String ownerName, String room, long amountCents) {}
 
     /**
-     * 逐笔 FOR UPDATE 行锁校验未结（BR-M9-12a）：每个 lineId 要求
-     *  (a) 属于 batchId 且未 reversed；(b) payment_request_id IS NULL & settled=FALSE；
+     * 逐笔 FOR UPDATE 行锁校验未结（BR-M9-12a·V929 双线独立占用）：每个 lineId 要求
+     *  (a) 属于 batchId 且未 reversed；(b) **本线** pr_id_× IS NULL & settled_×=FALSE（另一线占用不挡——
+     *      同一笔回款既是收佣(IN)基数又是付佣(OUT)基数，双线独立组单）；
      *  (c) OUT 线（providerSnapshot 非空）须 provider_id_at_repay==本商快照（BLOCKER-2·到账归属）。
-     * 不存在→404；批次/快照不符（越权占用别批/别商明细）→403；已占（结算/已纳入其他单/已冲正）→409 BIZ_LINE_LOCKED(用 STATE_409 承载)。
+     * 不存在→404；批次/快照不符（越权占用别批/别商明细）→403；本线已占（已结/已纳入本线其他单/已冲正）→409 BIZ_LINE_LOCKED(用 STATE_409 承载)。
      */
     private List<LineRow> lockAndValidateLines(List<Long> lineIds, long batchId, boolean sideOut) {
         List<LineRow> out = new ArrayList<>();
@@ -644,14 +651,16 @@ public class PaymentRequestM9Controller {
             RepayLineLock rl;
             try {
                 rl = jdbc.queryForObject(
-                        "SELECT rl.id, rl.case_id, rl.batch_id, rl.amount_cents, rl.settled, rl.reversed, rl.payment_request_id,"
+                        "SELECT rl.id, rl.case_id, rl.batch_id, rl.amount_cents, rl.reversed,"
+                                + " rl.pr_id_in, rl.settled_in, rl.pr_id_out, rl.settled_out,"
                                 + " rl.provider_id_at_repay, c.owner_name, c.room"
                                 + " FROM repay_line rl JOIN \"case\" c ON c.id = rl.case_id"
                                 + " WHERE rl.id = ? FOR UPDATE OF rl",
                         (rs, i) -> new RepayLineLock(
                                 rs.getLong("id"), rs.getLong("case_id"), rs.getLong("batch_id"),
-                                rs.getLong("amount_cents"), rs.getBoolean("settled"), rs.getBoolean("reversed"),
-                                (Long) rs.getObject("payment_request_id"),
+                                rs.getLong("amount_cents"), rs.getBoolean("reversed"),
+                                (Long) rs.getObject("pr_id_in"), rs.getBoolean("settled_in"),
+                                (Long) rs.getObject("pr_id_out"), rs.getBoolean("settled_out"),
                                 (Long) rs.getObject("provider_id_at_repay"),
                                 rs.getString("owner_name"), rs.getString("room")),
                         lineId);
@@ -675,8 +684,11 @@ public class PaymentRequestM9Controller {
             if (rl.reversed) {
                 throw new ApiException(BizError.STATE_409, "明细已冲正不可组单: " + lineId);
             }
-            if (rl.paymentRequestId != null || rl.settled) {
-                throw new ApiException(BizError.STATE_409, "明细已结算/已纳入其他单(BIZ_LINE_LOCKED): " + lineId);
+            // 占用判定只看本线（V929 核心修复：另一线占用/已结不再互斥）。
+            boolean occupied = sideOut ? (rl.prIdOut != null || rl.settledOut)
+                                       : (rl.prIdIn != null || rl.settledIn);
+            if (occupied) {
+                throw new ApiException(BizError.STATE_409, "明细本线已结算/已纳入其他单(BIZ_LINE_LOCKED): " + lineId);
             }
             out.add(new LineRow(rl.id, rl.caseId, rl.ownerName, rl.room, rl.amountCents));
         }
@@ -684,7 +696,8 @@ public class PaymentRequestM9Controller {
     }
 
     private record RepayLineLock(long id, long caseId, long batchId, long amountCents,
-                                 boolean settled, boolean reversed, Long paymentRequestId,
+                                 boolean reversed,
+                                 Long prIdIn, boolean settledIn, Long prIdOut, boolean settledOut,
                                  Long providerIdAtRepay, String ownerName, String room) {}
 
     private long nextSeq(long batchId, String side) {

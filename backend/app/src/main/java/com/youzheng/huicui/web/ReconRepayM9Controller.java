@@ -6,6 +6,7 @@ import com.youzheng.huicui.error.ApiException;
 import com.youzheng.huicui.error.BizError;
 import com.youzheng.huicui.security.CurrentSubject;
 import com.youzheng.huicui.security.SubjectContext;
+import com.youzheng.huicui.web.dto.ReconRollupDualM9Dto;
 import com.youzheng.huicui.web.dto.ReconRollupM9Dto;
 import com.youzheng.huicui.web.dto.RepayLineDto;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -76,6 +77,8 @@ public class ReconRepayM9Controller {
         // 双线比率快照列：IN=batch.comm_in_rate / OUT=batch.pay_out_rate（NUMERIC(6,4)·分数）。
         boolean in = "IN".equals(sideVal);
         String commRateCol = in ? "b.comm_in_rate" : "b.pay_out_rate";
+        // V929 双线独立结清：已结口径按本线 settled_× 列（IN 单 PAID 不再污染 OUT 线「已付」）。
+        String settledCol = in ? "rl.settled_in" : "rl.settled_out";
 
         // B-03 OUT 付佣按到账归属快照（resp 资金正确性·阻断）：服务商可见/聚合一律按 repay_line.provider_id_at_repay，
         //   不再按 batch.provider_id——否则单案再派(只改 case.provider_id)后付佣仍结给旧服务商。
@@ -126,15 +129,133 @@ public class ReconRepayM9Controller {
             long batchId = idHolder.get(i)[0];
             String batchNo = nameHolder.get(i)[0];
             String projName = nameHolder.get(i)[1];
-            items.add(buildRollup(s, batchId, batchNo, projName, periodKey, commRateCol,
+            items.add(buildRollup(s, batchId, batchNo, projName, periodKey, commRateCol, settledCol,
                     periodArgs(periodKey), providerSnapshotId));
         }
         return Page.of(items, pg, total == null ? 0 : total);
     }
 
-    /** 单 batch 行的聚合 + 佣金/结算/回款率计算（逐笔 × 固化比率·分数·HALF_UP）。 */
+    // ── [1b] GET /recon/rollup-dual ──────────────────────────────────────────
+    // 平台批次双线总账（v1.16.0）：一行批次同时给 收佣(应收/已收/未收) + 付佣(应付/已付/未付) + 毛利。
+    // x-data-scope=platform：仅平台（SA 全量；SE 叠 data_range 三维裁剪——HIGH-2 口径）；物业/服务商→403。
+    @GetMapping("/recon/rollup-dual")
+    public Page<ReconRollupDualM9Dto> getReconRollupDual(
+            @RequestParam(required = false) String period,
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size) {
+        CurrentSubject s = SubjectContext.get();
+        if (!s.isPlatform()) {
+            throw new ApiException(BizError.PERM_403, "双线总账为平台专属视角");
+        }
+        String periodKey = normalizePeriod(period);
+        Pageable pg = Pageable.of(page, size);
+
+        StringBuilder where = new StringBuilder(" WHERE rl.reversed = false");
+        List<Object> args = new ArrayList<>();
+        // SE data_range 三维裁剪（provider 维按到账归属快照，与单线 rollup/明细同口径）；SA 全量不追加。
+        com.youzheng.huicui.common.DataScope.appendRange(
+                s, where, args, "rl.provider_id_at_repay", "p.org_id", "p.area", "b.project_id", "rl.batch_id");
+        if (periodKey != null) {
+            where.append(" AND date_trunc('month', rl.paid_at) = date_trunc('month', CAST(? AS DATE))");
+            args.add(periodKey + "-01");
+        }
+
+        String base = "FROM repay_line rl"
+                + " JOIN batch b ON b.id = rl.batch_id"
+                + " JOIN project p ON p.id = b.project_id"
+                + where;
+
+        // 分页在 batch 维度（同单线 rollup 骨架），带出双线比率避免逐批重查。
+        String idSql = "SELECT rl.batch_id, b.no AS batch_no, p.name AS proj_name,"
+                + " b.comm_in_rate, b.pay_out_rate, b.open_rate"
+                + " " + base
+                + " GROUP BY rl.batch_id, b.no, p.name, b.comm_in_rate, b.pay_out_rate, b.open_rate"
+                + " ORDER BY rl.batch_id DESC LIMIT ? OFFSET ?";
+        List<Object> pageArgs = new ArrayList<>(args);
+        pageArgs.add(pg.size);
+        pageArgs.add(pg.offset);
+        record DualBatch(long id, String no, String proj, BigDecimal inRate, BigDecimal payOutRate, BigDecimal openRate) {}
+        List<DualBatch> batches = new ArrayList<>();
+        jdbc.query(idSql, rs -> {
+            batches.add(new DualBatch(rs.getLong("batch_id"), rs.getString("batch_no"), rs.getString("proj_name"),
+                    rs.getBigDecimal("comm_in_rate"), rs.getBigDecimal("pay_out_rate"), rs.getBigDecimal("open_rate")));
+        }, pageArgs.toArray());
+
+        Long total = jdbc.queryForObject(
+                "SELECT count(*) FROM (SELECT 1 " + base + " GROUP BY rl.batch_id) t",
+                Long.class, args.toArray());
+
+        List<ReconRollupDualM9Dto> items = new ArrayList<>();
+        for (DualBatch db : batches) {
+            items.add(buildRollupDual(s, db.id(), db.no(), db.proj(), periodKey,
+                    db.inRate(), db.payOutRate() != null ? db.payOutRate() : db.openRate()));
+        }
+        return Page.of(items, pg, total == null ? 0 : total);
+    }
+
+    /**
+     * 单 batch 双线聚合（V929·一次 SQL 同算两线）。outRate=付佣生效率 COALESCE(pay_out_rate,open_rate)，
+     * 与组单 resolveCommRate 口径一致；为 null（未设付佣比例）时 OUT 应付/未付/毛利返 null、已付恒 0。
+     */
+    private ReconRollupDualM9Dto buildRollupDual(CurrentSubject s, long batchId, String batchNo, String projName,
+                                                 String periodKey, BigDecimal inRate, BigDecimal outRate) {
+        BigDecimal in = inRate == null ? BigDecimal.ZERO : inRate;
+        boolean hasOut = outRate != null;
+        BigDecimal out = hasOut ? outRate : BigDecimal.ZERO;
+
+        StringBuilder agg = new StringBuilder(
+                "SELECT COALESCE(SUM(rl.amount_cents),0) AS base,"
+                        + " COUNT(*) AS cnt,"
+                        + " COALESCE(SUM(round(rl.amount_cents * ?))::bigint, 0) AS due_in,"
+                        + " COALESCE(SUM(CASE WHEN rl.settled_in THEN round(rl.amount_cents * ?) ELSE 0 END)::bigint, 0) AS settled_in,"
+                        + " COALESCE(SUM(round(rl.amount_cents * ?))::bigint, 0) AS due_out,"
+                        + " COALESCE(SUM(CASE WHEN rl.settled_out THEN round(rl.amount_cents * ?) ELSE 0 END)::bigint, 0) AS settled_out"
+                        + " FROM repay_line rl"
+                        + " JOIN batch b ON b.id = rl.batch_id"
+                        + " JOIN project p ON p.id = b.project_id"
+                        + " WHERE rl.batch_id = ? AND rl.reversed = false");
+        List<Object> aggArgs = new ArrayList<>(List.of(in, in, out, out, batchId));
+        com.youzheng.huicui.common.DataScope.appendRange(
+                s, agg, aggArgs, "rl.provider_id_at_repay", "p.org_id", "p.area", "b.project_id", "rl.batch_id");
+        if (periodKey != null) {
+            agg.append(" AND date_trunc('month', rl.paid_at) = date_trunc('month', CAST(? AS DATE))");
+            aggArgs.add(periodKey + "-01");
+        }
+        long[] sums = jdbc.query(agg.toString(), rs -> {
+            if (!rs.next()) return new long[]{0, 0, 0, 0, 0, 0};
+            return new long[]{rs.getLong("base"), rs.getLong("cnt"), rs.getLong("due_in"),
+                    rs.getLong("settled_in"), rs.getLong("due_out"), rs.getLong("settled_out")};
+        }, aggArgs.toArray());
+        long baseCents = sums[0];
+        int cnt = (int) sums[1];
+        long dueIn = sums[2];
+        long settledIn = sums[3];
+
+        // 回款率分母：批次应收（减免后优先），与单线 rollup 同口径。
+        Long dueBase = jdbc.queryForObject(
+                "SELECT COALESCE(SUM(COALESCE(c.reduce_after_cents, c.due_cents)),0)"
+                        + " FROM \"case\" c WHERE c.batch_id = ?",
+                Long.class, batchId);
+        long denom = dueBase == null ? 0L : dueBase;
+        BigDecimal repayRate = denom > 0
+                ? BigDecimal.valueOf(baseCents).divide(BigDecimal.valueOf(denom), 4, RoundingMode.HALF_UP)
+                : null;
+
+        Long dueOut = hasOut ? sums[4] : null;
+        Long settledOut = hasOut ? sums[5] : 0L;   // 无率无法组单，已付恒 0
+        Long unsettledOut = hasOut ? dueOut - settledOut : null;
+        Long gross = hasOut ? dueIn - dueOut : null;
+
+        return new ReconRollupDualM9Dto(
+                batchNo, String.valueOf(batchId), projName, periodKey,
+                baseCents, cnt, repayRate,
+                in.stripTrailingZeros(), dueIn, settledIn, dueIn - settledIn,
+                hasOut ? out.stripTrailingZeros() : null, dueOut, settledOut, unsettledOut, gross);
+    }
+
+    /** 单 batch 行的聚合 + 佣金/结算/回款率计算（逐笔 × 固化比率·分数·HALF_UP）。settledCol=本线已结列(V929)。 */
     private ReconRollupM9Dto buildRollup(CurrentSubject s, long batchId, String batchNo, String projName,
-                                         String periodKey, String commRateCol, Object[] periodArg,
+                                         String periodKey, String commRateCol, String settledCol, Object[] periodArg,
                                          Long providerSnapshotId) {
         // 固化比率快照（分数 0-1）。批次比率可能为 null（付佣未设）→ 视作 0。
         BigDecimal commRate = jdbc.query(
@@ -154,7 +275,7 @@ public class ReconRepayM9Controller {
                 "SELECT COALESCE(SUM(rl.amount_cents),0) AS base,"
                         + " COUNT(*) AS cnt,"
                         + " COALESCE(SUM(round(rl.amount_cents * ?))::bigint, 0) AS due_cents,"
-                        + " COALESCE(SUM(CASE WHEN rl.settled THEN round(rl.amount_cents * ?) ELSE 0 END)::bigint, 0)"
+                        + " COALESCE(SUM(CASE WHEN " + settledCol + " THEN round(rl.amount_cents * ?) ELSE 0 END)::bigint, 0)"
                         + "   AS settled_cents"
                         + " FROM repay_line rl"
                         + " JOIN batch b ON b.id = rl.batch_id"
@@ -226,21 +347,32 @@ public class ReconRepayM9Controller {
         args.add(batchId);
         appendRepayLineScope(s, where, args);
 
-        String base = "FROM repay_line rl"
-                + " JOIN \"case\" c ON c.id = rl.case_id"
+        String coreJoins = " JOIN \"case\" c ON c.id = rl.case_id"
                 + " JOIN batch b ON b.id = rl.batch_id"
-                + " JOIN project p ON p.id = b.project_id"
-                + where;
+                + " JOIN project p ON p.id = b.project_id";
 
-        Long total = jdbc.queryForObject("SELECT count(*) " + base, Long.class, args.toArray());
+        Long total = jdbc.queryForObject(
+                "SELECT count(*) FROM repay_line rl" + coreJoins + where, Long.class, args.toArray());
 
         List<Object> pageArgs = new ArrayList<>(args);
         pageArgs.add(pg.size);
         pageArgs.add(pg.offset);
+        // V929 双线扩展：带出双线占用/结清 + 本线单号 + 到账归属快照（视角裁剪在 rowMapper 做字段级省略）。
         String listSql = "SELECT rl.id, rl.case_id, c.owner_name, c.room, rl.amount_cents,"
-                + " rl.channel, rl.paid_at, rl.settled, rl.payment_request_id"
-                + " " + base + " ORDER BY rl.id DESC LIMIT ? OFFSET ?";
-        List<RepayLineDto> items = jdbc.query(listSql, repayLineRowMapper(), pageArgs.toArray());
+                + " rl.channel, rl.paid_at,"
+                + " rl.pr_id_in, rl.settled_in, rl.pr_id_out, rl.settled_out,"
+                + " pri.no AS pr_no_in, pro.no AS pr_no_out,"
+                + " rl.provider_id_at_repay, po.name AS provider_name"
+                + " FROM repay_line rl" + coreJoins
+                + " LEFT JOIN payment_request pri ON pri.id = rl.pr_id_in"
+                + " LEFT JOIN payment_request pro ON pro.id = rl.pr_id_out"
+                + " LEFT JOIN org po ON po.id = rl.provider_id_at_repay"
+                + where
+                + " ORDER BY rl.id DESC LIMIT ? OFFSET ?";
+        // 双线佣金列：IN=comm_in_rate；OUT 生效率=COALESCE(pay_out_rate,open_rate)（与组单 resolveCommRate 口径一致）。
+        BigDecimal inRate = b.commInRate();
+        BigDecimal outRate = b.payOutRate() != null ? b.payOutRate() : b.openRate();
+        List<RepayLineDto> items = jdbc.query(listSql, repayLineRowMapper(s, inRate, outRate), pageArgs.toArray());
         return Page.of(items, pg, total == null ? 0 : total);
     }
 
@@ -303,16 +435,21 @@ public class ReconRepayM9Controller {
                 s, where, args, providerCol, "p.org_id", "p.area", "b.project_id", "rl.batch_id");
     }
 
-    private record BatchRow(long id, Long providerId, long projectId, Long projectOrgId) {}
+    private record BatchRow(long id, Long providerId, long projectId, Long projectOrgId,
+                            BigDecimal commInRate, BigDecimal payOutRate, BigDecimal openRate) {}
 
     private BatchRow loadBatch(long batchId) {
         List<BatchRow> rows = jdbc.query(
-                "SELECT b.id, b.provider_id, b.project_id, p.org_id AS proj_org"
+                "SELECT b.id, b.provider_id, b.project_id, p.org_id AS proj_org,"
+                        + " b.comm_in_rate, b.pay_out_rate, b.open_rate"
                         + " FROM batch b JOIN project p ON p.id = b.project_id WHERE b.id = ?",
                 (rs, i) -> new BatchRow(rs.getLong("id"),
                         (Long) rs.getObject("provider_id"),
                         rs.getLong("project_id"),
-                        (Long) rs.getObject("proj_org")),
+                        (Long) rs.getObject("proj_org"),
+                        rs.getBigDecimal("comm_in_rate"),
+                        rs.getBigDecimal("pay_out_rate"),
+                        rs.getBigDecimal("open_rate")),
                 batchId);
         if (rows.isEmpty()) {
             throw new ApiException(BizError.NOT_FOUND_404, "批次不存在");
@@ -372,17 +509,57 @@ public class ReconRepayM9Controller {
         return n != null && n > 0;
     }
 
-    private static org.springframework.jdbc.core.RowMapper<RepayLineDto> repayLineRowMapper() {
-        return (rs, i) -> new RepayLineDto(
-                String.valueOf(rs.getLong("id")),
-                String.valueOf(rs.getLong("case_id")),
-                rs.getString("owner_name"),
-                rs.getString("room"),
-                longOrNull(rs, "amount_cents"),
-                rs.getString("channel"),
-                dateStr(rs),
-                rs.getBoolean("settled"),
-                idOrNull(rs, "payment_request_id"));
+    /**
+     * V929 双线视角映射（jackson non_null 全局丢 null ⇒ null 即字段级省略）：
+     *   平台(SA/SE)   → 双线全字段 + providerIdAtRepay/providerName；
+     *   物业(PL/PC)   → 仅 IN 线字段（commInCents/settledIn/prIdIn/prNoIn），OUT 线省略（BR-M9-11 不见付佣）；
+     *   服务商(VL/CO) → 仅 OUT 线字段，IN 线省略。
+     *   legacy settled/paymentRequestId（已废弃）：PROVIDER=OUT 线值；其余=IN 线值——旧前端行为逐位不变。
+     *   佣金列 = round(amount×rate)（Commission 同口径）；对应生效率为 null 时佣金列省略。
+     */
+    private static org.springframework.jdbc.core.RowMapper<RepayLineDto> repayLineRowMapper(
+            CurrentSubject s, BigDecimal inRate, BigDecimal outRate) {
+        boolean platform = s.isPlatform();
+        boolean provider = "PROVIDER".equals(s.orgType());
+        boolean showIn = platform || !provider;
+        boolean showOut = platform || provider;
+        return (rs, i) -> {
+            Long amount = longOrNull(rs, "amount_cents");
+            boolean settledIn = rs.getBoolean("settled_in");
+            String prIdIn = idOrNull(rs, "pr_id_in");
+            String prNoIn = rs.getString("pr_no_in");
+            boolean settledOut = rs.getBoolean("settled_out");
+            String prIdOut = idOrNull(rs, "pr_id_out");
+            String prNoOut = rs.getString("pr_no_out");
+            Long commIn = (showIn && inRate != null && amount != null) ? roundComm(amount, inRate) : null;
+            Long commOut = (showOut && outRate != null && amount != null) ? roundComm(amount, outRate) : null;
+            return new RepayLineDto(
+                    String.valueOf(rs.getLong("id")),
+                    String.valueOf(rs.getLong("case_id")),
+                    rs.getString("owner_name"),
+                    rs.getString("room"),
+                    amount,
+                    rs.getString("channel"),
+                    dateStr(rs),
+                    provider ? settledOut : settledIn,
+                    provider ? prIdOut : prIdIn,
+                    commIn,
+                    showIn ? settledIn : null,
+                    showIn ? prIdIn : null,
+                    showIn ? prNoIn : null,
+                    commOut,
+                    showOut ? settledOut : null,
+                    showOut ? prIdOut : null,
+                    showOut ? prNoOut : null,
+                    platform ? idOrNull(rs, "provider_id_at_repay") : null,
+                    platform ? rs.getString("provider_name") : null);
+        };
+    }
+
+    /** commCents = round(amount_cents × rate)，分数 rate·HALF_UP（与 Commission.lineCommissionCents 一致）。 */
+    private static long roundComm(long amountCents, BigDecimal rate) {
+        return BigDecimal.valueOf(amountCents).multiply(rate)
+                .setScale(0, RoundingMode.HALF_UP).longValueExact();
     }
 
     private static String dateStr(ResultSet rs) throws SQLException {
