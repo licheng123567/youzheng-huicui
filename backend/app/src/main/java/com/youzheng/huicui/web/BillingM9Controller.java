@@ -208,7 +208,8 @@ public class BillingM9Controller {
 
         String sql = "WITH o AS (SELECT o.id, o.name, o.type FROM org o" + orgWhere
                 + " ORDER BY o.id LIMIT ? OFFSET ?),"
-                + " t(type) AS (VALUES ('STT'),('SMS'),('EVIDENCE'),('LEGAL')),"
+                // v1.20.0：LEGAL 停用（法律文书不计费）→ 额度总览只出 STT/SMS/EVIDENCE 三类
+                + " t(type) AS (VALUES ('STT'),('SMS'),('EVIDENCE')),"
                 // 本月/上月用量（FILTER 聚合一次带出）
                 + " u AS (SELECT org_id, type,"
                 + "   COALESCE(SUM(qty) FILTER (WHERE occurred_at >= date_trunc('month', now())), 0) AS m0,"
@@ -234,8 +235,8 @@ public class BillingM9Controller {
                     com.youzheng.huicui.common.BillingUnits.rechargeable(orgType, btype));
         }, pageArgs.toArray());
 
-        // total 以「行」计（组织数 × 4 类型），与 items 口径一致。
-        long total = (orgTotal == null ? 0 : orgTotal) * 4;
+        // total 以「行」计（组织数 × 3 类型；v1.20.0 LEGAL 停用），与 items 口径一致。
+        long total = (orgTotal == null ? 0 : orgTotal) * 3;
         return Page.of(items, pg, total);
     }
 

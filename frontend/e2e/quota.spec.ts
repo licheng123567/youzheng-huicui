@@ -14,17 +14,19 @@ test.describe('v1.19.0 额度管理', () => {
 
     // 组织列表：一行一组织，四类额度横向列
     const t = page.locator('table').first()
-    for (const h of ['组织', '录音转写余额', '短信余额', '存证余额', '法律文书余额', '本月总用量']) {
+    // v1.20.0：法律文书不计费 → 额度体系只剩三类
+    for (const h of ['组织', '录音转写余额', '短信余额', '存证余额', '本月总用量']) {
       await expect(t.locator('thead').getByText(h, { exact: true })).toBeVisible()
     }
     const row = t.locator('tbody tr', { hasText: '翠湖物业' }).first()
     await expect(row).toBeVisible()
+    await expect(t.getByText('法律文书', { exact: false })).toHaveCount(0)   // v1.20.0 已从额度体系移除
 
     // 点组织 → 详情页
     await row.click()
     await expect(page).toHaveURL(/\/quota\/\d+/)
     await expect(page.getByText('返回组织列表', { exact: false })).toBeVisible()
-    await expect(page.locator('.kpi')).toHaveCount(4)          // 四类余额卡
+    await expect(page.locator('.kpi')).toHaveCount(3)          // 三类余额卡（法律文书不计费）
 
     // 短信卡上的「充值」→ 抽屉 → 充 100 条
     await page.locator('.kpi', { hasText: '短信' }).getByText('充值', { exact: true }).click()
@@ -44,7 +46,7 @@ test.describe('v1.19.0 额度管理', () => {
     await page.getByRole('menuitem', { name: '额度管理' }).click()
     await page.locator('table tbody tr').first().click()
     await expect(page).toHaveURL(/\/quota\/\d+/)
-    await expect(page.locator('.kpi')).toHaveCount(4)
+    await expect(page.locator('.kpi')).toHaveCount(3)
     await expect(page.getByText('充值', { exact: true })).toHaveCount(0)   // 无充值入口
   })
 
@@ -53,7 +55,7 @@ test.describe('v1.19.0 额度管理', () => {
     await page.getByRole('menuitem', { name: '额度管理' }).click()
     await expect(page).toHaveURL(/\/quota/)
     await expect(page.getByText(/线下联系平台运营/)).toBeVisible()
-    await expect(page.locator('.kpi')).toHaveCount(4)
+    await expect(page.locator('.kpi')).toHaveCount(3)
     await expect(page.locator('table thead').getByText('组织', { exact: true })).toHaveCount(0)
   })
 

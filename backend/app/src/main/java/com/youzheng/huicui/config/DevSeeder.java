@@ -240,10 +240,6 @@ public class DevSeeder implements CommandLineRunner {
         jdbc.update("INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by) "
                         + "VALUES (?, 'EVIDENCE', -2.000, -2.000, NULL, '(演示)存证出证用量扣减(不预充)', ?)",
                 propertyOrg, operatorAccountId);
-        //    物业 LEGAL 扣减 -1.000（律师函 1 件 → balance -1.000）
-        jdbc.update("INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by) "
-                        + "VALUES (?, 'LEGAL', -1.000, -1.000, NULL, '(演示)法律文书用量扣减(不预充)', ?)",
-                propertyOrg, operatorAccountId);
         //    服务商 STT 扣减 -50.000（→ balance 250.000）
         jdbc.update("INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by) "
                         + "VALUES (?, 'STT', -50.000, 250.000, NULL, '(演示)服务商STT用量扣减', ?)",
@@ -283,7 +279,6 @@ public class DevSeeder implements CommandLineRunner {
             insertUsage(cuihuOrg, "EVIDENCE", "1.000", "count", caseS3, "-25 days");
             insertUsage(cuihuOrg, "EVIDENCE", "1.000", "count", caseS3, "-5 days");
             // 法务文书（按次 count）
-            insertUsage(cuihuOrg, "LEGAL", "1.000", "count", caseS3, "-18 days");
         }
 
         // ② 收佣线支付申请单（side=IN·平台向物业收撮合佣金）：复用 B-CH-2026-01（comm_in_rate=0.30）已回款明细。
