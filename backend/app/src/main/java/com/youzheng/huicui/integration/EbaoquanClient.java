@@ -37,27 +37,44 @@ public class EbaoquanClient {
 
     private static final Logger log = LoggerFactory.getLogger(EbaoquanClient.class);
 
-    private final boolean enabled;
-    private final String baseUrl;
-    private final String appKey;
-    private final String appKeySecret;
+    // v1.23.0：配置改由 IntegrationConfigService 在**调用时**解析（DB 后台配置 → yml 环境变量 → 默认）。
+    // 此前是构造器 @Value 注入的 final 字段——那样后台改了 key 必须重启才生效，而「改完立刻生效」正是本功能的验收点。
+    private final IntegrationConfigService cfg;
     private final ObjectMapper json = new ObjectMapper();
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 
-    public EbaoquanClient(
-            @Value("${huicui.ebaoquan.enabled:false}") boolean enabled,
-            @Value("${huicui.ebaoquan.base-url:https://bs.sandbox.ebaoquan.org}") String baseUrl,
-            @Value("${huicui.ebaoquan.app-key:}") String appKey,
-            @Value("${huicui.ebaoquan.app-key-secret:}") String appKeySecret) {
-        this.enabled = enabled;
-        this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
-        this.appKey = appKey;
-        this.appKeySecret = appKeySecret;
+    public EbaoquanClient(IntegrationConfigService cfg) {
+        this.cfg = cfg;
+    }
+
+    /** 测试用：直接喂一组固定配置，不必起 Spring/DB（签名算法等纯逻辑用例靠它）。 */
+    static EbaoquanClient forTest(boolean enabled, String baseUrl, String appKey, String appKeySecret) {
+        return new EbaoquanClient(IntegrationConfigService.fixed(
+                IntegrationConfigService.EBAOQUAN, enabled,
+                java.util.Map.of("baseUrl", baseUrl),
+                java.util.Map.of("appKey", appKey, "appKeySecret", appKeySecret)));
+    }
+
+    private String baseUrl() {
+        String u = cfg.setting(IntegrationConfigService.EBAOQUAN, "baseUrl");
+        if (u == null || u.isBlank()) u = "https://bs.sandbox.ebaoquan.org";
+        return u.endsWith("/") ? u.substring(0, u.length() - 1) : u;
+    }
+
+    private String appKey() {
+        String v = cfg.secret(IntegrationConfigService.EBAOQUAN, "appKey");
+        return v == null ? "" : v;
+    }
+
+    private String appKeySecret() {
+        String v = cfg.secret(IntegrationConfigService.EBAOQUAN, "appKeySecret");
+        return v == null ? "" : v;
     }
 
     /** 已配置且启用（appKey/secret 非空）才真触达易保全；否则调用方走占位。 */
     public boolean isEnabled() {
-        return enabled && !appKey.isBlank() && !appKeySecret.isBlank();
+        return cfg.enabled(IntegrationConfigService.EBAOQUAN)
+                && !appKey().isBlank() && !appKeySecret().isBlank();
     }
 
     // ── 3.1 证据 HASH 保全 → 平台证据 id ──
@@ -104,7 +121,7 @@ public class EbaoquanClient {
             if (sb.length() > 0) sb.append('&');
             sb.append(e.getKey()).append('=').append(e.getValue());
         }
-        sb.append(appKeySecret);
+        sb.append(appKeySecret());
         return md5UpperHex(sb.toString());
     }
 
@@ -120,7 +137,7 @@ public class EbaoquanClient {
 
     // ── 内部：签名 + form-urlencoded POST + 统一响应解包 ──
     private JsonNode post(String path, TreeMap<String, String> params) {
-        params.put("appKey", appKey);                 // appKey 参与签名
+        params.put("appKey", appKey());                 // appKey 参与签名
         String signValue = sign(params);
         StringBuilder body = new StringBuilder();
         for (Map.Entry<String, String> e : params.entrySet()) {
@@ -130,7 +147,7 @@ public class EbaoquanClient {
         body.append("&sign=").append(enc(signValue));
         HttpResponse<String> res;
         try {
-            HttpRequest req = HttpRequest.newBuilder(URI.create(baseUrl + path))
+            HttpRequest req = HttpRequest.newBuilder(URI.create(baseUrl() + path))
                     .timeout(Duration.ofSeconds(30))
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))

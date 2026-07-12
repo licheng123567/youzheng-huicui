@@ -37,38 +37,54 @@ public class ZhixunyunSmsClient {
 
     private static final Logger log = LoggerFactory.getLogger(ZhixunyunSmsClient.class);
 
-    private final boolean enabled;
-    private final boolean dryRun;
-    private final String secretName;
-    private final String secretKey;
-    private final String smsBaseUrl;
-    private final String videoBaseUrl;
+    // v1.23.0：配置改由 IntegrationConfigService 在**调用时**解析（DB 后台配置 → yml 环境变量 → 默认）。
+    // 此前是构造器 @Value 注入的 final 字段——后台改了 key 必须重启才生效，而「改完立刻生效」正是本功能的验收点。
+    private final IntegrationConfigService cfg;
     private final ObjectMapper json = new ObjectMapper();
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 
-    public ZhixunyunSmsClient(
-            @Value("${huicui.sms.enabled:false}") boolean enabled,
-            @Value("${huicui.sms.dry-run:false}") boolean dryRun,
-            @Value("${huicui.sms.secret-name:}") String secretName,
-            @Value("${huicui.sms.secret-key:}") String secretKey,
-            @Value("${huicui.sms.sms-base-url:}") String smsBaseUrl,
-            @Value("${huicui.sms.video-base-url:http://api.028lk.com}") String videoBaseUrl) {
-        this.enabled = enabled;
-        this.dryRun = dryRun;
-        this.secretName = secretName;
-        this.secretKey = secretKey;
-        this.smsBaseUrl = trimSlash(smsBaseUrl);
-        this.videoBaseUrl = trimSlash(videoBaseUrl);
+    /** 测试用：直接喂一组固定配置，不必起 Spring/DB。 */
+    static ZhixunyunSmsClient forTest(boolean enabled, boolean dryRun, String secretName, String secretKey,
+                                      String smsBaseUrl, String videoBaseUrl) {
+        return new ZhixunyunSmsClient(IntegrationConfigService.fixed(
+                IntegrationConfigService.SMS, enabled,
+                java.util.Map.of("smsBaseUrl", smsBaseUrl, "videoBaseUrl", videoBaseUrl),
+                java.util.Map.of("secretName", secretName, "secretKey", secretKey),
+                dryRun));
+    }
+
+    public ZhixunyunSmsClient(IntegrationConfigService cfg) {
+        this.cfg = cfg;
     }
 
     /** 已启用且凭据非空才真触网关；普通短信另需配 sms-base-url。 */
     public boolean isEnabled() {
-        return enabled && !secretName.isBlank() && !secretKey.isBlank();
+        return cfg.enabled(IntegrationConfigService.SMS)
+                && !secretName().isBlank() && !secretKey().isBlank();
     }
 
     /** dry-run：走完整条业务链路（冷却/流水/状态机），但**不触网关、不产生费用**。 */
     public boolean isDryRun() {
-        return dryRun;
+        return cfg.smsDryRun();
+    }
+
+    private String secretName() {
+        String v = cfg.secret(IntegrationConfigService.SMS, "secretName");
+        return v == null ? "" : v;
+    }
+
+    private String secretKey() {
+        String v = cfg.secret(IntegrationConfigService.SMS, "secretKey");
+        return v == null ? "" : v;
+    }
+
+    private String smsBaseUrl() {
+        return trimSlash(cfg.setting(IntegrationConfigService.SMS, "smsBaseUrl"));
+    }
+
+    private String videoBaseUrl() {
+        String u = cfg.setting(IntegrationConfigService.SMS, "videoBaseUrl");
+        return trimSlash(u == null || u.isBlank() ? "http://api.028lk.com" : u);
     }
 
     /**
@@ -76,10 +92,10 @@ public class ZhixunyunSmsClient {
      * signName 传【签名】或留空（自动用账号默认绑定签名）。返回批次 id。
      */
     public String sendSms(String mobileCsv, String content, String templateId, List<String> vars, String signName) {
-        if (dryRun) return dryRunEcho("普通短信", mobileCsv, content, templateId, vars);
-        if (smsBaseUrl.isBlank()) throw new ApiException(BizError.BIZ_SMS_FAILED, "未配置普通短信接口地址(sms-base-url)");
-        ObjectNode b = SmsBodyBuilder.sms(secretName, secretKey, mobileCsv, content, templateId, vars, signName);
-        JsonNode data = post(smsBaseUrl + "/Sms/Api/Send", b);
+        if (isDryRun()) return dryRunEcho("普通短信", mobileCsv, content, templateId, vars);
+        if (smsBaseUrl().isBlank()) throw new ApiException(BizError.BIZ_SMS_FAILED, "未配置普通短信接口地址(sms-base-url)");
+        ObjectNode b = SmsBodyBuilder.sms(secretName(), secretKey(), mobileCsv, content, templateId, vars, signName);
+        JsonNode data = post(smsBaseUrl() + "/Sms/Api/Send", b);
         return data == null ? null : data.asText(null);
     }
 
@@ -88,9 +104,9 @@ public class ZhixunyunSmsClient {
      * @param timing yyyyMMddHHmmss
      */
     public String sendVideoSms(String templateId, String timing, String phoneCsv, List<String> params) {
-        if (dryRun) return dryRunEcho("视频短信", phoneCsv, null, templateId, params);
-        ObjectNode b = SmsBodyBuilder.video(secretName, secretKey, templateId, timing, phoneCsv, params);
-        JsonNode data = post(videoBaseUrl + "/videosms/api/Send", b);
+        if (isDryRun()) return dryRunEcho("视频短信", phoneCsv, null, templateId, params);
+        ObjectNode b = SmsBodyBuilder.video(secretName(), secretKey(), templateId, timing, phoneCsv, params);
+        JsonNode data = post(videoBaseUrl() + "/videosms/api/Send", b);
         return data == null ? null : data.asText(null);
     }
 

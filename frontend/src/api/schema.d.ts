@@ -2772,6 +2772,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/integrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 三方通道配置列表(易保全/短信·密钥只回掩码 v1.23.0)
+         * @description 用户诉求：「易保全、LLM、ASR 这些三方接口的 key，后台没有配置界面。」
+         *     **只做真接得通的两个通道**：易保全(存证) + 智讯云(短信)——客户端真实存在，填了就真能用。
+         *     LLM/ASR 的客户端还没写(Phase 3)，此刻做输入框只会造出「配了但不生效」的空壳页，故不入列表；
+         *     前端在 AI 区域显式标注「待接入」。
+         *     **密钥永不出接口**：secretsMasked 只回 last4(****abc)。source 指明这台机器实际吃的是哪份配置
+         *     (DB=后台维护 / ENV=环境变量 / NONE=未配置)——解析优先级 DB → yml → 默认，
+         *     故已用环境变量部署的实例升级后行为不变。
+         */
+        get: operations["listIntegrations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/{provider}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider: components["schemas"]["IntegrationProviderEnum"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 维护三方通道(密钥 AES-GCM 加密落库·改完即刻生效)·写审计
+         * @description secrets 语义：**缺键=不改**(前端回显的是掩码，不能把掩码当明文写回去)；传空串=清除该密钥(回落 yml)；传非空=加密覆盖。
+         *     409：主密钥 HUICUI_CRYPTO_KEY 未配置——宁可存不进去，也不要把 key 明文躺在库里。
+         *     422：enabled=true 但密钥/接口地址没填齐(点了启用却发不出去，运维会以为开了其实没开)；
+         *          或启用易保全但地址仍指向 sandbox(沙箱出的证书没有法律效力)。
+         *     审计只记「哪些 key 被改过」，绝不记值。
+         */
+        put: operations["updateIntegration"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings": {
         parameters: {
             query?: never;
@@ -4777,6 +4829,49 @@ export interface components {
             repayCents?: components["schemas"]["Money"];
             repayRate?: components["schemas"]["Rate"];
             caseCount?: number;
+        };
+        /**
+         * @description 三方通道：EBAOQUAN=易保全存证 / SMS=智讯云短信
+         * @enum {string}
+         */
+        IntegrationProviderEnum: "EBAOQUAN" | "SMS";
+        /** @description 三方通道配置。密钥只以 last4 掩码出现，明文永不出接口 */
+        Integration: {
+            provider?: components["schemas"]["IntegrationProviderEnum"];
+            /** @description 展示名(易保全/智讯云) */
+            name?: string;
+            enabled?: boolean;
+            /** @description 密钥与必填地址是否都有值(含 yml 回落)。false 时点启用会 422 */
+            configured?: boolean;
+            /**
+             * @description 实际生效的配置来源：DB=后台维护 / ENV=环境变量 / NONE=未配置
+             * @enum {string}
+             */
+            source?: "DB" | "ENV" | "NONE";
+            /** @description 非密字段明文(baseUrl/smsBaseUrl/videoBaseUrl)；未配置的键不出现 */
+            settings?: {
+                [key: string]: string;
+            };
+            /** @description 密钥掩码(****abc)；未配置的键不出现 */
+            secretsMasked?: {
+                [key: string]: string;
+            };
+            /** Format: date-time */
+            updatedAt?: string | null;
+            updatedByName?: string | null;
+            /** @description 主密钥 HUICUI_CRYPTO_KEY 是否就绪；false 时后台存不了密钥(写侧 409) */
+            cryptoReady?: boolean;
+        };
+        IntegrationInput: {
+            enabled: boolean;
+            /** @description 非密字段；缺键=不改，空串=清除(回落 yml) */
+            settings?: {
+                [key: string]: string;
+            };
+            /** @description 密钥明文；**缺键=不改**(掩码绝不写回)，空串=清除，非空=加密覆盖 */
+            secrets?: {
+                [key: string]: string;
+            };
         };
         /** @description 平台AI配置(密钥密文·SE需授权 BR-M5-13) */
         AiConfig: {
@@ -9547,6 +9642,57 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    listIntegrations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Integration"][];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    updateIntegration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider: components["schemas"]["IntegrationProviderEnum"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IntegrationInput"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Integration"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
         };
     };
     listSettings: {

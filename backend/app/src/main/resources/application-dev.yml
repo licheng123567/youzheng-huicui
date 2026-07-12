@@ -17,6 +17,10 @@ spring:
 huicui:
   jwt:
     secret: "dev-only-secret-change-in-prod-至少32字节用于HS256签名0123456789"
+  # 三方通道密钥落库的主密钥（V936）。dev 用内置串，prod 必须注入 HUICUI_CRYPTO_KEY，
+  # 否则后台存不了密钥（写侧 409）——ProdGuard 只在真有密文行时才硬拦（见 ProdEnvironmentGuard）。
+  crypto:
+    master-key: "dev-only-crypto-master-key-change-in-prod"
   dev-password: "Admin@123"    # DevSeeder（@Profile("dev")）给种子账号设此口令的 BCrypt 哈希
   # 易保全 sandbox 联调：填入平台下发的测试 appKey/appKeySecret 并置 enabled=true 即可真调
   # （也可用环境变量 HUICUI_EBQ_ENABLED/HUICUI_EBQ_APPKEY/HUICUI_EBQ_SECRET 注入，避免入库）

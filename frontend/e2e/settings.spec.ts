@@ -11,10 +11,11 @@ test.describe('US-M3-11 系统配置(SA)', () => {
   })
 
   test('编辑 TIMERS(t2Hours)保存成功，版本递增；负数被拒', async ({ page }) => {
-    // 读取当前 TIMERS 版本
-    const timersRow = page.locator('tbody tr').filter({ has: page.locator('b[title="TIMERS"]') })
-    await expect(timersRow).toBeVisible()
-    const before = (await timersRow.locator('td').nth(1).innerText()).trim()
+    // v1.23.0：配置页由「一行一域 + JSON dump」改为「一域一张卡（中文名/中文参数/说明）」，
+    // 版本号移到卡头的 tag 上（title=域码）。断言随之改到新结构。
+    const version = page.locator('span.tag[title="TIMERS"]')   // 卡头的版本 tag（域码在 title 上）
+    await expect(version).toBeVisible()
+    const before = (await version.innerText()).trim()
 
     await page.getByRole('button', { name: '编辑时效参数(TIMERS)' }).click()
     const dlg = page.getByRole('dialog').filter({ hasText: '编辑时效参数' })
@@ -24,8 +25,8 @@ test.describe('US-M3-11 系统配置(SA)', () => {
     await t2.fill('200')
     await dlg.getByRole('button', { name: '保存新版本' }).click()
     await expect(page.getByText(/已保存|保存成功|生效/).first()).toBeVisible()
-    // 版本递增：保存后表格异步 load() 重读，轮询等待版本单元格变化（避免读到刷新前的旧值导致竞态）
-    await expect(timersRow.locator('td').nth(1)).not.toHaveText(before)
+    // 版本递增：保存后异步 load() 重读，轮询等待版本 tag 变化（避免读到刷新前的旧值导致竞态）
+    await expect(version).not.toHaveText(before)
   })
 
   test('编辑 MARK_CODES 数组(增一条 connected/effectiveFollowUp)保存回读一致', async ({ page }) => {
