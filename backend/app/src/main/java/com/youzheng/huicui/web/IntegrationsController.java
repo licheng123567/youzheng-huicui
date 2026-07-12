@@ -53,7 +53,13 @@ public class IntegrationsController {
 
     private static final Map<String, String> NAME = Map.of(
             IntegrationConfigService.EBAOQUAN, "易保全（区块链存证）",
-            IntegrationConfigService.SMS, "智讯云（短信网关）");
+            IntegrationConfigService.SMS, "智讯云（短信网关）",
+            IntegrationConfigService.BAILIAN, "阿里百炼（录音转写 ASR）",
+            IntegrationConfigService.DEEPSEEK, "DeepSeek（大模型 LLM）");
+
+    private static final List<String> PROVIDERS = List.of(
+            IntegrationConfigService.EBAOQUAN, IntegrationConfigService.SMS,
+            IntegrationConfigService.BAILIAN, IntegrationConfigService.DEEPSEEK);
 
     // ── GET /integrations ─────────────────────────────────────────────────
     @GetMapping("/integrations")
@@ -61,7 +67,7 @@ public class IntegrationsController {
     public List<IntegrationDto> listIntegrations() {
         requirePlatform();
         List<IntegrationDto> out = new ArrayList<>();
-        for (String p : List.of(IntegrationConfigService.EBAOQUAN, IntegrationConfigService.SMS)) {
+        for (String p : PROVIDERS) {
             Map<String, String> settings = new LinkedHashMap<>();
             for (String k : settingKeysOf(p)) settings.put(k, cfg.setting(p, k));
             // 时间戳一律走 Timestamps.iso（→ 2026-07-12T07:11:04Z）。自己 to_char 出的 '+00' 不是
@@ -100,7 +106,7 @@ public class IntegrationsController {
         requirePlatform();
         CurrentSubject s = SubjectContext.get();
         String p = provider == null ? "" : provider.trim().toUpperCase();
-        if (!IntegrationConfigService.EBAOQUAN.equals(p) && !IntegrationConfigService.SMS.equals(p)) {
+        if (!PROVIDERS.contains(p)) {
             throw new ApiException(BizError.NOT_FOUND_404, "未知的三方通道: " + provider);
         }
         Map<String, Object> b = body == null ? Map.of() : body;
@@ -197,9 +203,12 @@ public class IntegrationsController {
 
     /** 非密字段（可在后台看明文）。dry-run/public-base-url 不进来：前者是演练开关、后者是部署域名，都归环境变量。 */
     private static List<String> settingKeysOf(String provider) {
-        return IntegrationConfigService.EBAOQUAN.equals(provider)
-                ? List.of("baseUrl")
-                : List.of("smsBaseUrl", "videoBaseUrl");
+        return switch (provider) {
+            case IntegrationConfigService.EBAOQUAN -> List.of("baseUrl");
+            case IntegrationConfigService.SMS -> List.of("smsBaseUrl", "videoBaseUrl");
+            // 百炼/DeepSeek：地址与模型都可覆盖（换区域/换模型不必改代码），留空走内置默认
+            default -> List.of("baseUrl", "model");
+        };
     }
 
     @SuppressWarnings("unchecked")

@@ -44,6 +44,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 || path.matches("/evidence/[^/]+/verify")
                 // 扫码上传：手机凭会话 token 公开上传附件（token 未过期即授权，无需登录）。
                 || path.matches("/upload-sessions/[^/]+/file")
+                // 录音音频拉取（v1.24.0）：百炼「录音文件识别」是异步任务——阿里侧主动来拉我们给的 URL，
+                // 它不可能带我们的 JWT。token 32 字节随机 + TTL 30min + 转写一结束就删，除音频字节外不暴露任何信息。
+                || path.matches("/pub/recordings/[^/]+")
                 // 运维探针：容器/编排器的存活与就绪检查必须免鉴权，否则 HEALTHCHECK 恒 401
                 // → 容器永远 unhealthy、depends_on:service_healthy 卡死。
                 // 只放行 health 与 info（prod 的 management.endpoints 也只暴露这两个，

@@ -27,6 +27,10 @@ public class IntegrationConfigService {
 
     public static final String EBAOQUAN = "EBAOQUAN";
     public static final String SMS = "SMS";
+    // v1.24.0 真 AI 接入：客户端已实现（BailianAsrClient/DeepSeekClient），key 才有资格进这张表——
+    // V936 时它们被挡在门外，正是因为「填了没人读」。
+    public static final String BAILIAN = "BAILIAN";
+    public static final String DEEPSEEK = "DEEPSEEK";
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
@@ -147,7 +151,9 @@ public class IntegrationConfigService {
         if (isFixed()) return Boolean.TRUE.equals(fixedEnabled);
         JsonNode r = row(provider);
         if (r != null && r.hasNonNull("enabled")) return r.get("enabled").asBoolean();
-        return EBAOQUAN.equals(provider) ? ymlEbqEnabled : ymlSmsEnabled;
+        if (EBAOQUAN.equals(provider)) return ymlEbqEnabled;
+        if (SMS.equals(provider)) return ymlSmsEnabled;
+        return false;                                        // 百炼/DeepSeek 无 yml 兜底：不配就是没接
     }
 
     /** 非密字段：DB.settings.<key> → yml → 默认。 */
@@ -219,24 +225,31 @@ public class IntegrationConfigService {
     }
 
     public static java.util.List<String> secretKeysOf(String provider) {
-        return EBAOQUAN.equals(provider)
-                ? java.util.List.of("appKey", "appKeySecret")
-                : java.util.List.of("secretName", "secretKey");
+        return switch (provider) {
+            case EBAOQUAN -> java.util.List.of("appKey", "appKeySecret");
+            case SMS -> java.util.List.of("secretName", "secretKey");
+            default -> java.util.List.of("apiKey");          // 百炼 / DeepSeek 都是单 key
+        };
     }
 
-    /** 启用该通道必须有值的非密字段。 */
+    /** 启用该通道必须有值的非密字段。百炼/DeepSeek 的 baseUrl 与 model 都有内置默认值，故不强制。 */
     public static java.util.List<String> requiredSettingsOf(String provider) {
-        return EBAOQUAN.equals(provider)
-                ? java.util.List.of("baseUrl")
-                : java.util.List.of("smsBaseUrl");
+        return switch (provider) {
+            case EBAOQUAN -> java.util.List.of("baseUrl");
+            case SMS -> java.util.List.of("smsBaseUrl");
+            default -> java.util.List.of();
+        };
     }
 
     // ── yml 兜底 ───────────────────────────────────────────────────────────
 
+    // 百炼/DeepSeek **没有 yml 兜底**（有意）：它们是 v1.24.0 才接入的，不存在「历史上用环境变量配好的实例」，
+    // 唯一来源就是后台。少一个来源 = 少一处「到底吃的哪份配置」的困惑。
     private String ymlSetting(String provider, String key) {
         if (EBAOQUAN.equals(provider)) {
             return "baseUrl".equals(key) ? ymlEbqBaseUrl : null;
         }
+        if (!SMS.equals(provider)) return null;
         return switch (key) {
             case "smsBaseUrl" -> ymlSmsBaseUrl;
             case "videoBaseUrl" -> ymlSmsVideoBaseUrl;
@@ -248,6 +261,7 @@ public class IntegrationConfigService {
         if (EBAOQUAN.equals(provider)) {
             return "appKey".equals(key) ? ymlEbqAppKey : ymlEbqAppKeySecret;
         }
+        if (!SMS.equals(provider)) return null;
         return "secretName".equals(key) ? ymlSmsSecretName : ymlSmsSecretKey;
     }
 }

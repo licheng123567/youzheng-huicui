@@ -2824,6 +2824,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/pub/recordings/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * 录音音频公开拉取(仅供百炼异步回拉·签名 token+TTL30min)
+         * @description **只为语音转写而开**：百炼「录音文件识别」是异步任务——我们提交一个 URL，阿里侧主动来拉音频，
+         *     它不可能带我们的 JWT。而录音是 bytea 存在库里的，没有可拉取的地址，所以必须给一个。
+         *     录音是敏感个人信息，故这个口收得很紧：token=32 字节随机(不可猜/不可枚举)、TTL 30 分钟、
+         *     **转写一结束(成功或失败)立刻删除凭据**、除音频字节本身外不暴露任何信息(无案件号/无业主/无列表接口)。
+         *     token 无效或过期一律 404(不区分「不存在」与「已过期」,不给枚举者信号)。
+         */
+        get: operations["getPublicRecordingAudio"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings": {
         parameters: {
             query?: never;
@@ -3071,7 +3097,7 @@ export interface components {
              *     BIZ_REDISPATCH_GUARD(单案再派护栏①:目标=原退回服务商/已停用 US-M3-02) /
              * @enum {string}
              */
-            code: "AUTH_401" | "PERM_403" | "NOT_FOUND_404" | "STATE_409" | "VALIDATION_422" | "MUST_CHANGE_PASSWORD" | "BIZ_PAYOUT_INVERT" | "BIZ_CAP_EXCEEDED" | "BIZ_LINE_LOCKED" | "BIZ_PR_PAID" | "BIZ_WRONG_SETTLE_SIDE" | "BIZ_NO_VOUCHER" | "BIZ_CASE_CLOSED" | "BIZ_REDUCE_OVER_SELF" | "BIZ_NO_RECORDING" | "BIZ_TOKEN_EXPIRED" | "BIZ_OPEN_RATE_REQUIRED" | "BIZ_NOT_PENDING_DISPATCH" | "BIZ_DUP_ACCT" | "BIZ_SMS_COOLDOWN" | "BIZ_QUOTA_EXHAUSTED" | "BIZ_ALREADY_CLAIMED" | "BIZ_HOLD_CAP" | "BIZ_REDISPATCH_GUARD" | "BIZ_EVIDENCE_FAILED" | "BIZ_SMS_FAILED";
+            code: "AUTH_401" | "PERM_403" | "NOT_FOUND_404" | "STATE_409" | "VALIDATION_422" | "MUST_CHANGE_PASSWORD" | "BIZ_PAYOUT_INVERT" | "BIZ_CAP_EXCEEDED" | "BIZ_LINE_LOCKED" | "BIZ_PR_PAID" | "BIZ_WRONG_SETTLE_SIDE" | "BIZ_NO_VOUCHER" | "BIZ_CASE_CLOSED" | "BIZ_REDUCE_OVER_SELF" | "BIZ_NO_RECORDING" | "BIZ_TOKEN_EXPIRED" | "BIZ_OPEN_RATE_REQUIRED" | "BIZ_NOT_PENDING_DISPATCH" | "BIZ_DUP_ACCT" | "BIZ_SMS_COOLDOWN" | "BIZ_QUOTA_EXHAUSTED" | "BIZ_ALREADY_CLAIMED" | "BIZ_HOLD_CAP" | "BIZ_REDISPATCH_GUARD" | "BIZ_EVIDENCE_FAILED" | "BIZ_SMS_FAILED" | "BIZ_ASR_FAILED" | "BIZ_LLM_FAILED";
             message: string;
             traceId?: string;
             details?: {
@@ -4831,10 +4857,10 @@ export interface components {
             caseCount?: number;
         };
         /**
-         * @description 三方通道：EBAOQUAN=易保全存证 / SMS=智讯云短信
+         * @description 三方通道：EBAOQUAN=易保全存证 / SMS=智讯云短信 / BAILIAN=阿里百炼录音转写(ASR) / DEEPSEEK=大模型(LLM)。v1.24.0 起 AI 的 key 可在后台配置——此前挡在门外是因为客户端未实现,填了没人读
          * @enum {string}
          */
-        IntegrationProviderEnum: "EBAOQUAN" | "SMS";
+        IntegrationProviderEnum: "EBAOQUAN" | "SMS" | "BAILIAN" | "DEEPSEEK";
         /** @description 三方通道配置。密钥只以 last4 掩码出现，明文永不出接口 */
         Integration: {
             provider?: components["schemas"]["IntegrationProviderEnum"];
@@ -9693,6 +9719,29 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["ValidationError"];
+        };
+    };
+    getPublicRecordingAudio: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 音频字节 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/wav": string;
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     listSettings: {

@@ -22,7 +22,9 @@ public enum BizError {
     // ── M6 存证第三方（易保全）──
     BIZ_EVIDENCE_FAILED(502, "BIZ_EVIDENCE_FAILED"),     // 第三方存证服务出证失败/不可达
     // ── M9 短信第三方（智讯云/028lk）──
-    BIZ_SMS_FAILED(502, "BIZ_SMS_FAILED");               // 短信网关发送失败/不可达
+    BIZ_SMS_FAILED(502, "BIZ_SMS_FAILED"),               // 短信网关发送失败/不可达
+    BIZ_ASR_FAILED(502, "BIZ_ASR_FAILED"),               // 语音转写(百炼)失败/不可达 v1.24.0
+    BIZ_LLM_FAILED(502, "BIZ_LLM_FAILED");               // 大模型(DeepSeek)生成失败/不可达 v1.24.0
 
     public final int httpStatus;
     public final String code;

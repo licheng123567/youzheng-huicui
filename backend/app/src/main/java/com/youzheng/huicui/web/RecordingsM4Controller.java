@@ -66,12 +66,17 @@ public class RecordingsM4Controller {
     private final com.youzheng.huicui.common.BalanceService balance;
 
     public RecordingsM4Controller(JdbcTemplate jdbc, RecordingService rec, ObjectMapper json,
-                                  com.youzheng.huicui.common.BalanceService balance) {
+                                  com.youzheng.huicui.common.BalanceService balance,
+                                  com.youzheng.huicui.integration.AiPipelineService ai) {
         this.balance = balance;
         this.jdbc = jdbc;
         this.rec = rec;
         this.json = json;
+        this.ai = ai;
     }
+
+    /** v1.24.0 真 ASR：未接入（无 key/未启用）→ submitAsr 直接返回，录音维持 PARSING 占位，不报错。 */
+    private final com.youzheng.huicui.integration.AiPipelineService ai;
 
     // CFG-TC 缺省（settings TIMERS.tcSeconds 未配时兜底；与 M3 同量级 7d）。
     private static final long DEFAULT_TC_SECONDS = 7L * 24 * 3600;
@@ -116,6 +121,10 @@ public class RecordingsM4Controller {
 
         // BR-M4-01b：存音频原始字节供回听（协调员/催收员）。存储失败不阻断上传主流程。
         try { rec.storeAudio(recId, file.getBytes(), file.getContentType()); } catch (Exception ignore) { }
+
+        // v1.24.0：音频落库后提交百炼转写（异步任务，轮询器推进到 READY）。
+        // 必须在 storeAudio 之后——百炼是回拉我们给的 URL，音频还没入库就拉不到。
+        ai.submitAsr(recId);
 
         // 同步写一条 activity(type=CALL, ref→录音)。
         rec.writeActivity(collectorId, caseId, "CALL", "通话录音上传", "call_recording", recId, "CALL");
@@ -217,6 +226,11 @@ public class RecordingsM4Controller {
         }
         rec.writeActivity(parseAccountId(s), snap.caseId(), "CALL", "通话录音重试解析",
                 "call_recording", recId, "CALL");
+        // v1.24.0 失败重试：清旧 task_id 后重新提交转写（BR-M5-08 失败不扣分钟，故不走计费）。
+        jdbc.update("UPDATE call_recording SET asr_task_id = NULL, asr_submitted_at = NULL,"
+                + " failure_code = NULL, failure_message = NULL WHERE id = ?", recId);
+        ai.submitAsr(recId);
+
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(rec.getDto(recId));
     }
 
@@ -252,6 +266,10 @@ public class RecordingsM4Controller {
         if (n == 0) {
             throw new ApiException(BizError.STATE_409, "录音状态已变更，补解析失败");
         }
+        // v1.24.0 重跑转写：先清旧 task_id，否则 submitAsr 视作「已提交过」而跳过（幂等键就是它）。
+        jdbc.update("UPDATE call_recording SET asr_task_id = NULL, asr_submitted_at = NULL WHERE id = ?", recId);
+        ai.submitAsr(recId);
+
         rec.writeActivity(parseAccountId(s), snap.caseId(), "CALL", "通话录音手动补解析",
                 "call_recording", recId, "CALL");
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(rec.getDto(recId));

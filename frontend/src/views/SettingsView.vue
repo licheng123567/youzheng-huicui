@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
@@ -30,12 +30,17 @@ function flatFields(row: any): Record<string, any> {
 
 // AI 配置分组。live=这一组是否真的被代码读取——只有飞轮的 trigger 在 FlywheelService 里被读；
 // llm/asr/prompts 存着但没人读（客户端 Phase 3 才写），必须在页面上说清楚，否则又是一个「配了不生效」的坑。
-const AI_GROUPS = [
+// v1.24.0：引擎已实现，是否「生效」取决于三方通道里有没有配 key 并启用——
+// 不能再写死 false（那是上一版没引擎时的实情），也不能写死 true（没配 key 时它确实不干活）。
+const asrLive = computed(() => integrations.value.some((i) => i.provider === 'BAILIAN' && i.enabled && i.configured))
+const llmLive = computed(() => integrations.value.some((i) => i.provider === 'DEEPSEEK' && i.enabled && i.configured))
+const aiLive = computed(() => asrLive.value || llmLive.value)
+const AI_GROUPS = computed(() => [
   { key: 'flywheel', label: '话术飞轮', live: true },
-  { key: 'llm', label: '大模型 LLM', live: false },
-  { key: 'asr', label: '语音转写 ASR', live: false },
-  { key: 'prompts', label: '提示词', live: false },
-]
+  { key: 'llm', label: '大模型 LLM', live: llmLive.value },
+  { key: 'asr', label: '语音转写 ASR', live: asrLive.value },
+  { key: 'prompts', label: '提示词', live: llmLive.value },
+])
 
 async function load() {
   const { data, error } = await api.GET('/settings', {})
@@ -228,6 +233,7 @@ const integrations = ref<any[]>([])
 const FIELD_CN: Record<string, string> = {
   baseUrl: '接口地址', smsBaseUrl: '普通短信接口地址', videoBaseUrl: '视频短信接口地址',
   appKey: 'appKey', appKeySecret: 'appKey 密钥', secretName: 'SecretName', secretKey: 'SecretKey',
+  apiKey: 'API Key', model: '模型',
 }
 const SRC_CN: Record<string, string> = { DB: '后台维护', ENV: '环境变量', NONE: '未配置' }
 // 每个通道有哪些密钥字段——**不能从 secretsMasked 的键推**：未配置时后端不回该键（null 被剥掉），
@@ -235,6 +241,8 @@ const SRC_CN: Record<string, string> = { DB: '后台维护', ENV: '环境变量'
 const SECRET_KEYS: Record<string, string[]> = {
   EBAOQUAN: ['appKey', 'appKeySecret'],
   SMS: ['secretName', 'secretKey'],
+  BAILIAN: ['apiKey'],      // v1.24.0 真接入：填了就真去调（录音转写）
+  DEEPSEEK: ['apiKey'],     // 填了就真去调（复盘/违规检测/建议）
 }
 async function loadIntegrations() {
   if (!auth.has('settings.manage')) return
@@ -390,7 +398,11 @@ onMounted(() => { load(); loadMore(); loadIntegrations() })
         <span>未配置主密钥 <b>HUICUI_CRYPTO_KEY</b>：无法在后台保存密钥（密钥必须加密落库）。请在部署环境注入后重启，或继续用环境变量配置三方 key。</span>
       </div>
       <div class="alert info">
-        <span>大模型（LLM）与语音转写（ASR）<b>暂不在此配置</b>——它们的客户端尚未接入（Phase 3）。现在给它们做密钥输入框，填了也不会被任何代码读取。</span>
+        <span>
+          填入百炼 / DeepSeek 的 API Key 并启用后<b>立即生效</b>（无需重启）：新上传的录音会真的送去转写，
+          转写完成后自动出 AI 复盘小结与违规检测，检出的违规直接进【质检/风控】的复核流程。
+          <b>未配置时维持占位行为</b>——录音停在「解析中」，不会报错、不影响催收员上传。
+        </span>
       </div>
     </template>
 
@@ -398,10 +410,14 @@ onMounted(() => { load(); loadMore(); loadIntegrations() })
       <span style="display:flex;align-items:center;gap:8px">AI 配置（GET/PUT /ai-config · 话术飞轮 LLM/ASR）</span>
       <button v-if="auth.has('ai.config')" class="btn txt" @click="openAiEdit">编辑</button>
     </div>
-    <div class="alert warn" style="margin-top:0">
-      <span>
-        <b>LLM / ASR / 提示词目前尚未接入</b>——代码里还没有 DeepSeek / 百炼的客户端（Phase 3 待做），
-        这几项现在只是**存着**，不会被任何调用读取。真正生效的只有下面的「变体晋升条件」（飞轮自动晋升靠它）。
+    <div class="alert" :class="aiLive ? 'info' : 'warn'" style="margin-top:0">
+      <span v-if="aiLive">
+        <b>AI 已接入并生效</b>：录音转写走百炼、复盘与违规检测走 DeepSeek。下面的模型/温度/提示词
+        <b>会真的影响输出</b>——改提示词等于改 AI 的判断口径，请谨慎。
+      </span>
+      <span v-else>
+        <b>AI 引擎已实现，但尚未配置密钥</b>——请在上方【三方通道】填入百炼 / DeepSeek 的 API Key 并启用。
+        未配置时：录音停在「解析中」、不出复盘（不报错）。下面的模型/温度/提示词要等密钥配好后才会真正生效。
       </span>
     </div>
     <div v-if="aiConfig">
