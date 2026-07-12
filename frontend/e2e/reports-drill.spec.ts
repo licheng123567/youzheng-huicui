@@ -114,6 +114,41 @@ test.describe('v1.25.0 平台经营报表穿透', () => {
     await expect(page.getByText(/口径与【结算对账】页逐字一致/)).toBeVisible()
   })
 
+  // KPI 去重（用户：「这部分感觉有点重复，整合一下」）：页首那组与穿透卡里那组在根层一模一样。
+  // 留会变的那组（钻进翠湖就显示翠湖的数），页首那组对平台不再渲染。
+  test('SA：KPI 只出现一组，且随下钻层级变', async ({ page }) => {
+    await loginRole(page, 'SA')
+    await page.getByRole('menuitem', { name: '经营报表' }).click()
+    await expect(page.getByTestId('drill-kpis')).toBeVisible()
+    // 全页只有一组「应收总额」卡（此前有两组，数字还一样）
+    await expect(page.locator('.kpi').filter({ hasText: '应收总额' })).toHaveCount(1)
+
+    // 钻进翠湖 → KPI 跟着变（这正是留这组而不是留页首那组的理由）
+    const cuihu = page.locator('tbody tr').filter({ hasText: '翠湖物业' }).first()
+    const due = money(await cuihu.locator('td').nth(1).innerText())
+    await cuihu.click()
+    await expectDrillKpi(page, '应收总额', due)
+  })
+
+  // 工具栏此前有三个筛子，全是装饰：applyFilter 一个参数都不传，后端也没有 area/period 参数。
+  // 假开关比没有开关更坏——只留真的那个（月份），并断言它真的在筛。
+  test('SA：月份筛选真的生效（没有案件的月份 → 空集）', async ({ page }) => {
+    await loginRole(page, 'SA')
+    await page.getByRole('menuitem', { name: '经营报表' }).click()
+    await expect(page.locator('tbody tr').filter({ hasText: '翠湖物业' })).toBeVisible()
+
+    await page.locator('input[type="month"]').fill('2019-01')
+    await page.getByRole('button', { name: '应用筛选' }).click()
+    await expect(page.getByText('暂无数据')).toBeVisible()
+
+    await page.getByRole('button', { name: '清除' }).click()
+    await expect(page.locator('tbody tr').filter({ hasText: '翠湖物业' })).toBeVisible()
+
+    // 装饰性筛子已删除
+    await expect(page.getByText('全部区域')).toHaveCount(0)
+    await expect(page.getByText('按季')).toHaveCount(0)
+  })
+
   test('PL 物业负责人：看不到平台穿透（那是平台口径）', async ({ page }) => {
     await loginRole(page, 'PL')
     await page.getByRole('menuitem', { name: '经营报表' }).click()
