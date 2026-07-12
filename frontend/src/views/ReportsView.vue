@@ -99,7 +99,81 @@ const capBilling = computed(() => {
   ]
 })
 
-onMounted(() => { load(); loadVl() })
+// ── 平台穿透报表（v1.25.0）──
+// 用户诉求：「平台的经营报表可以根据物业公司的聚合向下穿透统计，也可以根据服务商穿透统计。」
+// 此前平台视角是两张写死「暂无数据」的空表（区域损益/佣金毛利）+ 一张批次平表——
+// 既看不出哪家物业/哪家服务商贡献多少，更钻不下去。
+//
+// 两条链路：
+//   物业：各物业公司 → 点某家 → 它的项目 → 点某个 → 该项目的批次
+//   服务商：各服务商 → 点某家 → 它承接的批次
+// 服务商链路的口径是**双侧的**：在催盘子认当前归属、催回的钱认到账快照——
+// 所以「已结项」的批次会以「应收 0 / 已收 >0 / 0 件」出现，那是「钱催回来了但盘子已收走」，不是脏数据。
+type Crumb = { label: string; dimension: string; propertyId?: string; providerId?: string; projectId?: string }
+const drillMode = ref<'property' | 'provider'>('property')
+const crumbs = ref<Crumb[]>([])
+const drillRows = ref<any[]>([])
+const drillKpis = ref<any[]>([])
+const drillLoading = ref(false)
+// 两套列：催收进度（应收/回款/案件）与佣金双线（收佣/付佣各三态）。挤在一张表里会宽到没法看。
+const showComm = ref(false)
+
+const rootCrumb = computed<Crumb>(() => drillMode.value === 'property'
+  ? { label: '全部物业公司', dimension: 'property' }
+  : { label: '全部服务商', dimension: 'provider' })
+const curCrumb = computed<Crumb>(() => crumbs.value[crumbs.value.length - 1] ?? rootCrumb.value)
+// 当前层级的表头第一列叫什么（物业/项目/批次/服务商）
+const DIM_COL: Record<string, string> = {
+  property: '物业公司', provider: '服务商', project: '项目', batch: '批次',
+}
+const drillCanDeeper = computed(() => curCrumb.value.dimension !== 'batch')
+
+async function loadDrill() {
+  drillLoading.value = true
+  const c = curCrumb.value
+  const q: any = { dimension: c.dimension }
+  if (c.propertyId) q.propertyId = c.propertyId
+  if (c.providerId) q.providerId = c.providerId
+  if (c.projectId) q.projectId = c.projectId
+  const { data: d, error } = await api.GET('/reports/operation', { params: { query: q } as any })
+  drillLoading.value = false
+  if (error) { ElMessage.error('报表加载失败'); drillRows.value = []; return }
+  drillRows.value = (d as any)?.rows ?? []
+  drillKpis.value = ((d as any)?.kpis ?? []).map((k: any) => ({
+    l: k.label,
+    n: k.kind === 'MONEY' ? yuan(k.amountCents) : k.kind === 'RATE' ? pct(k.rate) : (k.count ?? '—'),
+  }))
+}
+
+function switchMode(m: 'property' | 'provider') {
+  drillMode.value = m
+  crumbs.value = []
+  loadDrill()
+}
+
+/** 点某一行往下钻。物业→项目→批次；服务商→批次（批次是末层，不再往下）。 */
+function drillInto(row: any) {
+  if (!drillCanDeeper.value || !row.dimKey) return
+  const c = curCrumb.value
+  if (c.dimension === 'property') {
+    crumbs.value.push({ label: row.dimName, dimension: 'project', propertyId: String(row.dimKey) })
+  } else if (c.dimension === 'provider') {
+    crumbs.value.push({ label: row.dimName, dimension: 'batch', providerId: String(row.dimKey) })
+  } else if (c.dimension === 'project') {
+    crumbs.value.push({ ...c, label: row.dimName, dimension: 'batch', projectId: String(row.dimKey) })
+  }
+  loadDrill()
+}
+
+/** 面包屑回退：-1=回到根 */
+function backTo(i: number) {
+  crumbs.value = i < 0 ? [] : crumbs.value.slice(0, i + 1)
+  loadDrill()
+}
+
+const isPlatform = computed(() => role.value === 'SA' || role.value === 'SE')
+
+onMounted(() => { load(); loadVl(); if (isPlatform.value) loadDrill() })
 </script>
 
 <template>
@@ -123,18 +197,116 @@ onMounted(() => { load(); loadVl() })
       </div>
     </div>
 
-    <!-- ═══ SA/SE：平台视角 ═══ -->
-    <template v-if="role === 'SA' || role === 'SE'">
+    <!-- ═══ SA/SE：平台视角 —— 穿透统计（v1.25.0）═══ -->
+    <template v-if="isPlatform">
       <div class="card">
-        <div class="card-h"><div class="t"><span class="bar"></span>区域 · 周期 损益聚合</div><div class="ops"><span class="note" style="margin:0">区域：{{ reportArea || '全部' }}</span></div></div>
-        <table><thead><tr><th>区域</th><th>周期</th><th>佣金收入</th><th>佣金支出</th><th>能力收入</th><th>平台利润</th></tr></thead>
-          <tbody><tr><td colspan="6" class="note" style="text-align:center">暂无数据</td></tr></tbody>
+        <div class="card-h">
+          <div class="t"><span class="bar"></span>穿透统计</div>
+          <div class="ops">
+            <div class="segctrl">
+              <span :class="{ on: drillMode === 'property' }" @click="switchMode('property')">按物业公司</span>
+              <span :class="{ on: drillMode === 'provider' }" @click="switchMode('provider')">按服务商</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 面包屑：点哪层回哪层 -->
+        <div class="note" style="margin:0 0 8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <a class="btn txt" style="padding:0" @click="backTo(-1)">{{ rootCrumb.label }}</a>
+          <template v-for="(c, i) in crumbs" :key="i">
+            <span>›</span>
+            <a v-if="i < crumbs.length - 1" class="btn txt" style="padding:0" @click="backTo(i)">{{ c.label }}</a>
+            <b v-else>{{ c.label }}</b>
+          </template>
+        </div>
+
+        <!-- 当前层级的 KPI（合计口径随筛子变；下钻后的合计必与上一层那一行严丝合缝） -->
+        <div class="kpis" data-testid="drill-kpis" style="margin-bottom:10px">
+          <div class="kpi" v-for="k in drillKpis" :key="k.l">
+            <div class="n">{{ k.n }}</div><div class="l">{{ k.l }}</div>
+          </div>
+        </div>
+
+        <!-- 佣金双线：收佣=物业付给平台(IN)，付佣=平台付给服务商(OUT)。口径与【结算对账】页逐字一致。 -->
+        <div class="segctrl" style="margin-bottom:8px">
+          <span :class="{ on: !showComm }" @click="showComm = false">催收进度</span>
+          <span :class="{ on: showComm }" @click="showComm = true">佣金双线</span>
+        </div>
+
+        <div style="overflow-x:auto">
+        <table>
+          <thead>
+            <tr v-if="!showComm">
+              <th>{{ DIM_COL[curCrumb.dimension] ?? '维度' }}</th>
+              <th style="width:140px">应收总额</th>
+              <th style="width:140px">已回款</th>
+              <th style="width:110px">回款率</th>
+              <th style="width:90px">案件数</th>
+              <th v-if="drillCanDeeper" style="width:90px">操作</th>
+            </tr>
+            <tr v-else>
+              <th>{{ DIM_COL[curCrumb.dimension] ?? '维度' }}</th>
+              <th style="width:120px">应收佣金</th>
+              <th style="width:120px">已收佣金</th>
+              <th style="width:120px">待收佣金</th>
+              <th style="width:120px">应付佣金</th>
+              <th style="width:120px">已付佣金</th>
+              <th style="width:120px">待付佣金</th>
+              <th style="width:110px">佣金毛利</th>
+              <th v-if="drillCanDeeper" style="width:80px">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in drillRows" :key="r.dimKey ?? r.dimName"
+                :class="{ 'row-click': drillCanDeeper && r.dimKey }" @click="drillInto(r)">
+              <td>
+                <b>{{ r.dimName }}</b>
+                <!-- 应收 0 但有回款：该批次已被结项，盘子收走了，但这家当年催回的钱仍算它的（V914 快照） -->
+                <span v-if="!r.dueCents && r.repayCents" class="tag war" style="margin-left:6px">已结项·仅历史回款</span>
+                <!-- 漏配付佣比例：应付按 0 计入，会低估平台欠款——必须让人看见 -->
+                <span v-if="showComm && r.outRateMissingBatches" class="tag dan" style="margin-left:6px"
+                      :title="'有 ' + r.outRateMissingBatches + ' 个批次未设付佣比例，其应付佣金按 0 计入（低估）'">
+                  {{ r.outRateMissingBatches }} 个批次未设付佣比例
+                </span>
+              </td>
+              <template v-if="!showComm">
+                <td class="num">{{ yuan(r.dueCents) }}</td>
+                <td class="num">{{ yuan(r.repayCents) }}</td>
+                <td class="num">{{ pct(r.repayRate) }}</td>
+                <td class="num">{{ r.caseCount ?? 0 }}</td>
+              </template>
+              <template v-else>
+                <td class="num">{{ yuan(r.commInDueCents) }}</td>
+                <td class="num">{{ yuan(r.commInSettledCents) }}</td>
+                <td class="num"><b :style="{ color: r.commInUnsettledCents ? 'var(--warning)' : '' }">{{ yuan(r.commInUnsettledCents) }}</b></td>
+                <td class="num">{{ yuan(r.commOutDueCents) }}</td>
+                <td class="num">{{ yuan(r.commOutSettledCents) }}</td>
+                <td class="num"><b :style="{ color: r.commOutUnsettledCents ? 'var(--warning)' : '' }">{{ yuan(r.commOutUnsettledCents) }}</b></td>
+                <td class="num">{{ yuan((r.commInDueCents ?? 0) - (r.commOutDueCents ?? 0)) }}</td>
+              </template>
+              <td v-if="drillCanDeeper" @click.stop>
+                <a v-if="r.dimKey" class="btn txt" @click="drillInto(r)">下钻 ›</a>
+                <span v-else class="note" style="margin:0">—</span>
+              </td>
+            </tr>
+            <tr v-if="!drillRows.length && !drillLoading">
+              <td :colspan="showComm ? 9 : 6" class="note" style="text-align:center;padding:32px 0">暂无数据</td>
+            </tr>
+          </tbody>
         </table>
-        <div class="note">利润=（佣金收入−佣金支出）+能力收入；本期不计能力成本。</div>
-      </div>
-      <div class="card">
-        <div class="card-h"><div class="t"><span class="bar"></span>佣金毛利</div></div>
-        <table><thead><tr><th>项目</th><th>收佣</th><th>付佣</th><th>毛利</th><th>毛利率</th></tr></thead><tbody><tr><td colspan="5" class="note" style="text-align:center">暂无数据</td></tr></tbody></table>
+        </div>
+
+        <div class="note" v-if="showComm">
+          <span>
+            收佣=物业付给平台，付佣=平台付给服务商；<b>口径与【结算对账】页逐字一致</b>（每笔回款 × 该批次比率逐笔计算，
+            已收/已付看支付申请单是否结清，不计已冲正）。待收/待付即「还没结清的部分」，可到【结算对账】开支付申请单。
+          </span>
+        </div>
+
+        <div class="note" v-if="drillMode === 'provider'">
+          服务商口径是双侧的：<b>在催盘子按当前归属、催回的钱按到账快照</b>——批次结项换商后，前一家催回的钱仍算前一家的，
+          不会随案件归属改变而漂移。故会出现「应收 0 / 已回款 &gt; 0」的行（盘子已收走，钱是它当年催的）。
+        </div>
       </div>
     </template>
 
