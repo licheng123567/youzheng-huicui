@@ -47,7 +47,11 @@ class SmsServiceTest {
     }
 
     private SmsService service() {
-        return new SmsService(jdbc, client, "【有证慧催】", "https://h5.example.com", "", "");
+        // v1.19.0：SmsService 增 BalanceService 依赖（短信发送计费）。本测试只验证 sms_record 落流水口径，
+        // 且 client 默认 isEnabled()=false（mock 布尔默认 false）→ billable() 恒 false → 不触发计费，
+        // 故传 mock BalanceService 即可（不会被调用）。
+        return new SmsService(jdbc, client, org.mockito.Mockito.mock(com.youzheng.huicui.common.BalanceService.class),
+                "【有证慧催】", "https://h5.example.com", "", "");
     }
 
     /** inserted 行的列序：org_id, case_id, project_id, template, status, failure_reason */
