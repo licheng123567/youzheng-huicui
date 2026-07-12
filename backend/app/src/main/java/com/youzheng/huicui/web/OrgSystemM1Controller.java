@@ -278,6 +278,92 @@ public class OrgSystemM1Controller {
         return Map.of();
     }
 
+    // ── [3b] POST /orgs/{id}/disable · /enable  停用/启用组织（v1.22.0·BR-M1-15）────────────
+    // 用户拍板：组织级停权 = **停新单不断存量**。停用后：
+    //   · 不能被派新单（DispatchM3Controller.isActiveProvider 早就在校验 org.status='ACTIVE'——
+    //     这个开关一直在承重，却没有任何端点能合法地拨它，只能手工改库。本端点把它接上）；
+    //   · 不能新建项目 / 导入批次（下面 requireOrgActive 挂在 M2 的两个写入口）；
+    //   · **但成员照常登录、在催案件照常作业、结算照常** —— 一按就把在催案件变死账，伤的是物业的回款。
+    //     要清场另走「批次结项」(POST /batches/{id}/close-engagement)，那才是收回案件的动作。
+    // 停平台自己 → 409（会把整个系统锁死）。reason 必填：这是掐别人生意的动作，必须留下为什么。
+    @PostMapping("/orgs/{id}/disable")
+    @RequirePermission("org.manage")
+    @Transactional
+    public Map<String, Object> disableOrg(@PathVariable String id,
+                                          @RequestBody(required = false) Map<String, Object> body) {
+        return setOrgStatus(id, body, false);
+    }
+
+    @PostMapping("/orgs/{id}/enable")
+    @RequirePermission("org.manage")
+    @Transactional
+    public Map<String, Object> enableOrg(@PathVariable String id) {
+        return setOrgStatus(id, null, true);
+    }
+
+    private Map<String, Object> setOrgStatus(String id, Map<String, Object> body, boolean enable) {
+        CurrentSubject s = SubjectContext.get();
+        if (!s.isPlatform()) {
+            throw new ApiException(BizError.PERM_403, "仅平台可停用/启用组织");
+        }
+        long orgId = parseIdOr404(id, "组织");
+        Map<String, Object> org;
+        try {
+            org = jdbc.queryForMap("SELECT name, type, status FROM org WHERE id = ?", orgId);
+        } catch (org.springframework.dao.EmptyResultDataAccessException e) {
+            throw new ApiException(BizError.NOT_FOUND_404, "组织不存在: " + id);
+        }
+        String type = (String) org.get("type");
+        String oldStatus = (String) org.get("status");
+        if ("PLATFORM".equals(type)) {
+            throw new ApiException(BizError.STATE_409, "平台自身不可停用/启用");
+        }
+        String newStatus = enable ? "ACTIVE" : "DISABLED";
+        if (newStatus.equals(oldStatus)) {
+            throw new ApiException(BizError.STATE_409,
+                    enable ? "该组织已是启用状态" : "该组织已停用");
+        }
+
+        String reason = null;
+        if (!enable) {
+            Object r = body == null ? null : body.get("reason");
+            reason = r == null ? null : String.valueOf(r).trim();
+            if (reason == null || reason.isBlank()) {
+                throw new ApiException(BizError.VALIDATION_422, "reason 必填（停用组织须留原因）");
+            }
+            jdbc.update("UPDATE org SET status = 'DISABLED', disabled_at = now(), disabled_by = ?,"
+                    + " disabled_reason = ?, updated_at = now() WHERE id = ?",
+                    Long.parseLong(s.accountId()), reason, orgId);
+        } else {
+            jdbc.update("UPDATE org SET status = 'ACTIVE', disabled_at = NULL, disabled_by = NULL,"
+                    + " disabled_reason = NULL, updated_at = now() WHERE id = ?", orgId);
+        }
+
+        // 通知组织负责人（被停/被恢复的一方必须知道，否则只会看到「派单怎么点不动了」）。
+        Long owner = jdbc.query("SELECT owner_account_id FROM org WHERE id = ?",
+                rs -> rs.next() ? (Long) rs.getObject("owner_account_id") : null, orgId);
+        if (owner != null) {
+            jdbc.update("INSERT INTO notification(recipient_account_id, type, title, body, ref_type, ref_id)"
+                            + " VALUES (?, 'ORG_STATUS', ?, ?, 'org', ?)",
+                    owner,
+                    enable ? "贵司已恢复启用" : "贵司已被平台停用",
+                    enable
+                        ? "平台已恢复贵司的启用状态，可正常承接新单/新建项目。"
+                        : "平台已停用贵司：不再接受新派单与新建项目/导入批次；已承接的在催案件与结算不受影响。原因：" + reason,
+                    orgId);
+        }
+
+        Map<String, Object> before = new LinkedHashMap<>();
+        before.put("status", oldStatus);
+        Map<String, Object> after = new LinkedHashMap<>();
+        after.put("status", newStatus);
+        if (reason != null) after.put("reason", reason);
+        audit.write(s, enable ? "org.enable" : "org.disable", "org", String.valueOf(orgId),
+                "PLATFORM", null, reason, before, after);
+
+        return Map.of("ok", true, "status", newStatus);
+    }
+
     // ── [4] GET /audit-log ────────────────────────────────────────────────────
     // x-data-scope=range，无 x-permission。
     @GetMapping("/audit-log")

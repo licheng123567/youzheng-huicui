@@ -1879,6 +1879,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dispose-tasks/{id}/enforce": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 平台强制停用当事人账号(归属方逾期未回执的兜底 BR-M5-07d)·写审计
+         * @description 停权口径(v1.22.0)：**个人停权由组织自己执行**——平台复核下「停用账号(DEACTIVATE)」决定后，
+         *     由归属方负责人(VL 服务商负责人 / PL 物业负责人)在自己的成员管理里停用该员工并提交整改回执。
+         *     **只有归属方逾期 72h 未回执**，平台才可调本端点强制停用；否则平台随时能停别人家的人，
+         *     BR-M5-07「谁的员工谁处置」就名存实亡。reason 必填(强停须留原因)。
+         *     409 场景(权限是有的，只是此刻不该用)：决定不是 DEACTIVATE / 任务已回执 DONE / 已强停过(幂等) / 未过 72h 整改期。
+         */
+        post: operations["enforceDisposeTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pay/{token}": {
         parameters: {
             query?: never;
@@ -2701,6 +2727,51 @@ export interface paths {
         patch: operations["rebindOrgOwner"];
         trace?: never;
     };
+    "/orgs/{id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 停用组织(停新单不断存量 BR-M1-15)·写审计+通知负责人
+         * @description 组织级停权(v1.22.0)。停用后：**不能被派新单**(派单早已校验 org.status='ACTIVE'——这个开关一直在承重，
+         *     却没有任何端点能合法地拨它，只能手工改库；本端点把它接上)、**不能新建项目/导入批次**(409)；
+         *     **但成员照常登录、在催案件照常作业、结算照常**——一按就把在催案件变死账，伤的是物业的回款。
+         *     要清场另走「批次结项」(POST /batches/{id}/close-engagement)，那才是收回案件的动作。
+         *     平台自身不可停用(409)。reason 必填。
+         */
+        post: operations["disableOrg"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orgs/{id}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 恢复启用组织(BR-M1-15)·写审计+通知负责人 */
+        post: operations["enableOrg"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings": {
         parameters: {
             query?: never;
@@ -3051,7 +3122,7 @@ export interface components {
         /** @enum {string} */
         DisposeTaskStatusEnum: "PENDING" | "IN_PROGRESS" | "DONE";
         /**
-         * @description 平台处理决定：约谈/警告/限期整改/限制/停用(仅停用真置账号 DISABLED)
+         * @description 平台处理决定：约谈/警告/限期整改/限制/停用账号。v1.22.0 起**没有一档会当场改别人家的账号**——决定只是下给归属方的要求,由归属方负责人在自己的成员管理执行并回执;DEACTIVATE 逾期 72h 未回执才由平台 enforceDisposeTask 强制停用(BR-M5-07 谁的员工谁处置)
          * @enum {string}
          */
         QcDecisionEnum: "INTERVIEW" | "WARNING" | "RECTIFY" | "RESTRICT" | "DEACTIVATE";
@@ -4282,6 +4353,15 @@ export interface components {
             receiptNote?: string | null;
             /** Format: date-time */
             receiptedAt?: string | null;
+            /** @description 平台此刻可否强制停用(decision=DEACTIVATE 且 PENDING 且已过 72h 整改期且未强停过)。服务端算好下发,前端不复刻时限判断 */
+            enforceable?: boolean;
+            /**
+             * Format: date-time
+             * @description 平台强制停用时刻
+             */
+            enforcedAt?: string | null;
+            /** @description 平台强制停用原因 */
+            enforceReason?: string | null;
         };
         /** @description 隐私最小化：仅缴费必要信息，不含催收过程/他案/服务商 BR-M7-07。姓名脱敏后展示；房号为账单归属确认+对公转账备注必要信息 */
         OwnerBill: {
@@ -8120,6 +8200,37 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    enforceDisposeTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description 强制停用原因(必填·写审计与站内信) */
+                    reason: string;
+                };
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
     getOwnerBill: {
         parameters: {
             query?: never;
@@ -9372,6 +9483,70 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
+        };
+    };
+    disableOrg: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description 停用原因(必填·写审计与站内信) */
+                    reason: string;
+                };
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok?: boolean;
+                        status?: string;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    enableOrg: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok?: boolean;
+                        status?: string;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     listSettings: {

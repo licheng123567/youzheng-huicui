@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 有证慧催 · API 契约（全模块·已冻结）
-  version: 1.21.1  # v1.21.1(additive·成员管理口径对齐): listMembers +orgId 过滤——平台「成员管理」只见平台员工(SA/SE)，与「平台只建平台员工 BR-M1-04a」的写口径一致；服务商/物业成员归各自负责人管理。端点不收窄(CoordinatorPicker 需 role=PC 跨组织全量) | v1.21.0(additive·短信通道按组织管理 V934): 平台为每个物业统一配置签名/模板(物业只读)、平台代向运营商报备——+GET /sms/orgs(组织列表:签名/模板数/本月发送/短信余额) | +GET·PUT /orgs/{id}/sms-config | +POST /orgs/{id}/sms-templates·PUT·DELETE /sms-templates/{tplId}·POST /sms-templates/{tplId}/register(报备结果回填,ACTIVE 必带模板ID+变量数校验防错位,旧 ACTIVE 同事务归档) | +GET /sms-records/stats(全量口径KPI,取代前端100条computed) | /sms-records +orgId 参数&响应 +orgId/orgName | 底层:org_sms_config+org_sms_template(V934),SmsService 四级兜底解析(org→settings→yml→常量,不缓存);**修真bug**:settings.sms 此前是只写不读黑洞(SA填的签名后端从不读)、UI写cooldownMinutes而后端读cooldownSeconds(改了永不生效) | v1.20.0(收敛·法律文书停止计费 V933): 系统无「法律文书余额」概念——去 createCaseLegalDoc 的 LEGAL 扣费挂点;额度总览只出 STT/SMS/EVIDENCE 三类;存量 LEGAL 计费数据 V933 清除;BillingTypeEnum 的 LEGAL 值保留仅为兼容(删枚举=破坏性变更)、无写入路径。法律文书业务功能(legal_doc/生成/送达/legal.create)不受影响 | v1.19.0(additive·额度管理 V932): 计费明细+充值中心合并为「额度管理」——+GET /billing/orgs(组织额度总览:一行=组织×类型,余额+本月/上月用量+rechargeable 矩阵下发) | +GET /billing/usage/summary(按 组织×类型×月/日 聚合) | /billing/usage +orgId 参数&响应 +orgId/orgName | /billing/recharge-log +orgId 参数&响应 +orgId/orgName/note/operatedByName,ref 改可空(修既有违约:DB 恒写 NULL) | /orgs +type/status 过滤(充值选择器须排除 DISABLED) | 底层:org_balance 权威余额表(V932,取代 recharge_log 快照推导;EVIDENCE/LEGAL 后付允许负余额=欠用记账) + 真实扣费路径补齐(单条录音解析/短信发送/存证出证/法务文书;此前只有 STT 批量补解析) | v1.18.0(收敛·开放抢单停用 V931): setBatchOpenRate/openCaseForClaim 标 deprecated·停用桩恒 409(个体跨商抢单让个人行为产生组织义务·与组织对组织商业模型断裂;服务商执行不佳走 批次结项→重派;催收员抢单仅限本商公海 S2) | 释放/TC 到期一律回 S2(去 S4 回流) | sea pool=open 恒空集 | 结算 OUT 生效率去 open_rate 兜底只认 payOutRate | PoolDist 去 s4 | 存量 S4 案件 V931 迁回平台公海 | v1.17.0(additive·批次结项+承接段 V930): +POST /batches/{id}/close-engagement(结项=终止当前服务商承接·S1/S2/S3 全部收回回平台公海·承诺保留·批次回 PENDING 可重派;审计写 case.engagement-recall 不触发再派护栏——结项后重派对象含派回原商由平台裁量) | +GET /batches/{id}/close-preview(结项确认框:可收回统计+带有效分期承诺案件警示) | +GET /batches/{id}/engagements(承接历史:每段 服务商/起止/付佣快照/期间回款[按 V914 到账快照+时间窗归段·结算口径一致不漂移]/期间回款率=期间回款÷期初剩余应收/结项原因) | BatchBase +运营统计可选字段(projectName/providerName/caseCount/dueTotalCents/repaidTotalCents/repayRate/engagementCount/poolDist——角色中立进 Base 三视图同含,修批次列表幽灵列) | getOperationReport dimension +provider(案件侧按当前 c.provider_id/回款侧按快照 provider_id_at_repay) | v1.16.0(additive·平台双线总账 V929): +GET /recon/rollup-dual(平台批次维一行双线 应收/已收/未收+应付/已付/未付+毛利;platform-only) | RepayLine +双线可空字段(commInCents/settledIn/paymentRequestIdIn/prNoIn 平台+物业;commOutCents/settledOut/paymentRequestIdOut/prNoOut 平台+服务商;providerIdAtRepay/providerName 仅平台;legacy settled/paymentRequestId 废弃为按视角映射——PROVIDER=OUT 线值,其余=IN 线值);底层 repay_line 占用拆双线(同一笔回款可同时进 IN 收佣单与 OUT 付佣单,各线独立结清) | v1.15.0(additive·质检处置修正): RiskRecord +violatorOrgName/violatorRole/ownScope(谁的员工谁处置判定·平台看反馈对象);平台去 qc.escalate(顶层不上报只复核处置);dispose/escalate 补通知反馈组织负责人/当事人(BR-M5-07a/b/c) | v1.14.0(additive·确定性飞轮闭环): +POST /script-lib/recompute(飞轮结算重算+达标 AI 变体自动晋升环7) | Promise +scriptId(承诺话术归因·环3) | getScriptFlywheel +scriptId(单条话术漏斗·口径修正为单调子集) | PromiseInput.sourceSuggestionId 语义落地(采纳话术卡→承诺归因) | v1.13.0(additive·SA 飞轮+作战手册): +GET /script-lib/flywheel(话术飞轮漏斗+Wilson趋势) | +GET /projects/{id}/playbook/diff(作战手册版本对比行级diff) | v1.12.0(additive·平台超管页还原): Script +wilson(话术库排序权威透出) | listCases +holderName/contactPhone(案件管理归属催收员/联系方式列) | getOperationReport dimension +collector(经营报表催收员维,已于 v1.10.0 引入合并至此) | v1.11.0(additive·计费明细穿透列): BillingUsage +ownerName/room/projectName/batchNo(caseId join,计费明细页明细行业主/房号/项目/批次列;修服务商计费明细空表——STT 用量归服务商 org 见 seed) | v1.10.0(additive·佣金名册明细): CoCommissionBatchRow +caseCount/baseCents(案件数·回款金额,支撑佣金明细待结算/已结算分档) | v1.9.0(语义收敛·统一支付逻辑): 付佣线(OUT)生成/发送/撤回改为仅平台(服务商对支付申请单只读,批次结算标记照常可见;OUT 归属由明细 provider_id_at_repay 快照推导且须一致);佣金线(服务商→催收员 co-pay-docs)不变 | v1.8.0(additive·VL 团队即时看板 US-M10-03): CollectorCapacity +todayActions/todayRepayCents(工作台看板与指派弹窗共用同端点) | v1.7.0(additive·公海可见性收敛 BR-M3-29): listSea/listSeaEvents 补 x-permission=sea.view(全契约最后两个无权限点业务读端点;PL/PC 无此点→403·公海概念消失);平台方对 pool=provider 改返回空集(不看服务商公海明细,明细归 VL/CO;平台靠 T1/T2 预警与聚合) | v1.6.0(additive·App 多角色): listCases +holderId(私海过滤;催收员端「我持有的」——不传时 range scope 对 CO 返回本服务商全部案件,并非本人持有) | v1.5.0(additive·契约外端点回写): +录音回听 audio(V921)/佣金三端点 comm-status·comm-in-rate·commission-rates(V922)/附件四端点 attachments·upload-sessions(V923)/存证证书 certificate;rebindOrgOwner 200 补 ownerSetupToken;escalate 补 note;sms-code 补 502(未启用拒发·废 000000 后门) | v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
+  version: 1.22.0  # v1.22.0(停权口径落地 V935): **个人停权=组织自己停,平台强制兜底**——qc.review 的 DEACTIVATE 不再当场 UPDATE account(平台越过组织停别人家的人,与 BR-M5-07 打架),改为下决定→建处置任务→归属方负责人在自己的成员管理执行并回执;+POST /dispose-tasks/{id}/enforce(逾期 72h 未回执才强停,reason 必填,写审计+通知);DisposeTask +enforceable/enforcedAt/enforceReason | **组织级停权=停新单不断存量**——+POST /orgs/{id}/disable·/enable(org.status 一直在被派单校验却没有端点能拨它,只能手工改库;现接上):停用后不能被派新单/不能新建项目·导入批次(409),但成员照常登录、在催案件照常作业、结算照常(要清场走批次结项) | v1.21.1(additive·成员管理口径对齐): listMembers +orgId 过滤——平台「成员管理」只见平台员工(SA/SE)，与「平台只建平台员工 BR-M1-04a」的写口径一致；服务商/物业成员归各自负责人管理。端点不收窄(CoordinatorPicker 需 role=PC 跨组织全量) | v1.21.0(additive·短信通道按组织管理 V934): 平台为每个物业统一配置签名/模板(物业只读)、平台代向运营商报备——+GET /sms/orgs(组织列表:签名/模板数/本月发送/短信余额) | +GET·PUT /orgs/{id}/sms-config | +POST /orgs/{id}/sms-templates·PUT·DELETE /sms-templates/{tplId}·POST /sms-templates/{tplId}/register(报备结果回填,ACTIVE 必带模板ID+变量数校验防错位,旧 ACTIVE 同事务归档) | +GET /sms-records/stats(全量口径KPI,取代前端100条computed) | /sms-records +orgId 参数&响应 +orgId/orgName | 底层:org_sms_config+org_sms_template(V934),SmsService 四级兜底解析(org→settings→yml→常量,不缓存);**修真bug**:settings.sms 此前是只写不读黑洞(SA填的签名后端从不读)、UI写cooldownMinutes而后端读cooldownSeconds(改了永不生效) | v1.20.0(收敛·法律文书停止计费 V933): 系统无「法律文书余额」概念——去 createCaseLegalDoc 的 LEGAL 扣费挂点;额度总览只出 STT/SMS/EVIDENCE 三类;存量 LEGAL 计费数据 V933 清除;BillingTypeEnum 的 LEGAL 值保留仅为兼容(删枚举=破坏性变更)、无写入路径。法律文书业务功能(legal_doc/生成/送达/legal.create)不受影响 | v1.19.0(additive·额度管理 V932): 计费明细+充值中心合并为「额度管理」——+GET /billing/orgs(组织额度总览:一行=组织×类型,余额+本月/上月用量+rechargeable 矩阵下发) | +GET /billing/usage/summary(按 组织×类型×月/日 聚合) | /billing/usage +orgId 参数&响应 +orgId/orgName | /billing/recharge-log +orgId 参数&响应 +orgId/orgName/note/operatedByName,ref 改可空(修既有违约:DB 恒写 NULL) | /orgs +type/status 过滤(充值选择器须排除 DISABLED) | 底层:org_balance 权威余额表(V932,取代 recharge_log 快照推导;EVIDENCE/LEGAL 后付允许负余额=欠用记账) + 真实扣费路径补齐(单条录音解析/短信发送/存证出证/法务文书;此前只有 STT 批量补解析) | v1.18.0(收敛·开放抢单停用 V931): setBatchOpenRate/openCaseForClaim 标 deprecated·停用桩恒 409(个体跨商抢单让个人行为产生组织义务·与组织对组织商业模型断裂;服务商执行不佳走 批次结项→重派;催收员抢单仅限本商公海 S2) | 释放/TC 到期一律回 S2(去 S4 回流) | sea pool=open 恒空集 | 结算 OUT 生效率去 open_rate 兜底只认 payOutRate | PoolDist 去 s4 | 存量 S4 案件 V931 迁回平台公海 | v1.17.0(additive·批次结项+承接段 V930): +POST /batches/{id}/close-engagement(结项=终止当前服务商承接·S1/S2/S3 全部收回回平台公海·承诺保留·批次回 PENDING 可重派;审计写 case.engagement-recall 不触发再派护栏——结项后重派对象含派回原商由平台裁量) | +GET /batches/{id}/close-preview(结项确认框:可收回统计+带有效分期承诺案件警示) | +GET /batches/{id}/engagements(承接历史:每段 服务商/起止/付佣快照/期间回款[按 V914 到账快照+时间窗归段·结算口径一致不漂移]/期间回款率=期间回款÷期初剩余应收/结项原因) | BatchBase +运营统计可选字段(projectName/providerName/caseCount/dueTotalCents/repaidTotalCents/repayRate/engagementCount/poolDist——角色中立进 Base 三视图同含,修批次列表幽灵列) | getOperationReport dimension +provider(案件侧按当前 c.provider_id/回款侧按快照 provider_id_at_repay) | v1.16.0(additive·平台双线总账 V929): +GET /recon/rollup-dual(平台批次维一行双线 应收/已收/未收+应付/已付/未付+毛利;platform-only) | RepayLine +双线可空字段(commInCents/settledIn/paymentRequestIdIn/prNoIn 平台+物业;commOutCents/settledOut/paymentRequestIdOut/prNoOut 平台+服务商;providerIdAtRepay/providerName 仅平台;legacy settled/paymentRequestId 废弃为按视角映射——PROVIDER=OUT 线值,其余=IN 线值);底层 repay_line 占用拆双线(同一笔回款可同时进 IN 收佣单与 OUT 付佣单,各线独立结清) | v1.15.0(additive·质检处置修正): RiskRecord +violatorOrgName/violatorRole/ownScope(谁的员工谁处置判定·平台看反馈对象);平台去 qc.escalate(顶层不上报只复核处置);dispose/escalate 补通知反馈组织负责人/当事人(BR-M5-07a/b/c) | v1.14.0(additive·确定性飞轮闭环): +POST /script-lib/recompute(飞轮结算重算+达标 AI 变体自动晋升环7) | Promise +scriptId(承诺话术归因·环3) | getScriptFlywheel +scriptId(单条话术漏斗·口径修正为单调子集) | PromiseInput.sourceSuggestionId 语义落地(采纳话术卡→承诺归因) | v1.13.0(additive·SA 飞轮+作战手册): +GET /script-lib/flywheel(话术飞轮漏斗+Wilson趋势) | +GET /projects/{id}/playbook/diff(作战手册版本对比行级diff) | v1.12.0(additive·平台超管页还原): Script +wilson(话术库排序权威透出) | listCases +holderName/contactPhone(案件管理归属催收员/联系方式列) | getOperationReport dimension +collector(经营报表催收员维,已于 v1.10.0 引入合并至此) | v1.11.0(additive·计费明细穿透列): BillingUsage +ownerName/room/projectName/batchNo(caseId join,计费明细页明细行业主/房号/项目/批次列;修服务商计费明细空表——STT 用量归服务商 org 见 seed) | v1.10.0(additive·佣金名册明细): CoCommissionBatchRow +caseCount/baseCents(案件数·回款金额,支撑佣金明细待结算/已结算分档) | v1.9.0(语义收敛·统一支付逻辑): 付佣线(OUT)生成/发送/撤回改为仅平台(服务商对支付申请单只读,批次结算标记照常可见;OUT 归属由明细 provider_id_at_repay 快照推导且须一致);佣金线(服务商→催收员 co-pay-docs)不变 | v1.8.0(additive·VL 团队即时看板 US-M10-03): CollectorCapacity +todayActions/todayRepayCents(工作台看板与指派弹窗共用同端点) | v1.7.0(additive·公海可见性收敛 BR-M3-29): listSea/listSeaEvents 补 x-permission=sea.view(全契约最后两个无权限点业务读端点;PL/PC 无此点→403·公海概念消失);平台方对 pool=provider 改返回空集(不看服务商公海明细,明细归 VL/CO;平台靠 T1/T2 预警与聚合) | v1.6.0(additive·App 多角色): listCases +holderId(私海过滤;催收员端「我持有的」——不传时 range scope 对 CO 返回本服务商全部案件,并非本人持有) | v1.5.0(additive·契约外端点回写): +录音回听 audio(V921)/佣金三端点 comm-status·comm-in-rate·commission-rates(V922)/附件四端点 attachments·upload-sessions(V923)/存证证书 certificate;rebindOrgOwner 200 补 ownerSetupToken;escalate 补 note;sms-code 补 502(未启用拒发·废 000000 后门) | v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
   contact: { name: 契约 Owner（架构师）, email: api-owner@youzheng.example }
   description: |
     从高保真原型 + PRD(BR/US) + 报告14口径抽取的全模块契约（单一事实源 SSOT）。**v1.0 已冻结（2026-06-24）**：经 codex×2 + 人工×2 共四轮独立审计、openapi-generator Spring 桩 mvn compile、Flyway 真库迁移三重验证，0 阻断/0 高。破坏性变更须升 major + 双 approve。
@@ -1661,6 +1661,28 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /dispose-tasks/{id}/enforce:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    post:
+      operationId: enforceDisposeTask
+      tags: [qc]
+      summary: 平台强制停用当事人账号(归属方逾期未回执的兜底 BR-M5-07d)·写审计
+      description: |
+        停权口径(v1.22.0)：**个人停权由组织自己执行**——平台复核下「停用账号(DEACTIVATE)」决定后，
+        由归属方负责人(VL 服务商负责人 / PL 物业负责人)在自己的成员管理里停用该员工并提交整改回执。
+        **只有归属方逾期 72h 未回执**，平台才可调本端点强制停用；否则平台随时能停别人家的人，
+        BR-M5-07「谁的员工谁处置」就名存实亡。reason 必填(强停须留原因)。
+        409 场景(权限是有的，只是此刻不该用)：决定不是 DEACTIVATE / 任务已回执 DONE / 已强停过(幂等) / 未过 72h 整改期。
+      x-permission: qc.review
+      x-data-scope: platform
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, description: '强制停用原因(必填·写审计与站内信)' } } } } } }
+      responses:
+        '200': { description: ok }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /pay/{token}:
     parameters: [ { name: token, in: path, required: true, schema: { type: string } } ]
     get:
@@ -2211,6 +2233,41 @@ paths:
         '200': { description: 'ok。resetPassword=true 时带 ownerSetupToken(一次性设密令牌明文，仅此响应出现一次，带外转交新负责人 B-04方案A)；否则空对象', content: { application/json: { schema: { type: object, properties: { ownerSetupToken: { type: string, description: '一次性 setupToken(TTL 24h)；仅 resetPassword=true 返回' } } } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /orgs/{id}/disable:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    post:
+      tags: [org-member]
+      operationId: disableOrg
+      summary: 停用组织(停新单不断存量 BR-M1-15)·写审计+通知负责人
+      description: |
+        组织级停权(v1.22.0)。停用后：**不能被派新单**(派单早已校验 org.status='ACTIVE'——这个开关一直在承重，
+        却没有任何端点能合法地拨它，只能手工改库；本端点把它接上)、**不能新建项目/导入批次**(409)；
+        **但成员照常登录、在催案件照常作业、结算照常**——一按就把在催案件变死账，伤的是物业的回款。
+        要清场另走「批次结项」(POST /batches/{id}/close-engagement)，那才是收回案件的动作。
+        平台自身不可停用(409)。reason 必填。
+      x-permission: org.manage
+      x-data-scope: platform
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, description: '停用原因(必填·写审计与站内信)' } } } } } }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string } } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /orgs/{id}/enable:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    post:
+      tags: [org-member]
+      operationId: enableOrg
+      summary: 恢复启用组织(BR-M1-15)·写审计+通知负责人
+      x-permission: org.manage
+      x-data-scope: platform
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, status: { type: string } } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /settings:
     get:
       tags: [settings]
@@ -2480,7 +2537,7 @@ components:
     RiskLevelEnum: { type: string, enum: [HIGH, MID, LOW] }
     RiskReviewVerdictEnum: { type: string, enum: [CONFIRMED, FALSE_POSITIVE, ESCALATED] }
     DisposeTaskStatusEnum: { type: string, enum: [PENDING, IN_PROGRESS, DONE] }
-    QcDecisionEnum: { type: string, enum: [INTERVIEW, WARNING, RECTIFY, RESTRICT, DEACTIVATE], description: '平台处理决定：约谈/警告/限期整改/限制/停用(仅停用真置账号 DISABLED)' }
+    QcDecisionEnum: { type: string, enum: [INTERVIEW, WARNING, RECTIFY, RESTRICT, DEACTIVATE], description: '平台处理决定：约谈/警告/限期整改/限制/停用账号。v1.22.0 起**没有一档会当场改别人家的账号**——决定只是下给归属方的要求,由归属方负责人在自己的成员管理执行并回执;DEACTIVATE 逾期 72h 未回执才由平台 enforceDisposeTask 强制停用(BR-M5-07 谁的员工谁处置)' }
     SupervisionActionEnum: { type: string, enum: [REMIND, TALK, TRAINING, NOTE], description: '督导动作：REMIND=提醒 ｜ TALK=督导谈话 ｜ TRAINING=安排培训 ｜ NOTE=记录(BR-M10-10)' }
     SmsSendStatusEnum: { type: string, enum: [SENT, FAILED, DELIVERED], description: '短信发送状态：SENT=已发送 ｜ FAILED=发送失败 ｜ DELIVERED=已送达(依通道能力 BR-M9-08)' }
 
@@ -3244,7 +3301,7 @@ components:
       properties: { id: { type: string }, caseId: { type: string }, collector: { type: string }, type: { type: string }, level: { $ref: '#/components/schemas/RiskLevelEnum' }, segmentTs: { type: string }, reviewed: { oneOf: [ { $ref: '#/components/schemas/RiskReviewVerdictEnum' }, { type: 'null' } ] }, recordingId: { type: [string, 'null'], description: '关联录音 id（跳通话记录页+AI复盘；无录音为 null）' }, violatorOrgName: { type: [string, 'null'], description: '违规员工所属组织名(v1.15.0)' }, violatorRole: { type: [string, 'null'], description: '违规员工角色(CO催收员/PC协调员;平台据此看反馈给哪个组织负责人)' }, ownScope: { type: [boolean, 'null'], description: '当前主体是否可直接处置该风险(本组织员工=true;平台/非本组织=false→复核或上报;BR-M5-07a)' } }
     DisposeTask:
       type: object
-      properties: { id: { type: string }, riskId: { type: string }, provider: { type: string }, taskType: { type: string }, status: { $ref: '#/components/schemas/DisposeTaskStatusEnum' }, tm: { type: string }, decision: { type: [string, 'null'], description: '平台处理决定 INTERVIEW/WARNING/RECTIFY/RESTRICT/DEACTIVATE' }, decisionNote: { type: [string, 'null'] }, targetAccount: { type: [string, 'null'], description: '当事人（违规人）展示名' }, receiptNote: { type: [string, 'null'], description: '归属方整改回执' }, receiptedAt: { type: [string, 'null'], format: date-time } }
+      properties: { id: { type: string }, riskId: { type: string }, provider: { type: string }, taskType: { type: string }, status: { $ref: '#/components/schemas/DisposeTaskStatusEnum' }, tm: { type: string }, decision: { type: [string, 'null'], description: '平台处理决定 INTERVIEW/WARNING/RECTIFY/RESTRICT/DEACTIVATE' }, decisionNote: { type: [string, 'null'] }, targetAccount: { type: [string, 'null'], description: '当事人（违规人）展示名' }, receiptNote: { type: [string, 'null'], description: '归属方整改回执' }, receiptedAt: { type: [string, 'null'], format: date-time }, enforceable: { type: boolean, description: '平台此刻可否强制停用(decision=DEACTIVATE 且 PENDING 且已过 72h 整改期且未强停过)。服务端算好下发,前端不复刻时限判断' }, enforcedAt: { type: [string, 'null'], format: date-time, description: '平台强制停用时刻' }, enforceReason: { type: [string, 'null'], description: '平台强制停用原因' } }
 
     # ---------- owner h5 ----------
     OwnerBill:

@@ -94,6 +94,16 @@ async function submitRectify() {
   if (error) { ElMessage.error('回执失败：' + ((error as any)?.message ?? '')); return }
   ElMessage.success('整改回执已提交'); cdlg.value = false; load()
 }
+// 强制停用（平台兜底 BR-M5-07d）：个人停权本该由组织自己执行（VL/PL 在成员管理停用本组织员工），
+// 平台只在归属方逾期 72h 未回执时强停。enforceable 由服务端算好下发——前端不复刻时限判断。
+const edlg = ref(false); const eform = ref<any>({})
+function openEnforce(t: any) { eform.value = { id: t.id, target: t.targetAccount, org: t.provider, reason: '' }; edlg.value = true }
+async function submitEnforce() {
+  if (!eform.value.reason?.trim()) { ElMessage.warning('强制停用原因必填'); return }
+  const { error } = await api.POST('/dispose-tasks/{id}/enforce', { params: { path: { id: eform.value.id } }, body: { reason: eform.value.reason.trim() } as any })
+  if (error) { ElMessage.error('强制停用失败：' + ((error as any)?.message ?? '')); return }
+  ElMessage.success('已强制停用该员工账号（已通知归属方负责人与当事人）'); edlg.value = false; load()
+}
 onMounted(load)
 </script>
 
@@ -175,7 +185,7 @@ onMounted(load)
             <th>整改回执</th>
             <th style="width:100px">状态</th>
             <th>时间</th>
-            <th v-if="!isPlatform" style="width:120px">操作</th>
+            <th style="width:150px">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -186,13 +196,21 @@ onMounted(load)
             <td>{{ t.receiptNote || '—' }}</td>
             <td :title="t.status"><span class="tag" :class="t.status === 'DONE' ? 'suc' : (t.status === 'IN_PROGRESS' ? 'war' : 'inf')">{{ disposeTaskStatusLabel(t.status) }}</span></td>
             <td>{{ t.receiptedAt || t.tm || '—' }}</td>
+            <!-- 归属方：执行并回执。个人停权由组织自己在【成员管理】停用该员工，回执在此提交。 -->
             <td v-if="!isPlatform">
               <button v-if="t.status !== 'DONE'" class="btn txt" @click="openRectify(t)">提交整改回执</button>
               <span v-else class="tag suc" style="font-size:11px">已回执</span>
             </td>
+            <!-- 平台：只有归属方逾期未回执的「停用账号」任务才可强制停用（enforceable 由服务端算，前端不复刻时限） -->
+            <td v-else>
+              <button v-if="t.enforceable" class="btn txt dgc" @click="openEnforce(t)">强制停用</button>
+              <span v-else-if="t.enforcedAt" class="tag dan" style="font-size:11px" :title="t.enforceReason || ''">已强制停用</span>
+              <span v-else-if="t.status === 'DONE'" class="tag suc" style="font-size:11px">归属方已处理</span>
+              <span v-else class="note" style="margin:0;font-size:11px">待归属方处理</span>
+            </td>
           </tr>
           <tr v-if="!tasks.length">
-            <td :colspan="isPlatform ? 6 : 7" style="text-align:center;color:var(--sec);padding:32px 0">暂无数据</td>
+            <td colspan="7" style="text-align:center;color:var(--sec);padding:32px 0">暂无数据</td>
           </tr>
         </tbody>
       </table>
@@ -242,6 +260,20 @@ onMounted(load)
         <el-form-item label="整改回执"><el-input v-model="cform.receiptNote" type="textarea" :rows="3" placeholder="说明本次整改措施/结果（如已约谈当事人、已完成培训）" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="cdlg=false">取消</el-button><el-button type="primary" @click="submitRectify">提交回执</el-button></template>
+    </DsDrawer>
+
+    <DsDrawer v-model="edlg" title="强制停用当事人账号">
+      <div class="alert warn" style="margin-top:0;margin-bottom:10px">
+        <span>个人停权本应由<b>归属方自己执行</b>（在其成员管理中停用该员工）。归属方已逾期未回执，平台在此强制停用——动作会写审计并同时通知归属方负责人与当事人。</span>
+      </div>
+      <el-form label-width="90px">
+        <el-form-item label="归属方">{{ eform.org || '—' }}</el-form-item>
+        <el-form-item label="当事人">{{ eform.target || '—' }}</el-form-item>
+        <el-form-item label="强制原因" required>
+          <el-input v-model="eform.reason" type="textarea" :rows="3" placeholder="如：高危违规且归属方逾期未处理" />
+        </el-form-item>
+      </el-form>
+      <template #footer><el-button @click="edlg=false">取消</el-button><el-button type="danger" @click="submitEnforce">确认强制停用</el-button></template>
     </DsDrawer>
 
     <!-- AI 复盘右侧抽屉（与案件三栏/通话记录统一体验）：质检点片段就地看录音回放+对话转写+风险高亮 -->
