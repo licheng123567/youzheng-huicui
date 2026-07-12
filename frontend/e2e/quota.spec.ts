@@ -2,74 +2,72 @@ import { test, expect } from '@playwright/test'
 import { loginRole } from './helpers'
 
 // v1.19.0「额度管理」（计费明细 + 充值中心合并·以组织为聚合）。
+// 交互（用户定）：平台先看**组织列表**（一行一组织·四类额度横向展开）→ 点组织进 /quota/:orgId
+// 看该组织的用量明细与充值流水；物业/服务商在 /quota 直接看自己。
 // 充值中心此前零 E2E 覆盖且按钮全是死的（无 @click、余额硬编码）——本 spec 是净增覆盖。
 test.describe('v1.19.0 额度管理', () => {
 
-  test('SA：组织额度总览 + 充值全链（余额与流水随之变化）', async ({ page }) => {
+  test('SA：组织列表（一行一组织）→ 点进详情 → 充值全链', async ({ page }) => {
     await loginRole(page, 'SA')
     await page.getByRole('menuitem', { name: '额度管理' }).click()
     await expect(page).toHaveURL(/\/quota/)
 
-    // 组织额度总览：一行=组织×额度类型
+    // 组织列表：一行一组织，四类额度横向列
     const t = page.locator('table').first()
-    for (const h of ['组织', '额度类型', '余额', '本月用量', '上月用量']) {
+    for (const h of ['组织', '录音转写余额', '短信余额', '存证余额', '法律文书余额', '本月总用量']) {
       await expect(t.locator('thead').getByText(h, { exact: true })).toBeVisible()
     }
-    // 翠湖物业(PROPERTY)的短信行可充值
-    const smsRow = t.locator('tbody tr', { hasText: '翠湖物业' }).filter({ hasText: '短信' }).first()
-    await expect(smsRow).toBeVisible()
+    const row = t.locator('tbody tr', { hasText: '翠湖物业' }).first()
+    await expect(row).toBeVisible()
 
-    // 充值 100 条
-    await smsRow.getByText('充值', { exact: true }).click()
+    // 点组织 → 详情页
+    await row.click()
+    await expect(page).toHaveURL(/\/quota\/\d+/)
+    await expect(page.getByText('返回组织列表', { exact: false })).toBeVisible()
+    await expect(page.locator('.kpi')).toHaveCount(4)          // 四类余额卡
+
+    // 短信卡上的「充值」→ 抽屉 → 充 100 条
+    await page.locator('.kpi', { hasText: '短信' }).getByText('充值', { exact: true }).click()
     const drawer = page.getByRole('dialog')
-    await expect(drawer.getByText('后台充值能力额度')).toBeVisible()
+    await expect(drawer.getByText('充值 · 翠湖物业')).toBeVisible()
     await drawer.locator('.el-input-number input').fill('100')
     await drawer.getByRole('button', { name: '确认充值' }).click()
     await expect(page.getByText(/已充值 100条/)).toBeVisible()
 
-    // 充值流水首行出现 +100
+    // 充值流水首行 +100
     await page.getByText('充值流水', { exact: true }).click()
-    const logRow = page.locator('table tbody tr').first()
-    await expect(logRow).toContainText('+100')
-    await expect(logRow).toContainText('翠湖物业')
+    await expect(page.locator('table tbody tr').first()).toContainText('+100')
   })
 
-  test('SE：同屏只读——充值按钮禁用（无 billing.recharge）', async ({ page }) => {
+  test('SE：组织列表可见；进详情后充值按钮不渲染（无 billing.recharge）', async ({ page }) => {
     await loginRole(page, 'SE')
     await page.getByRole('menuitem', { name: '额度管理' }).click()
-    await expect(page).toHaveURL(/\/quota/)
-    await expect(page.locator('table').first()).toBeVisible()
-    // 页首「+ 充值」按钮不渲染；行内充值按钮 disabled
-    await expect(page.getByRole('button', { name: '+ 充值' })).toHaveCount(0)
-    const btn = page.locator('button', { hasText: /^充值$/ }).first()
-    await expect(btn).toBeDisabled()
+    await page.locator('table tbody tr').first().click()
+    await expect(page).toHaveURL(/\/quota\/\d+/)
+    await expect(page.locator('.kpi')).toHaveCount(4)
+    await expect(page.getByText('充值', { exact: true })).toHaveCount(0)   // 无充值入口
   })
 
-  test('PL：只见本组织余额卡 + 线下充值提示，无充值按钮', async ({ page }) => {
+  test('PL：/quota 直接看自己（无组织列表层）+ 线下充值提示', async ({ page }) => {
     await loginRole(page, 'PL')
     await page.getByRole('menuitem', { name: '额度管理' }).click()
     await expect(page).toHaveURL(/\/quota/)
     await expect(page.getByText(/线下联系平台运营/)).toBeVisible()
-    await expect(page.getByRole('button', { name: '+ 充值' })).toHaveCount(0)
-    // 四张余额卡（STT/SMS/EVIDENCE/LEGAL）
     await expect(page.locator('.kpi')).toHaveCount(4)
+    await expect(page.locator('table thead').getByText('组织', { exact: true })).toHaveCount(0)
   })
 
   test('VL：用量分析月/日切换 + 明细下钻穿透列（业主/项目/批次）', async ({ page }) => {
     await loginRole(page, 'VL')
     await page.getByRole('menuitem', { name: '额度管理' }).click()
-    await page.getByText('用量分析', { exact: true }).click()
 
-    // 种子：捷信 STT 5 笔跨两月
     const rows = page.locator('table tbody tr')
     await expect(rows.first()).toBeVisible()
     await expect(page.locator('table thead').getByText('月份')).toBeVisible()
 
-    // 切按日
     await page.getByText('按日', { exact: true }).click()
     await expect(page.locator('table thead').getByText('日期')).toBeVisible()
 
-    // 明细下钻：穿透列（原 billing-sms.spec 三级下钻断言迁移至此）
     await rows.first().getByText('查看明细', { exact: true }).click()
     const drawer = page.getByRole('dialog')
     await expect(drawer.getByText('用量明细', { exact: false })).toBeVisible()

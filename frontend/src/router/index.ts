@@ -32,6 +32,8 @@ const router = createRouter({
         { path: 'co-commission', name: 'co-commission', component: () => import('../views/CoCommissionView.vue') },
         // v1.19.0：计费明细 + 充值中心合并为「额度管理」（老书签 /billing、/recharge 由 nav.ts ROLE_REDIRECTS 转入）
         { path: 'quota', name: 'quota', component: () => import('../views/QuotaView.vue') },
+        // 组织额度详情（平台从列表点组织进入；子路径由 isAllowedPath 的 startsWith 放行）
+        { path: 'quota/:orgId', name: 'quota-org', component: () => import('../views/QuotaOrgView.vue') },
         { path: 'sms', name: 'sms', component: () => import('../views/SmsView.vue') },
         { path: 'script-lib', name: 'script-lib', component: () => import('../views/ScriptLibView.vue') },
         { path: 'org-mgmt', name: 'org-mgmt', component: () => import('../views/OrgMgmtView.vue') },
