@@ -2120,6 +2120,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/billing/orgs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 组织额度总览(v1.19.0「额度管理」)——一行=一个组织×一个额度类型：余额+本月/上月用量+可否充值
+         * @description 平台=全组织(排除 PLATFORM 自身——不作充值受体)；物业/服务商=仅本组织(4 行)。
+         *     balance 可为负：EVIDENCE/LEGAL 后付费(BR-M9-10 按次计入对账·不预充)，负值=欠用记账。
+         *     rechargeable 来自后端 org×type 充值矩阵(SMS 仅物业；STT 物业/服务商)，前端据此渲染/禁用充值按钮，不复刻规则。
+         */
+        get: operations["listOrgQuotas"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/billing/usage/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 用量聚合(v1.19.0)——按 组织×类型×时间桶(月/日) 聚合 billing_usage
+         * @description groupBy=month→bucket=YYYY-MM；day→YYYY-MM-DD(非法→422)。非平台传他人 orgId 与 range scope 叠加互斥→空集。
+         */
+        get: operations["getUsageSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/billing/recharge": {
         parameters: {
             query?: never;
@@ -4293,6 +4335,42 @@ export interface components {
             issuedAt?: string;
             hash?: string;
         };
+        /** @description 组织额度行(v1.19.0)：一行=一个组织×一个额度类型。balance 可为负(EVIDENCE/LEGAL 后付=欠用记账) */
+        OrgQuota: {
+            orgId?: string;
+            orgName?: string;
+            orgType?: components["schemas"]["OrgTypeEnum"];
+            type?: components["schemas"]["BillingTypeEnum"];
+            /** @description 分钟/条/次/件 */
+            unit?: string;
+            /** @description 当前余额(可为负：后付费类型欠用记账) */
+            balance?: number;
+            usedThisMonth?: number;
+            usedLastMonth?: number;
+            /** @description org×type 充值矩阵(后端唯一真源)：SMS 仅物业；STT 物业/服务商；EVIDENCE/LEGAL 不预充 */
+            rechargeable?: boolean;
+        };
+        OrgQuotaPage: {
+            items?: components["schemas"]["OrgQuota"][];
+            meta?: components["schemas"]["PageMeta"];
+        };
+        /** @description 用量聚合行(v1.19.0)：组织×类型×时间桶 */
+        UsageSummaryRow: {
+            /** @description YYYY-MM(月) 或 YYYY-MM-DD(日) */
+            bucket?: string;
+            orgId?: string;
+            orgName?: string;
+            type?: components["schemas"]["BillingTypeEnum"];
+            unit?: string;
+            /** @description 累计用量(只量不金额 BR-M10-01) */
+            qty?: number;
+            /** @description 用量笔数 */
+            count?: number;
+        };
+        UsageSummaryPage: {
+            items?: components["schemas"]["UsageSummaryRow"][];
+            meta?: components["schemas"]["PageMeta"];
+        };
         /** @description 能力用量·只量不金额(US-M10-02)。ownerName/room/projectName/batchNo 由 caseId join 补齐(计费明细页穿透列;v1.11.0);计费明细恒为成功计费(失败不计费 BR-M6-06,故无 status) */
         BillingUsage: {
             id?: string;
@@ -4308,20 +4386,31 @@ export interface components {
             batchNo?: string | null;
             /** Format: date-time */
             occurredAt?: string;
+            /** @description v1.19.0 组织维度(平台按组织聚合/下钻必需；报表 capabilityUsage 聚合行为 null) */
+            orgId?: string | null;
+            orgName?: string | null;
         };
         BillingUsagePage: {
             items?: components["schemas"]["BillingUsage"][];
             meta?: components["schemas"]["PageMeta"];
         };
+        /** @description 充值/扣减流水。balance=操作后余额快照(对账可读)；权威余额源为 org_balance(V932) */
         RechargeLog: {
             id?: string;
             type?: components["schemas"]["BillingTypeEnum"];
             /** @description +充值/-扣减 */
             delta?: number;
             balance?: number;
+            /** @description 关联单据号(充值 RC-*\/扣减 rec#|sms#|ev#|legal#)；存量空值经 COALESCE 落空串——schema 保持非空以免破坏兼容 */
             ref?: string;
             /** Format: date-time */
             tm?: string;
+            /** @description v1.19.0 */
+            orgId?: string | null;
+            orgName?: string | null;
+            note?: string | null;
+            /** @description 操作人姓名 */
+            operatedByName?: string | null;
         };
         RechargeLogPage: {
             items?: components["schemas"]["RechargeLog"][];
@@ -8097,6 +8186,8 @@ export interface operations {
             query?: {
                 type?: components["schemas"]["BillingTypeEnum"];
                 month?: string;
+                /** @description v1.19.0 组织下钻(平台)；非平台传他人 orgId 与 range scope 叠加互斥→空集 */
+                orgId?: string;
                 page?: components["parameters"]["Page"];
             };
             header?: never;
@@ -8121,6 +8212,8 @@ export interface operations {
             query?: {
                 from?: string;
                 to?: string;
+                /** @description v1.19.0 组织过滤 */
+                orgId?: string;
                 page?: components["parameters"]["Page"];
             };
             header?: never;
@@ -8138,6 +8231,57 @@ export interface operations {
                     "application/json": components["schemas"]["RechargeLogPage"];
                 };
             };
+        };
+    };
+    listOrgQuotas: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgQuotaPage"];
+                };
+            };
+        };
+    };
+    getUsageSummary: {
+        parameters: {
+            query?: {
+                /** @description 聚合粒度：month=按月/day=按日 */
+                groupBy?: "month" | "day";
+                orgId?: string;
+                type?: components["schemas"]["BillingTypeEnum"];
+                from?: string;
+                to?: string;
+                page?: components["parameters"]["Page"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageSummaryPage"];
+                };
+            };
+            422: components["responses"]["ValidationError"];
         };
     };
     createRecharge: {
@@ -8701,6 +8845,10 @@ export interface operations {
     listOrgs: {
         parameters: {
             query?: {
+                /** @description v1.19.0 充值选择器过滤(非法→422) */
+                type?: components["schemas"]["OrgTypeEnum"];
+                /** @description v1.19.0 充值受体须排除 DISABLED */
+                status?: "ACTIVE" | "DISABLED";
                 page?: components["parameters"]["Page"];
                 size?: components["parameters"]["Size"];
             };

@@ -23,6 +23,7 @@ export async function logout(page: Page) {
  */
 export const ACCOUNTS = {
   SA: 'admin',
+  SE: 'plat_se',        // 平台运营（种子有此账号，此前未登记 → loginRole(page,'SE') 会 fill(undefined)）
   PL: 'cuihu_pl',
   PC: 'cuihu_pc',
   VL: 'jx_vl',

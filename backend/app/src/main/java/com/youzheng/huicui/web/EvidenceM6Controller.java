@@ -74,11 +74,15 @@ public class EvidenceM6Controller {
     private final com.youzheng.huicui.integration.EbaoquanClient ebaoquan;
     private final com.youzheng.huicui.dispatch.RecordingService recordings;
 
+    private final com.youzheng.huicui.common.BalanceService balance;
+
     public EvidenceM6Controller(JdbcTemplate jdbc, ObjectMapper json,
+                                com.youzheng.huicui.common.BalanceService balance,
                                 com.youzheng.huicui.integration.EbaoquanClient ebaoquan,
                                 com.youzheng.huicui.dispatch.RecordingService recordings) {
         this.jdbc = jdbc;
         this.json = json;
+        this.balance = balance;
         this.ebaoquan = ebaoquan;
         this.recordings = recordings;
     }
@@ -136,7 +140,14 @@ public class EvidenceM6Controller {
             submitToEbaoquan(evidenceId, scene, refIds, note);
         }
 
-        // TODO(BR-M6-03/M9-B): 按次计费只向物业 —— recharge_log(org_id=co.orgId, type='EVIDENCE', delta=-1, ...)。
+        // v1.19.0 BR-M6-03/M9-B 按次计费（EVIDENCE 后付费·归物业 co.orgId）：qty=1「次」。
+        // 后付=永不因余额不足拒绝（余额可负=欠用记账）；仅真实出证（ebaoquan 已启用）才计费——
+        // 未启用时是占位、无真实成本。「失败不计费 BR-M6-06」自动成立：submitToEbaoquan 抛
+        // BIZ_EVIDENCE_FAILED → @Transactional 回滚，计费行一并回滚。
+        if (ebaoquan.isEnabled()) {
+            balance.charge(co.orgId, com.youzheng.huicui.common.BillingUnits.EVIDENCE,
+                    java.math.BigDecimal.ONE, caseId, "ev#" + evidenceId, "存证出证", actorId);
+        }
 
         return new EvidenceItemDto(String.valueOf(evidenceId), String.valueOf(caseId),
                 scene, "ISSUING", null, null, null, null, null, null, null);
@@ -285,7 +296,11 @@ public class EvidenceM6Controller {
                         + " issued_at = NULL, updated_at = now() WHERE id = ?",
                 evidenceId);
 
-        // TODO(BR-M6-03/M9-B): 重试同样按次计费只向物业 —— recharge_log(type='EVIDENCE') 待 M9 计费域定。
+        // v1.19.0：重试=重新出证，同样按次计费（仅 enabled 时；后付不拒）。
+        if (ebaoquan.isEnabled()) {
+            balance.charge(lock.orgId, com.youzheng.huicui.common.BillingUnits.EVIDENCE,
+                    java.math.BigDecimal.ONE, lock.caseId, "ev#" + evidenceId, "存证重试出证", actorIdOrThrow(s));
+        }
 
         return loadEvidence(evidenceId);
     }
@@ -412,6 +427,11 @@ public class EvidenceM6Controller {
                 "INSERT INTO legal_doc(case_id, type, template_id, status, note, created_by)"
                         + " VALUES (?, ?, ?, 'GENERATING', ?, ?) RETURNING id",
                 Long.class, caseId, type, templateId, note, actorId);
+
+        // v1.19.0 按件计费（LEGAL 后付费·归物业）：qty=1「件」；只在**生成**计费，
+        // 送达（POST /legal-docs/{id}/deliver）是同一件文书的后续动作，不重复计费。
+        balance.charge(loadCaseOrg(caseId).orgId(), com.youzheng.huicui.common.BillingUnits.LEGAL,
+                java.math.BigDecimal.ONE, caseId, "legal#" + legalDocId, "法律文书生成", actorId);
 
         // BR-M4-03/12：建议法务为有效跟进，仅持有催收员(holder)本人发起时重置 T_collector；
         // PL/PC 等其他角色发起不重置（与 promise/手记同口径）。

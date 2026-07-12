@@ -14,5 +14,10 @@ public record RechargeLogM9Dto(
         Double delta,
         Double balance,
         String ref,
-        String tm
+        String tm,
+        // v1.19.0 额度管理：流水的组织/备注/操作人（平台侧充值流水必需）
+        String orgId,
+        String orgName,
+        String note,
+        String operatedByName
 ) {}

@@ -30,7 +30,8 @@ const router = createRouter({
         // 曾经指向 SettlementOutView 存根——「回款明细/支付申请单」按钮绑的是空函数,VL 点了毫无反应。
         { path: 'settlement-out', name: 'settlement-out', component: () => import('../views/SettlementView.vue') },
         { path: 'co-commission', name: 'co-commission', component: () => import('../views/CoCommissionView.vue') },
-        { path: 'recharge', name: 'recharge', component: () => import('../views/RechargeView.vue') },
+        // v1.19.0：计费明细 + 充值中心合并为「额度管理」（老书签 /billing、/recharge 由 nav.ts ROLE_REDIRECTS 转入）
+        { path: 'quota', name: 'quota', component: () => import('../views/QuotaView.vue') },
         { path: 'sms', name: 'sms', component: () => import('../views/SmsView.vue') },
         { path: 'script-lib', name: 'script-lib', component: () => import('../views/ScriptLibView.vue') },
         { path: 'org-mgmt', name: 'org-mgmt', component: () => import('../views/OrgMgmtView.vue') },
@@ -44,7 +45,6 @@ const router = createRouter({
         { path: 'risks', name: 'risks', component: () => import('../views/RisksView.vue') },
         { path: 'reports', name: 'reports', component: () => import('../views/ReportsView.vue') },
         { path: 'evidence', name: 'evidence', component: () => import('../views/EvidenceView.vue') },
-        { path: 'billing', name: 'billing', component: () => import('../views/BillingView.vue') },
         { path: 'call-records', name: 'call-records', component: () => import('../views/CallRecordsView.vue') },
         { path: 'audit-log', name: 'audit-log', component: () => import('../views/AuditLogView.vue') },
         { path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue') },

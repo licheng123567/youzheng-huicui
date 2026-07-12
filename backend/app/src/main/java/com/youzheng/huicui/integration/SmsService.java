@@ -1,6 +1,7 @@
 package com.youzheng.huicui.integration;
 
 import com.youzheng.huicui.error.ApiException;
+import com.youzheng.huicui.error.BizError;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -32,14 +33,17 @@ public class SmsService {
     private final String publicBaseUrl;
     private final String tplVerify;
     private final String tplPayLink;
+    private final com.youzheng.huicui.common.BalanceService balance;
 
     public SmsService(JdbcTemplate jdbc, ZhixunyunSmsClient sms,
+                      com.youzheng.huicui.common.BalanceService balance,
                       @Value("${huicui.sms.sign-name:}") String signName,
                       @Value("${huicui.sms.public-base-url:}") String publicBaseUrl,
                       @Value("${huicui.sms.templates.verify-code:}") String tplVerify,
                       @Value("${huicui.sms.templates.pay-link:}") String tplPayLink) {
         this.jdbc = jdbc;
         this.sms = sms;
+        this.balance = balance;
         this.signName = signName;
         this.publicBaseUrl = trimSlash(publicBaseUrl);
         this.tplVerify = tplVerify;
@@ -82,12 +86,20 @@ public class SmsService {
         return code;
     }
 
-    /** 缴费链接（普通短信·即时）。best-effort：失败落 FAILED 不抛、不回滚链接。 */
+    /**
+     * 缴费链接（普通短信·即时）。best-effort：失败落 FAILED 不抛、不回滚链接。
+     * v1.19.0 计费（SMS 预付）：发起即扣 1 条（BR-M9-08 失败不退条数——SENT/FAILED 都计费）；
+     * 额度不足 → 不发送、落 FAILED（best-effort 语义不抛）。
+     */
     public void sendPayLinkSms(long caseId, long orgId, long projectId, String token) {
         String phone = primaryPhone(caseId);
         String payUrl = publicBaseUrl + "/pay/" + token;
         if (phone == null || phone.isBlank()) {
             recordSms(orgId, caseId, projectId, template(TPL_PAY_LINK), "FAILED", "案件无主号");
+            return;
+        }
+        if (billable(orgId) && !chargeSms(orgId, caseId, 1)) {
+            recordSms(orgId, caseId, projectId, template(TPL_PAY_LINK), "FAILED", "短信额度不足");
             return;
         }
         try {
@@ -106,6 +118,11 @@ public class SmsService {
     /** 视频短信通知（非即时，Timing=now+11min，满足平台 >10min 约束）。落 sms_record。 */
     public String sendVideoNotify(long orgId, Long caseId, Long projectId, String templateId,
                                   String phone, List<String> params) {
+        // v1.19.0 计费：发起即扣 1 条；额度不足 → BIZ_QUOTA_EXHAUSTED(409)（本方法本就会抛）。
+        if (billable(orgId) && !chargeSms(orgId, caseId, 1)) {
+            recordSms(orgId, caseId, projectId, template("视频:" + templateId), "FAILED", "短信额度不足");
+            throw new ApiException(BizError.BIZ_QUOTA_EXHAUSTED, "SMS 额度不足，请先充值");
+        }
         String timing = LocalDateTime.now().plusMinutes(11).format(YMDHMS);
         try {
             String taskId = sms.sendVideoSms(templateId, timing, phone, params);
@@ -118,6 +135,23 @@ public class SmsService {
     }
 
     // ── helpers ──
+
+    /**
+     * 是否计费（v1.19.0）：
+     *   · 未启用（isEnabled=false）→ 不计费：调用方走占位、不触网关、无真实成本（且会让 dev/e2e 库被静默扣空）；
+     *   · dry-run → 不计费：代码既定原则「DRY_RUN 不污染计费口径」；
+     *   · 验证码（orgId=null）→ 不计费：登录前无 org 上下文，平台自担（sms_record 仍留痕，V927 org_id 已放宽可空）。
+     */
+    private boolean billable(Long orgId) {
+        return orgId != null && sms.isEnabled() && !sms.isDryRun();
+    }
+
+    /** 扣 SMS 额度（预付）：足→true 并落用量/流水；不足→false（调用方决定落 FAILED 还是抛）。 */
+    private boolean chargeSms(long orgId, Long caseId, int count) {
+        return balance.tryCharge(orgId, com.youzheng.huicui.common.BillingUnits.SMS,
+                java.math.BigDecimal.valueOf(count), caseId, "sms#case" + caseId, "短信发送扣减", null);
+    }
+
     private String primaryPhone(long caseId) {
         List<String> ps = jdbc.query(
                 "SELECT phone FROM contact WHERE case_id = ? ORDER BY is_primary DESC, id LIMIT 1",

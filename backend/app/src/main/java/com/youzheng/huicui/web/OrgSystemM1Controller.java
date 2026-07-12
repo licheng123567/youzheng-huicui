@@ -87,6 +87,8 @@ public class OrgSystemM1Controller {
     // x-data-scope=range，无 x-permission（列表靠 scope 控可见性）。
     @GetMapping("/orgs")
     public Page<OrgDto> listOrgs(
+            @RequestParam(required = false) String type,
+            @RequestParam(required = false) String status,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size) {
         CurrentSubject s = SubjectContext.get();
@@ -94,6 +96,24 @@ public class OrgSystemM1Controller {
 
         StringBuilder where = new StringBuilder(" WHERE 1=1");
         List<Object> args = new ArrayList<>();
+        // v1.19.0 额度管理充值选择器：按 type/status 过滤（/orgs 是分页端点，前端拿一页再过滤是错的；
+        // 且充值受体必须排除 DISABLED 组织）。非法值→422（不 5xx）。
+        if (type != null && !type.isBlank()) {
+            String t = type.trim();
+            if (!"PLATFORM".equals(t) && !"PROPERTY".equals(t) && !"PROVIDER".equals(t)) {
+                throw new ApiException(BizError.VALIDATION_422, "type 非法（仅 PLATFORM/PROPERTY/PROVIDER）");
+            }
+            where.append(" AND type = ?");
+            args.add(t);
+        }
+        if (status != null && !status.isBlank()) {
+            String st = status.trim();
+            if (!"ACTIVE".equals(st) && !"DISABLED".equals(st)) {
+                throw new ApiException(BizError.VALIDATION_422, "status 非法（仅 ACTIVE/DISABLED）");
+            }
+            where.append(" AND status = ?");
+            args.add(st);
+        }
         // range（org 维退化为 own-org-on-self）：平台全量；物业/服务商仅本组织。
         if (!s.isPlatform()) {
             where.append(" AND id = ?");

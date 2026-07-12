@@ -11,7 +11,7 @@ const SCREENS: { label: string; url: RegExp }[] = [
   { label: '质检/风控', url: /\/risks/ },
   { label: '经营报表', url: /\/reports/ },
   { label: '存证管理', url: /\/evidence/ },
-  { label: '计费明细', url: /\/billing/ },
+  { label: '额度管理', url: /\/quota/ },     // v1.19.0 计费明细+充值中心合并
   { label: '参数配置', url: /\/settings/ },
   { label: '成员管理', url: /\/members/ },
 ]

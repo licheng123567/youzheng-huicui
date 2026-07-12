@@ -8,6 +8,8 @@ import com.youzheng.huicui.security.CurrentSubject;
 import com.youzheng.huicui.security.RequirePermission;
 import com.youzheng.huicui.security.SubjectContext;
 import com.youzheng.huicui.web.dto.BillingUsageDto;
+import com.youzheng.huicui.web.dto.OrgQuotaDto;
+import com.youzheng.huicui.web.dto.UsageSummaryRowDto;
 import com.youzheng.huicui.web.dto.RechargeLogM9Dto;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
@@ -59,8 +61,11 @@ public class BillingM9Controller {
 
     private final JdbcTemplate jdbc;
 
-    public BillingM9Controller(JdbcTemplate jdbc) {
+    private final com.youzheng.huicui.common.BalanceService balance;
+
+    public BillingM9Controller(JdbcTemplate jdbc, com.youzheng.huicui.common.BalanceService balance) {
         this.jdbc = jdbc;
+        this.balance = balance;
     }
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ISO_INSTANT;
@@ -79,6 +84,7 @@ public class BillingM9Controller {
     public Page<BillingUsageDto> getBillingUsage(
             @RequestParam(required = false) String type,
             @RequestParam(required = false) String month,
+            @RequestParam(required = false) String orgId,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size) {
         CurrentSubject s = SubjectContext.get();
@@ -86,6 +92,12 @@ public class BillingM9Controller {
 
         StringBuilder where = new StringBuilder(" WHERE 1=1");
         List<Object> args = new ArrayList<>();
+        // v1.19.0 组织下钻：平台可按组织过滤；非平台传别人 orgId 与 range scope 叠加互斥 → 空集（零泄漏）。
+        Long orgFilter = parseOptionalLong(orgId);
+        if (orgFilter != null) {
+            where.append(" AND bu.org_id = ?");
+            args.add(orgFilter);
+        }
         if (type != null && !type.isBlank()) {
             validateBillingType(type);                       // 非法 type→422（优雅，非 5xx）
             where.append(" AND bu.type = ?");
@@ -100,6 +112,7 @@ public class BillingM9Controller {
         // 计费明细穿透列（业主/房号/项目/批次）由 case_id LEFT JOIN 补齐（v1.11.0）。
         // 用量行不一定挂案（case_id 可空，如批量短信）→ LEFT JOIN，缺则列为 null。
         String base = "FROM billing_usage bu"
+                + " JOIN org o ON o.id = bu.org_id"
                 + " LEFT JOIN \"case\" c ON c.id = bu.case_id"
                 + " LEFT JOIN project p ON p.id = c.project_id"
                 + " LEFT JOIN batch b ON b.id = c.batch_id"
@@ -111,7 +124,8 @@ public class BillingM9Controller {
         pageArgs.add(pg.offset);
         List<BillingUsageDto> items = jdbc.query(
                 "SELECT bu.id, bu.type, bu.qty, bu.unit, bu.case_id, bu.occurred_at,"
-                        + " c.owner_name, c.room, p.name AS project_name, b.no AS batch_no " + base
+                        + " c.owner_name, c.room, p.name AS project_name, b.no AS batch_no,"
+                        + " bu.org_id, o.name AS org_name " + base
                         + " ORDER BY bu.occurred_at DESC LIMIT ? OFFSET ?",
                 BillingM9Controller::mapUsage, pageArgs.toArray());
 
@@ -124,6 +138,7 @@ public class BillingM9Controller {
     public Page<RechargeLogM9Dto> listRechargeLog(
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
+            @RequestParam(required = false) String orgId,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size) {
         CurrentSubject s = SubjectContext.get();
@@ -131,32 +146,178 @@ public class BillingM9Controller {
 
         StringBuilder where = new StringBuilder(" WHERE 1=1");
         List<Object> args = new ArrayList<>();
+        Long orgFilter = parseOptionalLong(orgId);           // v1.19.0 组织过滤（非平台叠 scope 互斥→空集）
+        if (orgFilter != null) {
+            where.append(" AND rl.org_id = ?");
+            args.add(orgFilter);
+        }
         if (from != null && !from.isBlank()) {
-            where.append(" AND tm >= ?::timestamptz");
+            where.append(" AND rl.tm >= ?::timestamptz");
             args.add(from.trim());
         }
         if (to != null && !to.isBlank()) {
             // 半开区间：tm < to + 1 天（含 to 当日全部记录）。
-            where.append(" AND tm < (?::timestamptz + interval '1 day')");
+            where.append(" AND rl.tm < (?::timestamptz + interval '1 day')");
             args.add(to.trim());
         }
-        appendRangeScope(s, where, args);                    // 平台无；非平台 AND org_id=?
+        appendRangeScope(s, where, args, "rl.org_id");       // 平台无；非平台 AND rl.org_id=?
 
-        String base = "FROM recharge_log" + where;
+        String base = "FROM recharge_log rl"
+                + " JOIN org o ON o.id = rl.org_id"
+                + " LEFT JOIN account a ON a.id = rl.operated_by"
+                + where;
         Long total = jdbc.queryForObject("SELECT count(*) " + base, Long.class, args.toArray());
 
         List<Object> pageArgs = new ArrayList<>(args);
         pageArgs.add(pg.size);
         pageArgs.add(pg.offset);
         List<RechargeLogM9Dto> items = jdbc.query(
-                "SELECT id, type, delta, balance, ref, tm " + base
-                        + " ORDER BY tm DESC LIMIT ? OFFSET ?",
+                "SELECT rl.id, rl.type, rl.delta, rl.balance, COALESCE(rl.ref, '') AS ref, rl.tm,"
+                        + " rl.org_id, o.name AS org_name, rl.note, a.name AS operated_by_name " + base
+                        + " ORDER BY rl.tm DESC, rl.id DESC LIMIT ? OFFSET ?",
                 BillingM9Controller::mapRechargeLog, pageArgs.toArray());
 
         return Page.of(items, pg, total == null ? 0 : total);
     }
 
     // ── [13] createRecharge  POST /billing/recharge ──────────────────────────
+    // ── [11b] listOrgQuotas  GET /billing/orgs ───────────────────────────────
+    // 组织额度总览（v1.19.0「额度管理」核心）：**一行=一个组织×一个额度类型**（扁平，前端表格直吃）。
+    // x-data-scope=range：平台=全组织（排除 PLATFORM 自身——不作充值受体）；非平台=仅本组织（4 行）。
+    // balance 可为负（EVIDENCE/LEGAL 后付=欠用记账）；rechargeable 由 BillingUnits 矩阵下发，前端不复刻。
+    @GetMapping("/billing/orgs")
+    public Page<OrgQuotaDto> listOrgQuotas(
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size) {
+        CurrentSubject s = SubjectContext.get();
+        Pageable pg = Pageable.of(page, size);
+
+        StringBuilder orgWhere = new StringBuilder(" WHERE o.type <> 'PLATFORM'");
+        List<Object> orgArgs = new ArrayList<>();
+        if (!s.isPlatform()) {
+            orgWhere.append(" AND o.id = ?");
+            orgArgs.add(orgIdLong(s));
+        }
+
+        // 分页在「组织」维度（每组织恒 4 行类型）：先取本页组织，再 CROSS JOIN 四类型。
+        Long orgTotal = jdbc.queryForObject(
+                "SELECT count(*) FROM org o" + orgWhere, Long.class, orgArgs.toArray());
+        List<Object> pageArgs = new ArrayList<>(orgArgs);
+        pageArgs.add(pg.size);
+        pageArgs.add(pg.offset);
+
+        String sql = "WITH o AS (SELECT o.id, o.name, o.type FROM org o" + orgWhere
+                + " ORDER BY o.id LIMIT ? OFFSET ?),"
+                + " t(type) AS (VALUES ('STT'),('SMS'),('EVIDENCE'),('LEGAL')),"
+                // 本月/上月用量（FILTER 聚合一次带出）
+                + " u AS (SELECT org_id, type,"
+                + "   COALESCE(SUM(qty) FILTER (WHERE occurred_at >= date_trunc('month', now())), 0) AS m0,"
+                + "   COALESCE(SUM(qty) FILTER (WHERE occurred_at >= date_trunc('month', now()) - interval '1 month'"
+                + "                              AND occurred_at <  date_trunc('month', now())), 0) AS m1"
+                + "   FROM billing_usage"
+                + "   WHERE occurred_at >= date_trunc('month', now()) - interval '1 month'"
+                + "   GROUP BY org_id, type)"
+                + " SELECT o.id, o.name, o.type AS org_type, t.type AS btype,"
+                + "   COALESCE(b.balance, 0) AS balance, COALESCE(u.m0, 0) AS m0, COALESCE(u.m1, 0) AS m1"
+                + " FROM o CROSS JOIN t"
+                + " LEFT JOIN org_balance b ON b.org_id = o.id AND b.type = t.type"
+                + " LEFT JOIN u ON u.org_id = o.id AND u.type = t.type"
+                + " ORDER BY o.id, t.type";
+
+        List<OrgQuotaDto> items = jdbc.query(sql, (rs, i) -> {
+            String orgType = rs.getString("org_type");
+            String btype = rs.getString("btype");
+            return new OrgQuotaDto(
+                    String.valueOf(rs.getLong("id")), rs.getString("name"), orgType,
+                    btype, com.youzheng.huicui.common.BillingUnits.of(btype),
+                    doubleOrNull(rs, "balance"), doubleOrNull(rs, "m0"), doubleOrNull(rs, "m1"),
+                    com.youzheng.huicui.common.BillingUnits.rechargeable(orgType, btype));
+        }, pageArgs.toArray());
+
+        // total 以「行」计（组织数 × 4 类型），与 items 口径一致。
+        long total = (orgTotal == null ? 0 : orgTotal) * 4;
+        return Page.of(items, pg, total);
+    }
+
+    // ── [11c] getUsageSummary  GET /billing/usage/summary ────────────────────
+    // 按 组织×类型×时间桶 聚合用量（v1.19.0）：groupBy=month|day（非法→422，fmt 走白名单不拼串）。
+    // x-data-scope=range：非平台传别人 orgId 与 scope 叠加互斥 → 空集（零泄漏，不抛 403 制造 fuzz 噪声）。
+    @GetMapping("/billing/usage/summary")
+    public Page<UsageSummaryRowDto> getUsageSummary(
+            @RequestParam(required = false) String groupBy,
+            @RequestParam(required = false) String orgId,
+            @RequestParam(required = false) String type,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size) {
+        CurrentSubject s = SubjectContext.get();
+        Pageable pg = Pageable.of(page, size);
+
+        // 白名单选定 to_char 格式（绝不把入参拼进 SQL）。缺省 month；非法 → 422。
+        String g = (groupBy == null || groupBy.isBlank()) ? "month" : groupBy.trim();
+        String fmt;
+        if ("month".equals(g)) fmt = "YYYY-MM";
+        else if ("day".equals(g)) fmt = "YYYY-MM-DD";
+        else throw new ApiException(BizError.VALIDATION_422, "groupBy 非法（仅 month/day）");
+
+        // args 只含 WHERE 的占位符参数；fmt 由两条 SQL 各自按自己的占位符位置拼入
+        // （list：to_char 在 SELECT 里排第 1；count：to_char 只出现在 GROUP BY，排最后）。
+        StringBuilder where = new StringBuilder(" WHERE 1=1");
+        List<Object> args = new ArrayList<>();
+        Long orgFilter = parseOptionalLong(orgId);
+        if (orgFilter != null) {
+            where.append(" AND bu.org_id = ?");
+            args.add(orgFilter);
+        }
+        if (type != null && !type.isBlank()) {
+            validateBillingType(type);
+            where.append(" AND bu.type = ?");
+            args.add(type.trim());
+        }
+        if (from != null && !from.isBlank()) {
+            where.append(" AND bu.occurred_at >= ?::timestamptz");
+            args.add(from.trim());
+        }
+        if (to != null && !to.isBlank()) {
+            where.append(" AND bu.occurred_at < (?::timestamptz + interval '1 day')");
+            args.add(to.trim());
+        }
+        appendRangeScope(s, where, args, "bu.org_id");
+
+        String base = "FROM billing_usage bu JOIN org o ON o.id = bu.org_id" + where;
+        // count：WHERE 占位符在前，GROUP BY 的 to_char(fmt) 在后。
+        Long total = jdbc.queryForObject(
+                "SELECT count(*) FROM (SELECT 1 " + base
+                        + " GROUP BY to_char(bu.occurred_at, ?), bu.org_id, o.name, bu.type) t",
+                Long.class, appendArg(args, fmt));
+
+        // list：SELECT 的 to_char(fmt) 在最前，其后是 WHERE 占位符，最后分页。
+        List<Object> pageArgs = new ArrayList<>();
+        pageArgs.add(fmt);
+        pageArgs.addAll(args);
+        pageArgs.add(pg.size);
+        pageArgs.add(pg.offset);
+        List<UsageSummaryRowDto> items = jdbc.query(
+                "SELECT to_char(bu.occurred_at, ?) AS bucket, bu.org_id, o.name AS org_name, bu.type,"
+                        + " SUM(bu.qty) AS qty, COUNT(*) AS cnt " + base
+                        + " GROUP BY 1, bu.org_id, o.name, bu.type"
+                        + " ORDER BY 1 DESC, bu.org_id, bu.type LIMIT ? OFFSET ?",
+                (rs, i) -> {
+                    String btype = rs.getString("type");
+                    return new UsageSummaryRowDto(
+                            rs.getString("bucket"),
+                            String.valueOf(rs.getLong("org_id")),
+                            rs.getString("org_name"),
+                            btype,
+                            com.youzheng.huicui.common.BillingUnits.of(btype),
+                            doubleOrNull(rs, "qty"),
+                            rs.getInt("cnt"));
+                }, pageArgs.toArray());
+
+        return Page.of(items, pg, total == null ? 0 : total);
+    }
+
     // perm=billing.recharge（PermissionInterceptor 挡）+ x-data-scope=platform（service 复核）。
     // 校验 org 存在(404)/org×type 矩阵(422)/qty>0(422) → 读旧余额 → INSERT recharge_log → audit_log → 201。
     @PostMapping("/billing/recharge")
@@ -179,17 +340,12 @@ public class BillingM9Controller {
         String orgType = loadOrgType(orgId);                 // 不存在→404
         assertOrgTypeMatrix(orgType, type);                  // 服务商充 SMS→422
 
-        // 串行化本 org×type 余额读-改-写：advisory 事务锁防并发丢失更新(审计 H-1)。@Transactional 提交时自动释放。
-        jdbc.queryForList("SELECT pg_advisory_xact_lock(?, ?)", (int) orgId, type.hashCode());
-        // 读当前 org×type 最新 balance（无→0），新余额=旧+qty。
-        BigDecimal oldBalance = latestBalance(orgId, type);
-        BigDecimal newBalance = oldBalance.add(qty);
-
+        // v1.19.0：余额权威源=org_balance；BalanceService.credit 内部行锁(upsert-lock)串行化本 org×type
+        // 读-改-写（取代 pg_advisory_xact_lock 的 (int)orgId 截断+hashCode 碰撞），并同步写 recharge_log 流水。
         long operatedBy = actorIdOrThrow(s);
-        jdbc.update(
-                "INSERT INTO recharge_log(org_id, type, delta, balance, ref, note, operated_by)"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                orgId, type, qty, newBalance, null, note, operatedBy);
+        // ref 落真值（修既有违约：契约 RechargeLog.ref 非空，而此前恒写 NULL）。
+        String ref = "RC-" + java.time.LocalDate.now().toString().replace("-", "") + "-" + orgId;
+        BigDecimal newBalance = balance.credit(orgId, type, qty, ref, note, operatedBy);
 
         // 平台充值留痕（BR-M9-06a）：after_snap={type,qty,balance}。
         auditRecharge(s, orgId, type, qty, newBalance, note);
@@ -213,14 +369,11 @@ public class BillingM9Controller {
 
     // ════════════════════════════ recharge 校验 ══════════════════════════════
 
-    /** org×type 矩阵（BR-M9-07/08/10）：SMS 仅 PROPERTY 可充；STT 物业/服务商均可。违反→422。 */
+    /** org×type 矩阵（BR-M9-07/08/10）：委托 BillingUnits.rechargeable（v1.19.0 唯一真源，同源下发前端）。违反→422。 */
     private void assertOrgTypeMatrix(String orgType, String type) {
-        if (TYPE_SMS.equals(type) && !ORG_PROPERTY.equals(orgType)) {
-            throw new ApiException(BizError.VALIDATION_422, "SMS 短信额度仅物业可充值");
-        }
-        if (TYPE_STT.equals(type) && !ORG_PROPERTY.equals(orgType) && !ORG_PROVIDER.equals(orgType)) {
-            // 平台自身不作为充值受体（无业务用量）；STT 仅物业/服务商。
-            throw new ApiException(BizError.VALIDATION_422, "STT 分钟额度仅物业/服务商可充值");
+        if (!com.youzheng.huicui.common.BillingUnits.rechargeable(orgType, type)) {
+            throw new ApiException(BizError.VALIDATION_422,
+                    TYPE_SMS.equals(type) ? "SMS 短信额度仅物业可充值" : "STT 分钟额度仅物业/服务商可充值");
         }
     }
 
@@ -231,16 +384,6 @@ public class BillingM9Controller {
         } catch (EmptyResultDataAccessException e) {
             throw new ApiException(BizError.NOT_FOUND_404, "组织不存在: " + orgId);
         }
-    }
-
-    /** 该 org×type 最新 balance 快照（按 tm DESC, id DESC 取首条）；无记录→0。 */
-    private BigDecimal latestBalance(long orgId, String type) {
-        BigDecimal bal = jdbc.query(
-                "SELECT balance FROM recharge_log WHERE org_id = ? AND type = ?"
-                        + " ORDER BY tm DESC, id DESC LIMIT 1",
-                rs -> rs.next() ? rs.getBigDecimal("balance") : null,
-                orgId, type);
-        return bal == null ? BigDecimal.ZERO : bal;
     }
 
     // ════════════════════════════ audit_log ══════════════════════════════════
@@ -273,7 +416,9 @@ public class BillingM9Controller {
                 rs.getString("room"),
                 rs.getString("project_name"),
                 rs.getString("batch_no"),
-                ts(rs.getTimestamp("occurred_at")));
+                ts(rs.getTimestamp("occurred_at")),
+                idOrNull(rs, "org_id"),
+                rs.getString("org_name"));
     }
 
     /** recharge_log 行 → RechargeLogM9Dto。delta/balance NUMERIC→Double（用量单位非金额）。 */
@@ -284,10 +429,31 @@ public class BillingM9Controller {
                 doubleOrNull(rs, "delta"),
                 doubleOrNull(rs, "balance"),
                 rs.getString("ref"),
-                ts(rs.getTimestamp("tm")));
+                ts(rs.getTimestamp("tm")),
+                idOrNull(rs, "org_id"),
+                rs.getString("org_name"),
+                rs.getString("note"),
+                rs.getString("operated_by_name"));
     }
 
     // ════════════════════════════ 入参解析（非法→422 / org→404）═══════════════
+
+    /** 可选 long 入参：空→null；非数→422（不 5xx）。 */
+    private static Long parseOptionalLong(String v) {
+        if (v == null || v.isBlank()) return null;
+        try {
+            return Long.valueOf(v.trim());
+        } catch (NumberFormatException e) {
+            throw new ApiException(BizError.VALIDATION_422, "orgId 非法");
+        }
+    }
+
+    /** count 查询的参数序列：where 的 args + GROUP BY 里再用一次 fmt（顺序须与 SQL 占位符一致）。 */
+    private static Object[] appendArg(List<Object> args, Object extra) {
+        List<Object> a = new ArrayList<>(args);
+        a.add(extra);
+        return a.toArray();
+    }
 
     private void validateBillingType(String type) {
         String t = type.trim();

@@ -18,5 +18,8 @@ public record BillingUsageDto(
         String room,
         String projectName,
         String batchNo,
-        String occurredAt
+        String occurredAt,
+        // v1.19.0 额度管理：组织维度（平台侧按组织聚合/下钻必需；此前 SA 看到的是无 org 列的混合平表）
+        String orgId,
+        String orgName
 ) {}
