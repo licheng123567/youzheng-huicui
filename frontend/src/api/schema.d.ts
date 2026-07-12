@@ -2551,7 +2551,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 成员列表(平台见全量但跨组织只读;物业/服务商=本组织 BR-M1-04a) */
+        /**
+         * 成员列表(平台见全量但跨组织只读;物业/服务商=本组织 BR-M1-04a)
+         * @description orgId(v1.21.1): 按组织过滤。平台的「成员管理」页传自身 orgId → 只见平台员工(SA/SE)，与「新增成员只建平台员工」的写口径一致；
+         *     不传时平台仍见全量——协调员选择器(CoordinatorPicker)靠 role=PC 的跨组织全量给批次/项目挑物业协调员，故不能在端点层收窄。
+         *     非平台主体传任何 orgId 都不放宽 own-org 限制(叠加互斥→他人组织返回空集)。
+         */
         get: operations["listMembers"];
         put?: never;
         /** 新建员工(平台只建平台员工;物业/服务商负责人建本组织员工·权限子集 BR-M1-04a) */
@@ -9129,6 +9134,8 @@ export interface operations {
             query?: {
                 role?: components["schemas"]["RoleTemplateEnum"];
                 status?: string;
+                /** @description 按组织过滤(平台成员管理页只看本组织) */
+                orgId?: string;
                 page?: components["parameters"]["Page"];
                 size?: components["parameters"]["Size"];
             };

@@ -37,7 +37,12 @@ const roleOptions = computed<string[]>(() => {
 const myPermissions = computed<string[]>(() => (auth.me as any)?.permissions ?? [])
 
 async function load() {
-  const m = await api.GET('/members', { params: { query: { page: 1, size: 50 } } as any })
+  // v1.21.1 平台只看平台成员：与「平台只建平台员工(SA/SE)·BR-M1-04a」的写口径对齐。
+  // 端点本身对平台仍是全量（CoordinatorPicker 靠它跨组织挑物业协调员），故收窄在页面这一层用 orgId 参数。
+  // 服务商/物业的成员由各自负责人在自己的成员管理里维护，平台既不看也不管。
+  const q: any = { page: 1, size: 50 }
+  if (isPlatform()) q.orgId = String((auth.me as any)?.org?.id ?? '')
+  const m = await api.GET('/members', { params: { query: q } as any })
   members.value = (m.data as any)?.items ?? []
   if (isPlatform()) orgs.value = ((await api.GET('/orgs', { params: { query: { page: 1, size: 50 } } as any })).data as any)?.items ?? []
   if (showSupervise.value) loadSupervise()
@@ -211,7 +216,11 @@ onMounted(load)
     <div class="card-h">
       <div class="t"><span class="bar"></span>成员管理</div>
       <div class="ops">
-        <span class="note" style="margin:0">member.manage · 仅本组织成员，平台不可跨组织 BR-M1-04a</span>
+        <span class="note" style="margin:0">
+          {{ isPlatform()
+            ? 'member.manage · 只管平台员工（SA/SE）；服务商与物业的成员由各自负责人维护 BR-M1-04a'
+            : 'member.manage · 仅本组织成员，平台不可跨组织 BR-M1-04a' }}
+        </span>
         <button v-if="auth.has('member.manage') && memberTab==='list'" class="btn sm" @click="openCreate">+ 新增成员</button>
       </div>
     </div>
