@@ -11,19 +11,20 @@ const role = computed(() => auth.me?.role ?? '')
 const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
 
 const data = ref<any>(null)
-const reportArea = ref('')
-const reportPeriod = ref<'month' | 'quarter' | 'year'>('month')
-const reportRange = ref('')
+const reportRange = ref('')   // YYYY-MM；空=全部月份
 
 const scopeLabel: Record<string, string> = { SA: '全局', SE: '范围内', PL: '本物业', PC: '本物业', VL: '本服务商', CO: '本人' }
 
 async function load() {
-  const { data: d, error } = await api.GET('/reports/operation', { params: { query: { dimension: 'batch', page: 1, size: 50 } } as any })
+  if (isPlatform.value) return          // 平台的数全走「穿透统计」卡（load 的结果已无人消费）
+  const q: any = { dimension: 'batch', page: 1, size: 50 }
+  if (reportRange.value) q.month = reportRange.value          // 后端 month=YYYY-MM，按案件建档月过滤
+  const { data: d, error } = await api.GET('/reports/operation', { params: { query: q } as any })
   if (error) { ElMessage.error('报表加载失败'); return }
   data.value = d
 }
 
-function applyFilter() { load(); loadVl() }
+function applyFilter() { load(); loadVl(); if (isPlatform.value) loadDrill() }
 
 async function exportReport() {
   const { error } = await api.POST('/reports/export', { body: { report: 'operation', format: 'xlsx' } as any })
@@ -132,6 +133,7 @@ async function loadDrill() {
   drillLoading.value = true
   const c = curCrumb.value
   const q: any = { dimension: c.dimension }
+  if (reportRange.value) q.month = reportRange.value          // 月份筛子对每一层都生效
   if (c.propertyId) q.propertyId = c.propertyId
   if (c.providerId) q.providerId = c.providerId
   if (c.projectId) q.projectId = c.projectId
@@ -182,16 +184,19 @@ onMounted(() => { load(); loadVl(); if (isPlatform.value) loadDrill() })
     <div class="toolbar" style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <span class="note" style="margin:0">报表范围：{{ scopeLabel[role] || '全局' }}（导出仅含范围内数据）</span>
-        <select class="inp" v-model="reportArea" style="min-width:120px"><option value="">全部区域</option></select>
-        <select class="inp" v-model="reportPeriod" style="min-width:110px"><option value="month">按月</option><option value="quarter">按季</option><option value="year">按年</option></select>
-        <input class="inp" type="month" v-model="reportRange" style="min-width:130px" />
+        <!-- 只留真的筛子：月份（后端 month 参数，按案件建档月过滤）。
+             原先还有「全部区域」「按月/按季/按年」两个下拉——applyFilter 从不把它们发出去，
+             后端也没有对应参数，纯装饰。删掉：假开关比没有开关更坏。 -->
+        <input class="inp" type="month" v-model="reportRange" style="min-width:140px" placeholder="全部月份" />
         <button class="btn df sm" @click="applyFilter">应用筛选</button>
+        <button v-if="reportRange" class="btn sm" @click="reportRange = ''; applyFilter()">清除</button>
       </div>
       <button v-if="auth.has('report.export')" class="btn sm" @click="exportReport">导出</button>
     </div>
 
-    <!-- KPI 卡片 -->
-    <div class="kpis" v-if="data">
+    <!-- KPI 卡片：**平台不出这组**——它与「穿透统计」卡里的 KPI 在根层完全重复，
+         而后者会随下钻层级变（钻进翠湖就是翠湖的数）。留一组、且是会变的那组。 -->
+    <div class="kpis" v-if="data && !isPlatform">
       <div class="kpi" v-for="s in kpis" :key="s.l">
         <div class="n">{{ s.n }}</div><div class="l">{{ s.l }}</div>
       </div>
