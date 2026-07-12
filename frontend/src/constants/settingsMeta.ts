@@ -26,7 +26,7 @@ export const DOMAIN_META: Record<string, { label: string; desc: string }> = {
   },
   CLOSE_REASONS: {
     label: '结案原因',
-    desc: '案件结案时可选的原因清单，按类型分组（已还清/撤案/坏账…）。',
+    desc: '案件结案时可选的原因清单。类型只有两种：撤案 / 坏账（契约 CloseKindEnum）。',
   },
   SMS: {
     label: '短信默认参数',

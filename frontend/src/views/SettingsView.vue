@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
-import { roleTemplateLabel, dataScopeLabel, settingsDomainLabel, scriptSourceLabel, scriptStatusLabel } from '../constants/enums'
+import { roleTemplateLabel, dataScopeLabel, settingsDomainLabel, scriptSourceLabel, scriptStatusLabel, closeKindLabel } from '../constants/enums'
 import { DOMAIN_META, fieldLabel, fieldDesc, fieldValue } from '../constants/settingsMeta'
 import { permLabel } from '../constants/permissions'
 import DsDrawer from '../components/DsDrawer.vue'
@@ -51,6 +51,23 @@ function domainData(domain: string) {
   const row = items.value.find((x) => x.domain === domain)
   return row ?? {}
 }
+// 卡头「编辑」→ 分发到对应抽屉。入口跟着卡片走，而不是页面顶部一排代码名按钮。
+const matrixOpen = ref(false)
+// 五个域**一律出卡**（按业务顺序），哪怕后端没有该域的行——
+// GET /settings 只回「已存在的配置行」，干净库里没有 CLOSE_REASONS 就没有卡，那个域就**永远配不了**。
+// 这是 CI 干净库逮到的真 bug（本地库因 E2E 反复写入而恰好有行，掩盖了它）。
+const DOMAIN_ORDER = ['TIMERS', 'ROTATION', 'MARK_CODES', 'CLOSE_REASONS', 'SMS']
+const orderedItems = computed(() => DOMAIN_ORDER.map(
+  (d) => items.value.find((x) => x.domain === d) ?? { domain: d, version: 0, effectiveAt: null }))
+
+function editDomain(domain: string) {
+  if (domain === 'TIMERS') openTimers()
+  else if (domain === 'ROTATION') openRotation()
+  else if (domain === 'MARK_CODES') openMarkCodes()
+  else if (domain === 'CLOSE_REASONS') openCloseReasons()
+  else if (domain === 'SMS') openSms()
+}
+
 // 通用保存：PUT /settings body={domain, effectiveAt?, <域字段>:value}，写新版本(对新计时案件生效 BR-M3-19)。
 // effectiveAt 可选(SettingsInput.effectiveAt)，留空=立即生效。
 async function saveDomain(domain: SettingsInput['domain'], value: any, effectiveAt?: string | null) {
@@ -298,26 +315,60 @@ onMounted(() => { load(); loadMore(); loadIntegrations() })
       <div class="ops"><span class="note" style="margin:0">平台 · 带版本/生效时间 · 变更只对新计时案件生效 BR-M3-19</span></div>
     </div>
 
-    <div v-if="auth.has('settings.manage')" class="toolbar">
-      <button class="btn sm" @click="openTimers">编辑时效参数(TIMERS)</button>
-      <button class="btn sm" @click="openRotation">编辑轮转配置(ROTATION)</button>
-      <button class="btn sm" @click="openMarkCodes">编辑标记码(MARK_CODES)</button>
-      <button class="btn sm" @click="openCloseReasons">编辑结案原因(CLOSE_REASONS)</button>
-      <button class="btn sm" @click="openSms">编辑短信配置(SMS)</button>
-    </div>
-
     <!-- 人话化（v1.23.0）：此前这里把 JSON 原样 dump 出来（{"holdCap":50}），只有写代码的人看得懂。
          现在每个域一张卡：中文域名 + 这个域管什么 + 每个参数的中文名/当前值/一句话说明。 -->
-    <div v-for="row in items" :key="row.domain" class="card" style="margin-bottom:12px;box-shadow:none;border:1px solid var(--bd)">
+    <!-- 一域一卡（v1.25.0）：编辑入口就在卡头——此前是页面顶部一排代码名按钮（「编辑时效参数(TIMERS)」），
+         和卡片断开，用户找不到「时效参数在哪调」。数组域（标记码/结案原因）此前把整条数组挤成一格
+         （closeReasons: E2E_REASON、E2E_REASON…），全是码没有中文名，等于看不懂。 -->
+    <div v-for="row in orderedItems" :key="row.domain" class="card" style="margin-bottom:12px;box-shadow:none;border:1px solid var(--bd)">
       <div class="card-h" style="padding-bottom:6px">
         <div class="t" style="font-size:14px">
           {{ DOMAIN_META[row.domain]?.label ?? settingsDomainLabel(row.domain) }}
-          <span class="tag inf" style="margin-left:6px" :title="row.domain">v{{ row.version }}</span>
+          <span class="tag" :class="row.version ? 'inf' : 'war'" style="margin-left:6px" :title="row.domain">
+            {{ row.version ? 'v' + row.version : '未配置' }}
+          </span>
         </div>
-        <div class="ops"><span class="note" style="margin:0">生效时间 {{ row.effectiveAt ? String(row.effectiveAt).slice(0,16).replace('T',' ') : '立即' }}</span></div>
+        <div class="ops" style="display:flex;align-items:center;gap:10px">
+          <span class="note" style="margin:0">
+            {{ row.version ? ('生效时间 ' + (row.effectiveAt ? String(row.effectiveAt).slice(0,16).replace('T',' ') : '立即')) : '尚未配置，走系统默认值' }}
+          </span>
+          <button v-if="auth.has('settings.manage')" class="btn sm" @click="editDomain(row.domain)">编辑</button>
+        </div>
       </div>
       <div class="note" style="margin:0 0 8px">{{ DOMAIN_META[row.domain]?.desc }}</div>
-      <table>
+
+      <!-- 标记码：码 + 中文名 + 它到底意味着什么（接通/有效跟进会重置无跟进倒计时） -->
+      <table v-if="row.domain === 'MARK_CODES'">
+        <thead><tr><th style="width:160px">结果码</th><th style="width:180px">名称</th><th style="width:90px">算接通</th><th style="width:110px">算有效跟进</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr v-for="m in (row.markCodes ?? [])" :key="m.code">
+            <td><code>{{ m.code }}</code></td>
+            <td><b>{{ m.label || '（未命名）' }}</b></td>
+            <td><span class="tag" :class="m.connected ? 'suc' : 'inf'">{{ m.connected ? '是' : '否' }}</span></td>
+            <td><span class="tag" :class="m.effectiveFollowUp ? 'suc' : 'inf'">{{ m.effectiveFollowUp ? '是' : '否' }}</span></td>
+            <td class="note" style="margin:0">
+              {{ m.effectiveFollowUp ? '选它会重置该案件的「无跟进自动释放」倒计时' : (m.connected ? '算接通，但不重置无跟进倒计时' : '未接通') }}
+            </td>
+          </tr>
+          <tr v-if="!(row.markCodes ?? []).length"><td colspan="5" class="note" style="text-align:center">未配置（催收员标记通话结果时无可选项）</td></tr>
+        </tbody>
+      </table>
+
+      <!-- 结案原因：按类型分组展示，不再是一串码 -->
+      <table v-else-if="row.domain === 'CLOSE_REASONS'">
+        <thead><tr><th style="width:160px">类型</th><th style="width:200px">原因码</th><th>名称</th></tr></thead>
+        <tbody>
+          <tr v-for="(c, i) in (row.closeReasons ?? [])" :key="i">
+            <td><span class="tag inf">{{ closeKindLabel(c.kind) }}</span></td>
+            <td><code>{{ c.code }}</code></td>
+            <td><b>{{ c.label || '（未命名）' }}</b></td>
+          </tr>
+          <tr v-if="!(row.closeReasons ?? []).length"><td colspan="3" class="note" style="text-align:center">未配置（结案时无可选原因）</td></tr>
+        </tbody>
+      </table>
+
+      <!-- 其余标量域：中文名 / 当前值(带单位) / 一句话说明 -->
+      <table v-else>
         <thead><tr><th style="width:170px">参数</th><th style="width:200px">当前值</th><th>说明</th></tr></thead>
         <tbody>
           <tr v-for="(v, k) in flatFields(row)" :key="k">
@@ -333,11 +384,20 @@ onMounted(() => { load(); loadMore(); loadIntegrations() })
     </div>
     <div v-if="!items.length" class="note" style="text-align:center;padding:24px 0">暂无配置数据（仅平台可见）</div>
 
+    <!-- 权限矩阵：**只读**（权限是代码里的口径，不在这儿改）。它有几百行，摊开会把真正能配的东西全挤到看不见——
+         用户原话「不能修改就不要显示，可以修改和配置的才显示」。故默认收起，需要时再展开或导出。 -->
     <div class="sec-title" style="justify-content:space-between">
-      <span style="display:flex;align-items:center;gap:8px">权限矩阵（GET /permission-matrix · 功能×角色×权限码×数据范围 BR-M1-04c）</span>
-      <button v-if="auth.has('settings.manage')" class="btn txt" @click="exportMatrix">导出 CSV</button>
+      <span style="display:flex;align-items:center;gap:8px">
+        权限矩阵
+        <span class="tag inf">只读参考</span>
+        <span style="font-size:12px;color:var(--sec);font-weight:400">功能×角色×权限码×数据范围（{{ matrix.length }} 条）· 权限口径由代码定义，此处不可改</span>
+      </span>
+      <span style="display:flex;gap:8px">
+        <button class="btn txt" @click="matrixOpen = !matrixOpen">{{ matrixOpen ? '收起' : '展开查看' }}</button>
+        <button v-if="auth.has('settings.manage')" class="btn txt" @click="exportMatrix">导出 CSV</button>
+      </span>
     </div>
-    <table>
+    <table v-if="matrixOpen">
       <thead>
         <tr><th>功能/模块</th><th style="width:80px">角色</th><th>权限码</th><th>数据范围</th></tr>
       </thead>

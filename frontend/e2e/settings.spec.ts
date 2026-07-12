@@ -1,8 +1,14 @@
 import { test, expect } from '@playwright/test'
 import { loginRole } from './helpers'
 
-// US-M3-11 超管系统配置：全 5 域(TIMERS/ROTATION/MARK_CODES/CLOSE_REASONS/SMS)可编辑、
-// 版本递增、非法值拒绝；权限矩阵导出 CSV；非平台角色门控。
+// v1.25.0：编辑入口从「页面顶部一排代码名按钮」移到**每张域卡片的卡头**——
+// 用户原话「时效参数没有可以调整的地方啊」：顶部按钮叫「编辑时效参数(TIMERS)」，和下面的卡片是断开的，找不到。
+/** 点开某个配置域的编辑抽屉（按卡头的域码 tag 定位到卡片，再点它自己的「编辑」）。 */
+async function editDomain(page: import('@playwright/test').Page, domain: string) {
+  const card = page.locator('.card').filter({ has: page.locator(`span.tag[title="${domain}"]`) }).last()
+  await card.getByRole('button', { name: '编辑' }).click()
+}
+
 test.describe('US-M3-11 系统配置(SA)', () => {
   test.beforeEach(async ({ page }) => {
     await loginRole(page, 'SA')
@@ -17,7 +23,7 @@ test.describe('US-M3-11 系统配置(SA)', () => {
     await expect(version).toBeVisible()
     const before = (await version.innerText()).trim()
 
-    await page.getByRole('button', { name: '编辑时效参数(TIMERS)' }).click()
+    await editDomain(page, 'TIMERS')
     const dlg = page.getByRole('dialog').filter({ hasText: '编辑时效参数' })
     await expect(dlg).toBeVisible()
     // 改 T2 服务商处置(小时)
@@ -30,7 +36,7 @@ test.describe('US-M3-11 系统配置(SA)', () => {
   })
 
   test('编辑 MARK_CODES 数组(增一条 connected/effectiveFollowUp)保存回读一致', async ({ page }) => {
-    await page.getByRole('button', { name: '编辑标记码(MARK_CODES)' }).click()
+    await editDomain(page, 'MARK_CODES')
     const dlg = page.getByRole('dialog').filter({ hasText: '编辑标记码' })
     await expect(dlg).toBeVisible()
     await dlg.getByRole('button', { name: '+ 新增标记码' }).click()
@@ -46,7 +52,7 @@ test.describe('US-M3-11 系统配置(SA)', () => {
 
   test('编辑 SMS(cooldownMinutes/signature)与 CLOSE_REASONS 保存成功', async ({ page }) => {
     // SMS
-    await page.getByRole('button', { name: '编辑短信配置(SMS)' }).click()
+    await editDomain(page, 'SMS')
     let dlg = page.getByRole('dialog').filter({ hasText: '编辑短信配置' })
     await expect(dlg).toBeVisible()
     await dlg.locator('.el-form-item').filter({ hasText: '同案冷却' }).locator('input').fill('30')
@@ -55,7 +61,7 @@ test.describe('US-M3-11 系统配置(SA)', () => {
     await expect(page.getByText(/已保存|保存成功/).first()).toBeVisible()
 
     // CLOSE_REASONS
-    await page.getByRole('button', { name: '编辑结案原因(CLOSE_REASONS)' }).click()
+    await editDomain(page, 'CLOSE_REASONS')
     dlg = page.getByRole('dialog').filter({ hasText: '编辑结案原因' })
     await expect(dlg).toBeVisible()
     await dlg.getByRole('button', { name: '+ 新增结案原因' }).click()
