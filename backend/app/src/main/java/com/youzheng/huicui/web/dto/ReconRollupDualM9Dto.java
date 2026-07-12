@@ -12,7 +12,7 @@ import java.math.BigDecimal;
  *   dueInCents        ← Σ round(amount×commInRate)（应收佣）
  *   settledInCents    ← Σ(settled_in=TRUE × commInRate)（已收佣）
  *   unsettledInCents  ← dueIn - settledIn（未收佣）
- *   payOutRate        ← 付佣生效率=COALESCE(batch.pay_out_rate, batch.open_rate)（与组单 resolveCommRate 口径一致）；
+ *   payOutRate        ← 付佣生效率=batch.pay_out_rate（v1.18.0 去 open_rate 兜底，与组单 resolveCommRate 口径一致）；
  *                       两率皆空 → null（未设付佣比例，OUT 四列+毛利同为 null）
  *   dueOutCents/settledOutCents/unsettledOutCents ← 付佣线同构（应付/已付/未付）；payOutRate=null 时
  *                       dueOut/unsettledOut/gross=null，settledOut 恒 0（无率无法组单）

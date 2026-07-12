@@ -71,7 +71,7 @@ public class BatchesM2Controller {
                               com.youzheng.huicui.web.dto.PoolDistDto poolDist, int engagementCount) {}
 
     private static final BatchStats EMPTY_STATS =
-            new BatchStats(0, 0L, 0L, new com.youzheng.huicui.web.dto.PoolDistDto(0, 0, 0, 0, 0, 0, 0), 0);
+            new BatchStats(0, 0L, 0L, new com.youzheng.huicui.web.dto.PoolDistDto(0, 0, 0, 0, 0, 0), 0);
 
     /**
      * 页内批次统计（3 条批量查询）：①案件分布+应收（FILTER 聚合）②已收（repay_line reversed=false）③承接段数（V930）。
@@ -80,7 +80,7 @@ public class BatchesM2Controller {
         java.util.Map<Long, BatchStats> out = new java.util.HashMap<>();
         if (batchIds.isEmpty()) return out;
         Long[] ids = batchIds.toArray(new Long[0]);
-        java.util.Map<Long, long[]> dist = new java.util.HashMap<>();      // [cnt,due,s0..s4,settled,closed]
+        java.util.Map<Long, long[]> dist = new java.util.HashMap<>();      // [cnt,due,s0..s3,settled,closed]
         jdbc.query(con -> {
             var ps = con.prepareStatement(
                     "SELECT c.batch_id, count(*) AS cnt, COALESCE(sum(c.due_cents),0) AS due,"
@@ -88,7 +88,6 @@ public class BatchesM2Controller {
                             + " count(*) FILTER (WHERE c.status='PENDING_DISPATCH' AND c.pool='PROVIDER_SEA') AS s1,"
                             + " count(*) FILTER (WHERE c.status='PROVIDER_SEA') AS s2,"
                             + " count(*) FILTER (WHERE c.status='IN_PROGRESS' AND c.pool='PRIVATE') AS s3,"
-                            + " count(*) FILTER (WHERE c.status='PENDING_DISPATCH' AND c.pool='OPEN_POOL') AS s4,"
                             + " count(*) FILTER (WHERE c.status='SETTLED') AS settled,"
                             + " count(*) FILTER (WHERE c.status IN ('WITHDRAWN','BAD_DEBT','VOIDED')) AS closed"
                             + " FROM \"case\" c WHERE c.batch_id = ANY(?) GROUP BY c.batch_id");
@@ -97,7 +96,7 @@ public class BatchesM2Controller {
         }, rs -> {
             dist.put(rs.getLong("batch_id"), new long[]{
                     rs.getLong("cnt"), rs.getLong("due"), rs.getLong("s0"), rs.getLong("s1"),
-                    rs.getLong("s2"), rs.getLong("s3"), rs.getLong("s4"),
+                    rs.getLong("s2"), rs.getLong("s3"),
                     rs.getLong("settled"), rs.getLong("closed")});
         });
         java.util.Map<Long, Long> repaid = new java.util.HashMap<>();
@@ -123,7 +122,7 @@ public class BatchesM2Controller {
             out.put(bid, new BatchStats(
                     (int) d[0], d[1], repaid.getOrDefault(bid, 0L),
                     new com.youzheng.huicui.web.dto.PoolDistDto(
-                            (int) d[2], (int) d[3], (int) d[4], (int) d[5], (int) d[6], (int) d[7], (int) d[8]),
+                            (int) d[2], (int) d[3], (int) d[4], (int) d[5], (int) d[6], (int) d[7]),
                     engs.getOrDefault(bid, 0)));
         }
         return out;

@@ -175,7 +175,7 @@ public class DevSeeder implements CommandLineRunner {
         // 此处按 V930 回填口径幂等补开 seq=1 进行中段，否则批次运营页「承接历史/N任角标」在 fresh 库恒空。
         jdbc.update(
                 "INSERT INTO batch_engagement(batch_id, provider_id, seq, pay_out_rate, started_at) "
-                        + "SELECT b.id, b.provider_id, 1, COALESCE(b.pay_out_rate, b.open_rate, 0), now() "
+                        + "SELECT b.id, b.provider_id, 1, COALESCE(b.pay_out_rate, 0), now() "
                         + "FROM batch b WHERE b.provider_id IS NOT NULL "
                         + "AND NOT EXISTS (SELECT 1 FROM batch_engagement e WHERE e.batch_id = b.id)");
 
@@ -403,8 +403,8 @@ public class DevSeeder implements CommandLineRunner {
      *   S0 待派单     批次 B-CH-M3-S0（平台公海未派）→ case PENDING_DISPATCH/PLATFORM_SEA
      *   S1 待接单     批次 B-CH-M3-S1（provider_id 已派）→ case PENDING_DISPATCH/PROVIDER_SEA source=DISPATCH t2
      *   S2 服务商公海 批次 B-CH-M3-S2（provider_id 已承接）→ case PROVIDER_SEA/PROVIDER_SEA source=ACCEPT t2
-     *   S4 开放抢单池 批次 B-CH-M3-S4（open_rate 已设）→ case PENDING_DISPATCH/OPEN_POOL source=OPEN origin=OPEN_POOL
      *   S3 私海进行中 复用 S2 批次 → case IN_PROGRESS/PRIVATE holder=co1 source=CLAIM origin=PROVIDER_SEA tc
+     *   （S4 开放抢单池种子已删——v1.18.0 开放抢单停用，杜绝 S4 存量）
      */
     private void seedM3States(Long projId, Long providerOrg, Long coHolder) {
         // S0：平台公海待派单（无 provider）
@@ -425,11 +425,6 @@ public class DevSeeder implements CommandLineRunner {
         // S3：私海进行中（复用 S2 批次的服务商归属；holder=co1、origin=PROVIDER_SEA、tc）
         ensureSeaCase(b2, projId, "翠湖一期", "M3-S3-01", "周私海", "S3-101", 260000L,
                 "IN_PROGRESS", "PRIVATE", coHolder, "CLAIM", "PROVIDER_SEA", false, true /*tc*/);
-
-        // S4：开放抢单池（批次 open_rate 已设；origin=OPEN_POOL，便于释放回流测）
-        Long b4 = ensureBatch(projId, "B-CH-M3-S4", "0.3000", "0.2000", null, "0.1800", "PENDING");
-        ensureSeaCase(b4, projId, "翠湖一期", "M3-S4-01", "吴抢单", "S4-101", 240000L,
-                "PENDING_DISPATCH", "OPEN_POOL", null, "OPEN", "OPEN_POOL", false, false);
 
         // M4 外围实体：给 S3 私海案件挂 录音/AI复盘/承诺/联系人/工单（+pay_link/reduction/repay_line）
         Long caseS3Id = jdbc.query(

@@ -146,16 +146,12 @@ public class HolderM3Controller {
         }
 
         Instant t2 = Instant.now().plusSeconds(t2Seconds());
-        Transition base = state.resolveReleaseTarget(snap, coId, t2); // 按 origin_pool 判回 S2/S4
+        Transition base = state.resolveReleaseTarget(snap, coId, t2); // 释放恒回 S2 服务商公海（v1.18.0 开放池停用）
         int n = state.transition(caseId, base);
         if (n == 0) {
             throw new ApiException(BizError.STATE_409, "案件状态已变更，释放失败: " + caseId);
         }
-        // 案件级归属维护：回服务商公海(S2) → 案件仍属本商，保留 provider_id（本商其他 CO 须可见/可再抢，claim S2 校验依赖之）；
-        //   回开放池(S4) → 案件离开本商私海，跨商开放抢单，清 provider_id=NULL（避免 range scope 仍只让旧商可见）。
-        if (CaseStateService.POOL_OPEN_POOL.equals(base.toPool())) {
-            state.clearCaseProvider(caseId);
-        }
+        // 案件仍属本商，provider_id 保留（本商其他 CO 须可见/可再抢，claim S2 校验依赖之）。
         CaseSnapshot after = state.lockCase(caseId);
         state.audit(s, "case.release", caseId, reason, snap, after);
         return ok();

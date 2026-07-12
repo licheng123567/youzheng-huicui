@@ -15,8 +15,9 @@ test.describe('SA 案件运营三合一', () => {
     await expect(tabs.getByText('平台公海')).toBeVisible()
     // 默认批次运营:批次表在
     await expect(page.getByText('批次（催收单）')).toBeVisible()
-    // 切平台公海:内嵌 SeaView 的开放抢单池分段出现
+    // 切平台公海:内嵌 SeaView 出现（v1.18.0 开放抢单停用——开放池分段必须不存在）
     await tabs.getByText('平台公海').click()
-    await expect(page.locator('.segctrl', { hasText: '开放抢单池' })).toBeVisible()
+    await expect(page.locator('.segctrl').nth(1).locator('span', { hasText: '平台公海' })).toBeVisible()
+    await expect(page.getByText('开放抢单池')).toHaveCount(0)
   })
 })

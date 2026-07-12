@@ -167,18 +167,18 @@ public class ReconRepayM9Controller {
 
         // 分页在 batch 维度（同单线 rollup 骨架），带出双线比率避免逐批重查。
         String idSql = "SELECT rl.batch_id, b.no AS batch_no, p.name AS proj_name,"
-                + " b.comm_in_rate, b.pay_out_rate, b.open_rate"
+                + " b.comm_in_rate, b.pay_out_rate"
                 + " " + base
-                + " GROUP BY rl.batch_id, b.no, p.name, b.comm_in_rate, b.pay_out_rate, b.open_rate"
+                + " GROUP BY rl.batch_id, b.no, p.name, b.comm_in_rate, b.pay_out_rate"
                 + " ORDER BY rl.batch_id DESC LIMIT ? OFFSET ?";
         List<Object> pageArgs = new ArrayList<>(args);
         pageArgs.add(pg.size);
         pageArgs.add(pg.offset);
-        record DualBatch(long id, String no, String proj, BigDecimal inRate, BigDecimal payOutRate, BigDecimal openRate) {}
+        record DualBatch(long id, String no, String proj, BigDecimal inRate, BigDecimal payOutRate) {}
         List<DualBatch> batches = new ArrayList<>();
         jdbc.query(idSql, rs -> {
             batches.add(new DualBatch(rs.getLong("batch_id"), rs.getString("batch_no"), rs.getString("proj_name"),
-                    rs.getBigDecimal("comm_in_rate"), rs.getBigDecimal("pay_out_rate"), rs.getBigDecimal("open_rate")));
+                    rs.getBigDecimal("comm_in_rate"), rs.getBigDecimal("pay_out_rate")));
         }, pageArgs.toArray());
 
         Long total = jdbc.queryForObject(
@@ -188,13 +188,13 @@ public class ReconRepayM9Controller {
         List<ReconRollupDualM9Dto> items = new ArrayList<>();
         for (DualBatch db : batches) {
             items.add(buildRollupDual(s, db.id(), db.no(), db.proj(), periodKey,
-                    db.inRate(), db.payOutRate() != null ? db.payOutRate() : db.openRate()));
+                    db.inRate(), db.payOutRate()));   // v1.18.0：OUT 生效率只认 pay_out_rate
         }
         return Page.of(items, pg, total == null ? 0 : total);
     }
 
     /**
-     * 单 batch 双线聚合（V929·一次 SQL 同算两线）。outRate=付佣生效率 COALESCE(pay_out_rate,open_rate)，
+     * 单 batch 双线聚合（V929·一次 SQL 同算两线）。outRate=付佣生效率 pay_out_rate（v1.18.0 去 open_rate 兜底），
      * 与组单 resolveCommRate 口径一致；为 null（未设付佣比例）时 OUT 应付/未付/毛利返 null、已付恒 0。
      */
     private ReconRollupDualM9Dto buildRollupDual(CurrentSubject s, long batchId, String batchNo, String projName,
@@ -369,9 +369,9 @@ public class ReconRepayM9Controller {
                 + " LEFT JOIN org po ON po.id = rl.provider_id_at_repay"
                 + where
                 + " ORDER BY rl.id DESC LIMIT ? OFFSET ?";
-        // 双线佣金列：IN=comm_in_rate；OUT 生效率=COALESCE(pay_out_rate,open_rate)（与组单 resolveCommRate 口径一致）。
+        // 双线佣金列：IN=comm_in_rate；OUT 生效率=pay_out_rate（v1.18.0 开放抢单停用，去 open_rate 兜底）。
         BigDecimal inRate = b.commInRate();
-        BigDecimal outRate = b.payOutRate() != null ? b.payOutRate() : b.openRate();
+        BigDecimal outRate = b.payOutRate();
         List<RepayLineDto> items = jdbc.query(listSql, repayLineRowMapper(s, inRate, outRate), pageArgs.toArray());
         return Page.of(items, pg, total == null ? 0 : total);
     }
@@ -436,20 +436,19 @@ public class ReconRepayM9Controller {
     }
 
     private record BatchRow(long id, Long providerId, long projectId, Long projectOrgId,
-                            BigDecimal commInRate, BigDecimal payOutRate, BigDecimal openRate) {}
+                            BigDecimal commInRate, BigDecimal payOutRate) {}
 
     private BatchRow loadBatch(long batchId) {
         List<BatchRow> rows = jdbc.query(
                 "SELECT b.id, b.provider_id, b.project_id, p.org_id AS proj_org,"
-                        + " b.comm_in_rate, b.pay_out_rate, b.open_rate"
+                        + " b.comm_in_rate, b.pay_out_rate"
                         + " FROM batch b JOIN project p ON p.id = b.project_id WHERE b.id = ?",
                 (rs, i) -> new BatchRow(rs.getLong("id"),
                         (Long) rs.getObject("provider_id"),
                         rs.getLong("project_id"),
                         (Long) rs.getObject("proj_org"),
                         rs.getBigDecimal("comm_in_rate"),
-                        rs.getBigDecimal("pay_out_rate"),
-                        rs.getBigDecimal("open_rate")),
+                        rs.getBigDecimal("pay_out_rate")),
                 batchId);
         if (rows.isEmpty()) {
             throw new ApiException(BizError.NOT_FOUND_404, "批次不存在");

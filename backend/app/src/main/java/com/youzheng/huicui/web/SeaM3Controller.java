@@ -147,9 +147,9 @@ public class SeaM3Controller {
                 return false;
             }
             case CaseStateService.POOL_OPEN_POOL -> {
-                // 开放池：全平台 CO 开放，不限 provider 归属（BR-M3-15）；平台亦可见。
-                // 仅 CO / 平台主体可见（物业主体与抢单无关 → 不可见）。
-                return s.isPlatform() || "PROVIDER".equals(s.orgType());
+                // 【已停用 v1.18.0】开放池业务下线（V931 已清存量）：pool=open 对所有主体返回空页
+                // （枚举值保留避免契约破坏，语义=历史概念）。
+                return false;
             }
             default -> {
                 return false;
@@ -175,8 +175,8 @@ public class SeaM3Controller {
         // 事件可见口径与 listSea 一致（BR-M3-29）：平台不含 PROVIDER_SEA 事件——
         // 服务商公海内的抢单/分配动态属于服务商内务，与列表明细同一收权。
         StringBuilder where = new StringBuilder(s.isPlatform()
-                ? " WHERE c.pool IN ('PLATFORM_SEA','OPEN_POOL','PRIVATE')"
-                : " WHERE c.pool IN ('PLATFORM_SEA','PROVIDER_SEA','OPEN_POOL','PRIVATE')");
+                ? " WHERE c.pool IN ('PLATFORM_SEA','PRIVATE')"
+                : " WHERE c.pool IN ('PLATFORM_SEA','PROVIDER_SEA','PRIVATE')");   // v1.18.0 去 OPEN_POOL
         List<Object> args = new ArrayList<>();
         if (pool != null && !pool.isBlank()) {           // 可选过滤具体池（非法值→不命中而非 5xx）
             String physical = mapPoolSafe(pool);

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: 有证慧催 · API 契约（全模块·已冻结）
-  version: 1.17.0  # v1.17.0(additive·批次结项+承接段 V930): +POST /batches/{id}/close-engagement(结项=终止当前服务商承接·S1/S2/S3 全部收回回平台公海·承诺保留·批次回 PENDING 可重派;审计写 case.engagement-recall 不触发再派护栏——结项后重派对象含派回原商由平台裁量) | +GET /batches/{id}/close-preview(结项确认框:可收回统计+带有效分期承诺案件警示) | +GET /batches/{id}/engagements(承接历史:每段 服务商/起止/付佣快照/期间回款[按 V914 到账快照+时间窗归段·结算口径一致不漂移]/期间回款率=期间回款÷期初剩余应收/结项原因) | BatchBase +运营统计可选字段(projectName/providerName/caseCount/dueTotalCents/repaidTotalCents/repayRate/engagementCount/poolDist——角色中立进 Base 三视图同含,修批次列表幽灵列) | getOperationReport dimension +provider(案件侧按当前 c.provider_id/回款侧按快照 provider_id_at_repay) | v1.16.0(additive·平台双线总账 V929): +GET /recon/rollup-dual(平台批次维一行双线 应收/已收/未收+应付/已付/未付+毛利;platform-only) | RepayLine +双线可空字段(commInCents/settledIn/paymentRequestIdIn/prNoIn 平台+物业;commOutCents/settledOut/paymentRequestIdOut/prNoOut 平台+服务商;providerIdAtRepay/providerName 仅平台;legacy settled/paymentRequestId 废弃为按视角映射——PROVIDER=OUT 线值,其余=IN 线值);底层 repay_line 占用拆双线(同一笔回款可同时进 IN 收佣单与 OUT 付佣单,各线独立结清) | v1.15.0(additive·质检处置修正): RiskRecord +violatorOrgName/violatorRole/ownScope(谁的员工谁处置判定·平台看反馈对象);平台去 qc.escalate(顶层不上报只复核处置);dispose/escalate 补通知反馈组织负责人/当事人(BR-M5-07a/b/c) | v1.14.0(additive·确定性飞轮闭环): +POST /script-lib/recompute(飞轮结算重算+达标 AI 变体自动晋升环7) | Promise +scriptId(承诺话术归因·环3) | getScriptFlywheel +scriptId(单条话术漏斗·口径修正为单调子集) | PromiseInput.sourceSuggestionId 语义落地(采纳话术卡→承诺归因) | v1.13.0(additive·SA 飞轮+作战手册): +GET /script-lib/flywheel(话术飞轮漏斗+Wilson趋势) | +GET /projects/{id}/playbook/diff(作战手册版本对比行级diff) | v1.12.0(additive·平台超管页还原): Script +wilson(话术库排序权威透出) | listCases +holderName/contactPhone(案件管理归属催收员/联系方式列) | getOperationReport dimension +collector(经营报表催收员维,已于 v1.10.0 引入合并至此) | v1.11.0(additive·计费明细穿透列): BillingUsage +ownerName/room/projectName/batchNo(caseId join,计费明细页明细行业主/房号/项目/批次列;修服务商计费明细空表——STT 用量归服务商 org 见 seed) | v1.10.0(additive·佣金名册明细): CoCommissionBatchRow +caseCount/baseCents(案件数·回款金额,支撑佣金明细待结算/已结算分档) | v1.9.0(语义收敛·统一支付逻辑): 付佣线(OUT)生成/发送/撤回改为仅平台(服务商对支付申请单只读,批次结算标记照常可见;OUT 归属由明细 provider_id_at_repay 快照推导且须一致);佣金线(服务商→催收员 co-pay-docs)不变 | v1.8.0(additive·VL 团队即时看板 US-M10-03): CollectorCapacity +todayActions/todayRepayCents(工作台看板与指派弹窗共用同端点) | v1.7.0(additive·公海可见性收敛 BR-M3-29): listSea/listSeaEvents 补 x-permission=sea.view(全契约最后两个无权限点业务读端点;PL/PC 无此点→403·公海概念消失);平台方对 pool=provider 改返回空集(不看服务商公海明细,明细归 VL/CO;平台靠 T1/T2 预警与聚合) | v1.6.0(additive·App 多角色): listCases +holderId(私海过滤;催收员端「我持有的」——不传时 range scope 对 CO 返回本服务商全部案件,并非本人持有) | v1.5.0(additive·契约外端点回写): +录音回听 audio(V921)/佣金三端点 comm-status·comm-in-rate·commission-rates(V922)/附件四端点 attachments·upload-sessions(V923)/存证证书 certificate;rebindOrgOwner 200 补 ownerSetupToken;escalate 补 note;sms-code 补 502(未启用拒发·废 000000 后门) | v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
+  version: 1.18.0  # v1.18.0(收敛·开放抢单停用 V931): setBatchOpenRate/openCaseForClaim 标 deprecated·停用桩恒 409(个体跨商抢单让个人行为产生组织义务·与组织对组织商业模型断裂;服务商执行不佳走 批次结项→重派;催收员抢单仅限本商公海 S2) | 释放/TC 到期一律回 S2(去 S4 回流) | sea pool=open 恒空集 | 结算 OUT 生效率去 open_rate 兜底只认 payOutRate | PoolDist 去 s4 | 存量 S4 案件 V931 迁回平台公海 | v1.17.0(additive·批次结项+承接段 V930): +POST /batches/{id}/close-engagement(结项=终止当前服务商承接·S1/S2/S3 全部收回回平台公海·承诺保留·批次回 PENDING 可重派;审计写 case.engagement-recall 不触发再派护栏——结项后重派对象含派回原商由平台裁量) | +GET /batches/{id}/close-preview(结项确认框:可收回统计+带有效分期承诺案件警示) | +GET /batches/{id}/engagements(承接历史:每段 服务商/起止/付佣快照/期间回款[按 V914 到账快照+时间窗归段·结算口径一致不漂移]/期间回款率=期间回款÷期初剩余应收/结项原因) | BatchBase +运营统计可选字段(projectName/providerName/caseCount/dueTotalCents/repaidTotalCents/repayRate/engagementCount/poolDist——角色中立进 Base 三视图同含,修批次列表幽灵列) | getOperationReport dimension +provider(案件侧按当前 c.provider_id/回款侧按快照 provider_id_at_repay) | v1.16.0(additive·平台双线总账 V929): +GET /recon/rollup-dual(平台批次维一行双线 应收/已收/未收+应付/已付/未付+毛利;platform-only) | RepayLine +双线可空字段(commInCents/settledIn/paymentRequestIdIn/prNoIn 平台+物业;commOutCents/settledOut/paymentRequestIdOut/prNoOut 平台+服务商;providerIdAtRepay/providerName 仅平台;legacy settled/paymentRequestId 废弃为按视角映射——PROVIDER=OUT 线值,其余=IN 线值);底层 repay_line 占用拆双线(同一笔回款可同时进 IN 收佣单与 OUT 付佣单,各线独立结清) | v1.15.0(additive·质检处置修正): RiskRecord +violatorOrgName/violatorRole/ownScope(谁的员工谁处置判定·平台看反馈对象);平台去 qc.escalate(顶层不上报只复核处置);dispose/escalate 补通知反馈组织负责人/当事人(BR-M5-07a/b/c) | v1.14.0(additive·确定性飞轮闭环): +POST /script-lib/recompute(飞轮结算重算+达标 AI 变体自动晋升环7) | Promise +scriptId(承诺话术归因·环3) | getScriptFlywheel +scriptId(单条话术漏斗·口径修正为单调子集) | PromiseInput.sourceSuggestionId 语义落地(采纳话术卡→承诺归因) | v1.13.0(additive·SA 飞轮+作战手册): +GET /script-lib/flywheel(话术飞轮漏斗+Wilson趋势) | +GET /projects/{id}/playbook/diff(作战手册版本对比行级diff) | v1.12.0(additive·平台超管页还原): Script +wilson(话术库排序权威透出) | listCases +holderName/contactPhone(案件管理归属催收员/联系方式列) | getOperationReport dimension +collector(经营报表催收员维,已于 v1.10.0 引入合并至此) | v1.11.0(additive·计费明细穿透列): BillingUsage +ownerName/room/projectName/batchNo(caseId join,计费明细页明细行业主/房号/项目/批次列;修服务商计费明细空表——STT 用量归服务商 org 见 seed) | v1.10.0(additive·佣金名册明细): CoCommissionBatchRow +caseCount/baseCents(案件数·回款金额,支撑佣金明细待结算/已结算分档) | v1.9.0(语义收敛·统一支付逻辑): 付佣线(OUT)生成/发送/撤回改为仅平台(服务商对支付申请单只读,批次结算标记照常可见;OUT 归属由明细 provider_id_at_repay 快照推导且须一致);佣金线(服务商→催收员 co-pay-docs)不变 | v1.8.0(additive·VL 团队即时看板 US-M10-03): CollectorCapacity +todayActions/todayRepayCents(工作台看板与指派弹窗共用同端点) | v1.7.0(additive·公海可见性收敛 BR-M3-29): listSea/listSeaEvents 补 x-permission=sea.view(全契约最后两个无权限点业务读端点;PL/PC 无此点→403·公海概念消失);平台方对 pool=provider 改返回空集(不看服务商公海明细,明细归 VL/CO;平台靠 T1/T2 预警与聚合) | v1.6.0(additive·App 多角色): listCases +holderId(私海过滤;催收员端「我持有的」——不传时 range scope 对 CO 返回本服务商全部案件,并非本人持有) | v1.5.0(additive·契约外端点回写): +录音回听 audio(V921)/佣金三端点 comm-status·comm-in-rate·commission-rates(V922)/附件四端点 attachments·upload-sessions(V923)/存证证书 certificate;rebindOrgOwner 200 补 ownerSetupToken;escalate 补 note;sms-code 补 502(未启用拒发·废 000000 后门) | v1.4.0(additive·remediation/contract-98): +单案再派/批量指派/释放记录/佣金批次下钻/存证重试·证据包/短信导出/减免·手册一键同步端点;CaseDetail.markCodes;BatchView reduceDrift/playbookDrift;CoPayDoc documentUrl/sealed;listCases +projectId/q;BIZ_REDISPATCH_GUARD | v1.3.1(additive): TodoCategoryEnum +T2_RETURN_WARN/T1_DISPATCH_WARN(定时器预警 BR-M3-13a) | v1.3.0: +个人中心·搜索 | v1.2.0: +消息中心·sea/events | v1.1.0: +workbench·派单决策
   contact: { name: 契约 Owner（架构师）, email: api-owner@youzheng.example }
   description: |
     从高保真原型 + PRD(BR/US) + 报告14口径抽取的全模块契约（单一事实源 SSOT）。**v1.0 已冻结（2026-06-24）**：经 codex×2 + 人工×2 共四轮独立审计、openapi-generator Spring 桩 mvn compile、Flyway 真库迁移三重验证，0 阻断/0 高。破坏性变更须升 major + 双 approve。
@@ -550,7 +550,9 @@ paths:
     put:
       tags: [dispatch]
       operationId: setBatchOpenRate
-      summary: 平台为批次设置开放抢单付佣比例(开放抢单前置·未设不可开放 BR-M9-18)
+      deprecated: true
+      summary: 【已停用 v1.18.0】开放抢单业务下线——停用桩恒 409(付佣比例统一在派单/双佣确认时设定)
+      description: '开放抢单停用(v1.18.0)：催收员个人跨商抢单让个体行为产生组织义务(佣金结算/质检责任)，与组织对组织商业模型断裂；服务商执行不佳走 批次结项→重派。端点保留避免破坏性变更，调用恒返 409。'
       x-permission: case.dispatch
       x-data-scope: platform
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [openRate], properties: { openRate: { $ref: '#/components/schemas/Rate' } } } } } }
@@ -564,7 +566,7 @@ paths:
       operationId: listSea
       tags: [dispatch]
       summary: 公海列表(平台全局公海 / 服务商待接单·公海，按 scope)
-      description: '可见矩阵(BR-M3-29 收敛)：platform=仅平台方(SA/SE)；provider=仅本商 VL/CO(**平台方返回空集——平台不查看服务商公海明细，仅靠 T1/T2 预警与聚合**)；open=平台方+VL/CO(全平台开放抢单池 BR-M3-15)。物业角色(PL/PC)无 sea.view 权限点，公海对其不存在(403)。有权限但池不可见时返回空页而非 403(权限点在门口、scope 裁剪在池内)。'
+      description: '可见矩阵(BR-M3-29 收敛)：platform=仅平台方(SA/SE)；provider=仅本商 VL/CO(**平台方返回空集——平台不查看服务商公海明细，仅靠 T1/T2 预警与聚合**)；open=【已停用 v1.18.0】恒返回空集(历史概念保留避免枚举破坏)。物业角色(PL/PC)无 sea.view 权限点，公海对其不存在(403)。有权限但池不可见时返回空页而非 403(权限点在门口、scope 裁剪在池内)。'
       x-permission: sea.view
       x-data-scope: range
       parameters:
@@ -719,10 +721,12 @@ paths:
     post:
       tags: [dispatch]
       operationId: openCaseForClaim
-      summary: 平台运营/超管对平台公海案件标记为开放抢单(进开放池·向全平台符合条件催收员开放 BR-M3-15)
+      deprecated: true
+      summary: 【已停用 v1.18.0】开放抢单业务下线——停用桩恒 409(BR-M3-15/BR-M9-18 作废)
       description: |
-        平台侧二选一处置(派单 vs 开放抢单)。前置：该批次须先由平台设"开放抢单付佣比例"(BR-M9-18)，
-        未设 → 409 BIZ_OPEN_RATE_REQUIRED。作用对象=平台公海案件。
+        开放抢单停用(v1.18.0·系统未上线无存量)：开放池让催收员个人跨商抢单、却由其服务商承担佣金
+        结算与质检责任——个体行为产生组织义务；「服务商执行不佳」由 批次结项→重派(v1.17.0)闭环覆盖，
+        催收员抢单仅限本服务商公海(S2)。存量 S4 案件已由 V931 迁回平台公海。端点保留避免破坏性变更，调用恒 409。
       x-permission: case.dispatch
       x-data-scope: platform
       parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
@@ -1219,7 +1223,7 @@ paths:
       operationId: getReconRollupDual
       tags: [settlement]
       summary: 平台批次双线总账(v1.16.0)。一行批次同时给 收佣(应收/已收/未收)+付佣(应付/已付/未付)+毛利
-      description: '平台专属视角(SA 全量/SE 按 data_range 裁剪)；物业/服务商→403。付佣生效率=COALESCE(payOutRate,openRate) 与组单口径一致；两率皆空时 payOutRate/dueOutCents/unsettledOutCents/grossCents 省略、settledOutCents=0。'
+      description: '平台专属视角(SA 全量/SE 按 data_range 裁剪)；物业/服务商→403。付佣生效率=payOutRate(v1.18.0 去 openRate 兜底)；未设付佣比例时 payOutRate/dueOutCents/unsettledOutCents/grossCents 省略、settledOutCents=0。'
       x-permission: none
       x-data-scope: platform
       parameters:
@@ -2482,13 +2486,12 @@ components:
       properties: { row: { type: integer }, field: { type: string }, code: { type: string }, message: { type: string } }
     PoolDist:
       type: object
-      description: '批次案件状态分布(v1.17.0·批次运营迷你分布条)。s0=待派单 s1=待接单 s2=服务商公海 s3=私海进行中 s4=开放抢单池 settled=已结清 closed=撤案/坏账/作废'
+      description: '批次案件状态分布(v1.17.0·批次运营迷你分布条；v1.18.0 去 s4——开放抢单停用)。s0=待派单 s1=待接单 s2=服务商公海 s3=私海进行中 settled=已结清 closed=撤案/坏账/作废'
       properties:
         s0: { type: integer }
         s1: { type: integer }
         s2: { type: integer }
         s3: { type: integer }
-        s4: { type: integer }
         settled: { type: integer }
         closed: { type: integer }
     CloseEngagementReasonEnum: { type: string, enum: [INCAPABLE, COOP_TERMINATED, PROPERTY_REQUEST, OTHER], description: '结项原因：无力催收/合作终止/物业要求/其他' }
@@ -2911,7 +2914,7 @@ components:
         settledIn: { type: boolean, description: '收佣线已结(IN 单 PAID)(平台+物业)' }
         paymentRequestIdIn: { type: [string, 'null'], description: '纳入哪张收佣(IN)单(平台+物业)' }
         prNoIn: { type: [string, 'null'], description: '收佣(IN)单号(平台+物业)' }
-        commOutCents: { $ref: '#/components/schemas/Money', description: '本笔付佣=round(amount×COALESCE(payOutRate,openRate))(平台+服务商;无生效率省略)' }
+        commOutCents: { $ref: '#/components/schemas/Money', description: '本笔付佣=round(amount×payOutRate)(平台+服务商;无生效率省略；v1.18.0 去 openRate 兜底)' }
         settledOut: { type: boolean, description: '付佣线已结(OUT 单 PAID)(平台+服务商)' }
         paymentRequestIdOut: { type: [string, 'null'], description: '纳入哪张付佣(OUT)单(平台+服务商)' }
         prNoOut: { type: [string, 'null'], description: '付佣(OUT)单号(平台+服务商)' }
@@ -2936,7 +2939,7 @@ components:
         dueInCents: { $ref: '#/components/schemas/Money', description: '应收佣' }
         settledInCents: { $ref: '#/components/schemas/Money', description: '已收佣(settledIn 明细×率)' }
         unsettledInCents: { $ref: '#/components/schemas/Money', description: '未收佣' }
-        payOutRate: { $ref: '#/components/schemas/Rate', description: '付佣生效率=COALESCE(payOutRate,openRate)·分数' }
+        payOutRate: { $ref: '#/components/schemas/Rate', description: '付佣生效率=payOutRate·分数(v1.18.0 去 openRate 兜底)' }
         dueOutCents: { $ref: '#/components/schemas/Money', description: '应付佣' }
         settledOutCents: { $ref: '#/components/schemas/Money', description: '已付佣(settledOut 明细×率)' }
         unsettledOutCents: { $ref: '#/components/schemas/Money', description: '未付佣' }

@@ -28,7 +28,7 @@ import java.util.Set;
  * 两轴定态：case.status(CaseStatus) × case.pool(Pool)。M3 只在 (status,pool) 组合上转移，
  * legal_stage 不参与（D2 正交）。合法稳态见 StatePair 常量。
  *
- * 表/列对齐：表名 "case" 须双引号；批次归属/比率读 batch(provider_id/pay_out_rate/open_rate/comm_in_rate)；
+ * 表/列对齐：表名 "case" 须双引号；批次归属/比率读 batch(provider_id/pay_out_rate)；
  * 释放回流判据用 case.origin_pool（V3 迁移新增）。
  */
 @Service
@@ -64,10 +64,10 @@ public class CaseStateService {
 
     // ── records ─────────────────────────────────────────────────────────────
 
-    /** 案件快照（含 batch 派生：provider_id/pay_out_rate/open_rate）。 */
+    /** 案件快照（含 batch 派生：provider_id/pay_out_rate）。v1.18.0 去 openRate（开放抢单停用）。 */
     public record CaseSnapshot(long id, long batchId, String status, String pool,
                                Long holderId, String source, String originPool,
-                               Long providerId, BigDecimal payOutRate, BigDecimal openRate) {}
+                               Long providerId, BigDecimal payOutRate) {}
 
     /** (status,pool) 稳态对。 */
     public record StatePair(String status, String pool) {}
@@ -92,7 +92,7 @@ public class CaseStateService {
         try {
             return jdbc.queryForObject(
                     "SELECT c.id, c.batch_id, c.status, c.pool, c.holder_id, c.source, c.origin_pool,"
-                            + " c.provider_id AS provider_id, b.pay_out_rate, b.open_rate"
+                            + " c.provider_id AS provider_id, b.pay_out_rate"
                             + " FROM \"case\" c JOIN batch b ON b.id = c.batch_id"
                             + " WHERE c.id = ?",
                     (rs, i) -> new CaseSnapshot(
@@ -104,8 +104,7 @@ public class CaseStateService {
                             rs.getString("source"),
                             rs.getString("origin_pool"),
                             (Long) rs.getObject("provider_id"),
-                            rs.getBigDecimal("pay_out_rate"),
-                            rs.getBigDecimal("open_rate")),
+                            rs.getBigDecimal("pay_out_rate")),
                     caseId);
         } catch (EmptyResultDataAccessException e) {
             throw new ApiException(BizError.NOT_FOUND_404, "案件不存在: " + caseId);
@@ -119,7 +118,7 @@ public class CaseStateService {
                     "SELECT c.id, c.batch_id, c.status, c.pool, c.holder_id, c.source, c.origin_pool,"
                             // 案件级归属唯一权威（不 COALESCE 回落 batch）：NULL=平台公海/无归属。
                             // 比率仍读 batch（计佣粒度=批次）。
-                            + " c.provider_id AS provider_id, b.pay_out_rate, b.open_rate"
+                            + " c.provider_id AS provider_id, b.pay_out_rate"
                             + " FROM \"case\" c JOIN batch b ON b.id = c.batch_id"
                             + " WHERE c.id = ? FOR UPDATE OF c",
                     (rs, i) -> new CaseSnapshot(
@@ -131,8 +130,7 @@ public class CaseStateService {
                             rs.getString("source"),
                             rs.getString("origin_pool"),
                             (Long) rs.getObject("provider_id"),
-                            rs.getBigDecimal("pay_out_rate"),
-                            rs.getBigDecimal("open_rate")),
+                            rs.getBigDecimal("pay_out_rate")),
                     caseId);
         } catch (EmptyResultDataAccessException e) {
             throw new ApiException(BizError.NOT_FOUND_404, "案件不存在: " + caseId);
@@ -257,21 +255,21 @@ public class CaseStateService {
 
         CaseSnapshot snap = lockCase(caseId);
 
-        // 锁内复核：必须仍 holder 为空且处 S2/S4。
-        boolean isOpen   = S4.equals(new StatePair(snap.status(), snap.pool()));
+        // 锁内复核：必须仍 holder 为空且处 S2 本商公海。
+        // v1.18.0 开放抢单停用：不再接受 S4（跨商抢单让催收员个人给服务商签下承接义务，商业模型断裂）——
+        // 抢单仅限本服务商公海（组织内工作分配）。
         boolean isOwnSea = S2.equals(new StatePair(snap.status(), snap.pool()));
-        if (snap.holderId() != null || (!isOpen && !isOwnSea)) {
+        if (snap.holderId() != null || !isOwnSea) {
             throw new ApiException(BizError.BIZ_ALREADY_CLAIMED, "案件已被占用或不可抢: " + caseId);
         }
-        // 本商公海：仅本商可抢（scope 已裁剪，此处再核 provider 归属）。开放池跨商不校验归属。
-        if (isOwnSea && (snap.providerId() == null || snap.providerId() != coOrg)) {
+        // 本商公海：仅本商可抢（scope 已裁剪，此处再核 provider 归属）。
+        if (snap.providerId() == null || snap.providerId() != coOrg) {
             throw new ApiException(BizError.PERM_403, "非本服务商公海案件，不可抢: " + caseId);
         }
 
-        String originPool = isOpen ? POOL_OPEN_POOL : POOL_PROVIDER_SEA;
         Transition t = new Transition(
                 snap.status(), snap.pool(), null,
-                ST_IN_PROGRESS, POOL_PRIVATE, coId, "CLAIM", originPool,
+                ST_IN_PROGRESS, POOL_PRIVATE, coId, "CLAIM", POOL_PROVIDER_SEA,
                 null /*清 t2*/, Instant.now().plusSeconds(tcSeconds));
         int n = transition(caseId, t);
         if (n == 0) {
@@ -297,20 +295,11 @@ public class CaseStateService {
     // ── ⑦ 释放去向判定（BR-M3-09）───────────────────────────────────────────
 
     /**
-     * 按 origin_pool（优先）或 source 反推释放去向：
-     *   origin_pool=OPEN_POOL（或 source 含开放池痕迹）→ 回 S4 开放池；
-     *   否则 → 回 S2 服务商公海。
-     * 调用方再补 t2Deadline（去向 S2 时按 CFG-T2 重置）。expectHolderId 由调用方在 transition 前补本人。
+     * 释放去向（v1.18.0 收敛）：开放抢单停用后不再有 S4 回流，释放一律回 S2 服务商公海
+     * （V931 已把存量 origin_pool=OPEN_POOL 清空，且 claim 不再产生该值）。
+     * 调用方再补 t2Deadline（按 CFG-T2 重置）。expectHolderId 由调用方在 transition 前补本人。
      */
     public Transition resolveReleaseTarget(CaseSnapshot snap, Long expectHolderId, Instant t2Deadline) {
-        boolean toOpen = POOL_OPEN_POOL.equals(snap.originPool());
-        if (toOpen) {
-            // 回 S4 开放池：status=PENDING_DISPATCH, pool=OPEN_POOL，清 holder/计时，origin 清空。
-            return new Transition(
-                    snap.status(), snap.pool(), expectHolderId,
-                    ST_PENDING_DISPATCH, POOL_OPEN_POOL, null, "OPEN", null,
-                    null, null);
-        }
         // 回 S2 服务商公海：status=PROVIDER_SEA, pool=PROVIDER_SEA，重置 t2，清 tc/holder/origin。
         return new Transition(
                 snap.status(), snap.pool(), expectHolderId,
