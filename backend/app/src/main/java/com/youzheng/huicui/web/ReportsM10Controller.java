@@ -166,6 +166,7 @@ public class ReportsM10Controller {
                 + " ORDER BY due_cents DESC";
 
         List<ReportRowDto> rows = jdbc.query(rowsSql, rowMapper(), args.toArray());
+        rows = mergeCommission(rows, commissionByDim(dimKeyExpr, extraJoin, where.toString(), args, null));
         return assemble(s, rows);   // KPI 从 rows 汇总；capabilityUsage 只量不金额（BR-M10-01/US-M10-02）
     }
 
@@ -257,23 +258,38 @@ public class ReportsM10Controller {
         all.addAll(args);
         all.add(providerId);          // repaySide 的 ?
         List<ReportRowDto> rows = jdbc.query(sql, rowMapper(), all.toArray());
+        // 佣金也认快照（钱是谁催回的，佣金就归谁那条线）——与上面的双侧口径保持一致。
+        rows = mergeCommission(rows, commissionByDim(dimKeyExpr, extraJoin, where, args, providerId));
         return assemble(s, rows);
     }
 
     /** rows → KPI + 报表体。三处（默认维/provider 维/穿透）本来各抄一遍，抽出来免得口径漂移。 */
     private ReportDataDto assemble(CurrentSubject s, List<ReportRowDto> rows) {
         long totalDue = 0L, totalRepay = 0L, totalCases = 0L;
+        long cInDue = 0L, cInSettled = 0L, cOutDue = 0L, cOutSettled = 0L;
         for (ReportRowDto row : rows) {
             totalDue += row.dueCents() == null ? 0 : row.dueCents();
             totalRepay += row.repayCents() == null ? 0 : row.repayCents();
             totalCases += row.caseCount() == null ? 0 : row.caseCount();
+            cInDue += nz(row.commInDueCents());
+            cInSettled += nz(row.commInSettledCents());
+            cOutDue += nz(row.commOutDueCents());
+            cOutSettled += nz(row.commOutSettledCents());
         }
         List<ReportKpiDto> kpis = new ArrayList<>();
         kpis.add(ReportKpiDto.money("应收总额", totalDue));
         kpis.add(ReportKpiDto.money("回款总额", totalRepay));
         kpis.add(ReportKpiDto.rate("回款率", rate(totalRepay, totalDue)));
         kpis.add(ReportKpiDto.count("案件数", totalCases));
+        // 佣金双线 KPI（与 /recon/rollup-dual 同口径）：收佣=物业付给平台，付佣=平台付给服务商。
+        kpis.add(ReportKpiDto.money("待收佣金", cInDue - cInSettled));
+        kpis.add(ReportKpiDto.money("待付佣金", cOutDue - cOutSettled));
+        kpis.add(ReportKpiDto.money("佣金毛利", cInDue - cOutDue));
         return new ReportDataDto(scopeLabel(s), kpis, rows, loadCapabilityUsage(s));
+    }
+
+    private static long nz(Long v) {
+        return v == null ? 0L : v;
     }
 
     /**
@@ -304,11 +320,76 @@ public class ReportsM10Controller {
         List<Object> both = new ArrayList<>(args);
         both.addAll(args);
         List<ReportRowDto> rows = jdbc.query(sql, rowMapper(), both.toArray());
+        // provider 维的分组键就是「钱是谁催回的」——佣金按 rl.provider_id_at_repay 分组，同一口径。
+        rows = mergeCommission(rows, commissionByDim("rl.provider_id_at_repay", "", where, args, null));
         return assemble(s, rows);
     }
 
+
     /**
-     * 能力用量聚合（v1.19.0 口径修正）：**FROM billing_usage GROUP BY type**，只量不金额。
+     * 佣金双线按维度聚合（v1.25.1）。**口径必须与 /recon/rollup-dual 逐字一致**，否则同一笔钱在
+     * 「结算对账」和「经营报表」上会给出两个数，那是最伤信任的一类 bug：
+     *   · 每笔回款 × **该批次的比率**（IN=b.comm_in_rate，OUT=b.pay_out_rate）逐笔 round 后求和
+     *     （不是「总回款 × 比率」——批次比率不同，先乘后加与先加后乘不等）；
+     *   · 已收/已付看 repay_line 的 settled_in / settled_out（V929 双线各自独立结清）；
+     *   · 只计未冲正 reversed = false。
+     *
+     * <p>**未设 pay_out_rate 的批次**：应付按 0 计入（COALESCE），但同时统计这类批次数并透出——
+     * 否则一个漏配付佣比例的批次会把平台真实欠款藏起来，报表上看着「应付很少」，实际是没算。
+     *
+     * @param provider 非空时钱认 V914 到账快照（provider_id_at_repay），与 dualSideReport 同口径
+     */
+    private Map<String, long[]> commissionByDim(String dimKeyExpr, String extraJoin,
+                                                String where, List<Object> args, Long provider) {
+        String sql = "SELECT " + dimKeyExpr + " AS dim_key,"
+                + " COALESCE(SUM(round(rl.amount_cents * COALESCE(b.comm_in_rate, 0)))::bigint, 0) AS in_due,"
+                + " COALESCE(SUM(CASE WHEN rl.settled_in"
+                + "        THEN round(rl.amount_cents * COALESCE(b.comm_in_rate, 0)) ELSE 0 END)::bigint, 0) AS in_settled,"
+                + " COALESCE(SUM(round(rl.amount_cents * COALESCE(b.pay_out_rate, 0)))::bigint, 0) AS out_due,"
+                + " COALESCE(SUM(CASE WHEN rl.settled_out"
+                + "        THEN round(rl.amount_cents * COALESCE(b.pay_out_rate, 0)) ELSE 0 END)::bigint, 0) AS out_settled,"
+                + " COUNT(DISTINCT b.id) FILTER (WHERE b.pay_out_rate IS NULL) AS out_rate_missing"
+                + " FROM repay_line rl"
+                + " JOIN \"case\" c ON c.id = rl.case_id"
+                + " JOIN batch b ON b.id = c.batch_id"
+                + " JOIN project p ON p.id = c.project_id"
+                + extraJoin
+                + where + " AND rl.reversed = false"
+                + (provider != null ? " AND rl.provider_id_at_repay = ?" : "")
+                + " GROUP BY " + dimKeyExpr;
+
+        List<Object> a = new ArrayList<>(args);
+        if (provider != null) a.add(provider);
+
+        Map<String, long[]> out = new java.util.HashMap<>();
+        jdbc.query(sql, rs -> {
+            String k = rs.getString("dim_key");
+            out.put(k == null ? "" : k, new long[]{
+                    rs.getLong("in_due"), rs.getLong("in_settled"),
+                    rs.getLong("out_due"), rs.getLong("out_settled"),
+                    rs.getLong("out_rate_missing")});
+        }, a.toArray());
+        return out;
+    }
+
+    /** 把佣金聚合按 dim_key 贴回行上（无回款的维度 → 六项全 0，而不是 null：0 才是「没有佣金」的正确表达）。 */
+    private List<ReportRowDto> mergeCommission(List<ReportRowDto> rows, Map<String, long[]> comm) {
+        List<ReportRowDto> out = new ArrayList<>(rows.size());
+        for (ReportRowDto r : rows) {
+            long[] c = comm.get(r.dimKey() == null ? "" : r.dimKey());
+            long inDue = c == null ? 0 : c[0], inSettled = c == null ? 0 : c[1];
+            long outDue = c == null ? 0 : c[2], outSettled = c == null ? 0 : c[3];
+            long missing = c == null ? 0 : c[4];
+            out.add(new ReportRowDto(r.dimKey(), r.dimName(), r.dueCents(), r.repayCents(), r.repayRate(),
+                    r.caseCount(),
+                    inDue, inSettled, inDue - inSettled,
+                    outDue, outSettled, outDue - outSettled,
+                    missing));
+        }
+        return out;
+    }
+
+    /**\n     * 能力用量聚合（v1.19.0 口径修正）：**FROM billing_usage GROUP BY type**，只量不金额。
      * 此前从 recharge_log 拿 SUM(-delta) 当用量——那是**扣减流水**不是用量真表（充值/冲正混入、
      * 且与新「额度管理」页的 billing_usage 口径打架，两个数字会越差越远）。billing_usage 才是用量 SSOT。
      * range scope：物业/服务商按 org_id；平台全量。caseId 恒 null（报表不下钻到案）；
@@ -351,7 +432,8 @@ public class ReportsM10Controller {
                     due,
                     repay,
                     rate(repay, due),
-                    cases);
+                    cases,
+                    null, null, null, null, null, null, null);   // 佣金六项由 mergeCommission 按 dim_key 回填
         };
     }
 

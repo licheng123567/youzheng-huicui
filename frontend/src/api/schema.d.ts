@@ -4854,7 +4854,12 @@ export interface components {
             /** @description kind=COUNT 时 */
             count?: number | null;
         };
-        /** @description 按维度(项目/批次/月)聚合行(字段随 dimension·PRD BR-M10-08 字段待定稿可扩) */
+        /**
+         * @description 按维度聚合行。v1.25.1 +佣金双线六项：IN=物业付给平台的收佣、OUT=平台付给服务商的付佣。
+         *     **口径与 /recon/rollup-dual 逐字一致**（每笔回款 × 该批次比率逐笔 round 求和，不是「总回款 × 比率」；
+         *     已收/已付看 repay_line 的 settled_in/settled_out；只计未冲正）——否则同一笔钱在结算对账页和经营报表页
+         *     会给出两个数。
+         */
         ReportRow: {
             /** @description 维度键(项目id/批次id/月份) */
             dimKey?: string;
@@ -4863,6 +4868,14 @@ export interface components {
             repayCents?: components["schemas"]["Money"];
             repayRate?: components["schemas"]["Rate"];
             caseCount?: number;
+            commInDueCents?: components["schemas"]["Money"];
+            commInSettledCents?: components["schemas"]["Money"];
+            commInUnsettledCents?: components["schemas"]["Money"];
+            commOutDueCents?: components["schemas"]["Money"];
+            commOutSettledCents?: components["schemas"]["Money"];
+            commOutUnsettledCents?: components["schemas"]["Money"];
+            /** @description 未设付佣比例的批次数：这些批次的应付按 0 计入，会低估应付佣金——漏配比率不该把平台欠款藏起来 */
+            outRateMissingBatches?: number;
         };
         /**
          * @description 三方通道：EBAOQUAN=易保全存证 / SMS=智讯云短信 / BAILIAN=阿里百炼录音转写(ASR) / DEEPSEEK=大模型(LLM)。v1.24.0 起 AI 的 key 可在后台配置——此前挡在门外是因为客户端未实现,填了没人读

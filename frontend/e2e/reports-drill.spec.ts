@@ -73,6 +73,47 @@ test.describe('v1.25.0 平台经营报表穿透', () => {
     await expect(page.getByText(/在催盘子按当前归属、催回的钱按到账快照/)).toBeVisible()
   })
 
+  // v1.25.1 佣金双线：用户诉求「按物业公司列表要有 应收/已收/待收佣金、应付/已付/待付佣金」。
+  // 最要紧的不是列出来，而是**和【结算对账】页对得上**——同一笔钱在两个页面给两个数是最伤信任的 bug。
+  test('SA：物业列表的佣金六列，与结算对账页逐批对得上', async ({ page, request }) => {
+    // 权威口径直接问后端要（/recon/rollup-dual 是结算对账页的数据源）——别去猜前端把 token 存哪儿。
+    const login = await request.post('http://localhost:9091/v1/auth/login', {
+      data: { loginType: 'password', username: 'admin', password: 'Admin@123' },
+    })
+    const token = (await login.json()).token
+    const res = await request.get('http://localhost:9091/v1/recon/rollup-dual?page=1&size=50', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    const items = (await res.json()).items ?? []
+    const ledger = items.reduce((a: any, x: any) => ({
+      inDue: a.inDue + (x.dueInCents ?? 0), inSettled: a.inSettled + (x.settledInCents ?? 0),
+      outDue: a.outDue + (x.dueOutCents ?? 0), outSettled: a.outSettled + (x.settledOutCents ?? 0),
+    }), { inDue: 0, inSettled: 0, outDue: 0, outSettled: 0 })
+    expect(ledger.inDue).toBeGreaterThan(0)   // 种子里必须有佣金，否则这条断言等于没测
+
+    await loginRole(page, 'SA')
+    await page.getByRole('menuitem', { name: '经营报表' }).click()
+    await page.getByText('佣金双线', { exact: true }).click()
+    await expect(page.locator('thead').getByText('应收佣金', { exact: true })).toBeVisible()
+
+    const sumCol = async (header: string) => {
+      const hs = await page.locator('thead th').allInnerTexts()
+      const idx = hs.findIndex((h) => h.trim() === header)
+      const cells = await page.locator('tbody tr').locator(`td:nth-child(${idx + 1})`).allInnerTexts()
+      return cells.reduce((a, t) => a + money(t), 0)
+    }
+    // 报表按物业维聚合，全平台合计必须与总账逐分一致（同一笔钱两个页面两个数=最伤信任的 bug）
+    expect(await sumCol('应收佣金')).toBe(ledger.inDue / 100)
+    expect(await sumCol('已收佣金')).toBe(ledger.inSettled / 100)
+    expect(await sumCol('应付佣金')).toBe(ledger.outDue / 100)
+    expect(await sumCol('已付佣金')).toBe(ledger.outSettled / 100)
+    // 待收/待付 = 应收/应付 − 已收/已付（派生，不是另算一遍）
+    expect(await sumCol('待收佣金')).toBe((ledger.inDue - ledger.inSettled) / 100)
+    expect(await sumCol('待付佣金')).toBe((ledger.outDue - ledger.outSettled) / 100)
+
+    await expect(page.getByText(/口径与【结算对账】页逐字一致/)).toBeVisible()
+  })
+
   test('PL 物业负责人：看不到平台穿透（那是平台口径）', async ({ page }) => {
     await loginRole(page, 'PL')
     await page.getByRole('menuitem', { name: '经营报表' }).click()
