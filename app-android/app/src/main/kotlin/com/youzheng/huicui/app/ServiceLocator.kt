@@ -2,8 +2,11 @@ package com.youzheng.huicui.app
 
 import android.content.Context
 import androidx.room.Room
+import com.youzheng.huicui.app.api.apis.AiApi
 import com.youzheng.huicui.app.api.apis.AuthApi
 import com.youzheng.huicui.app.api.apis.CasesApi
+import com.youzheng.huicui.app.data.playbook.PlaybookRepository
+import com.youzheng.huicui.app.ui.common.clearCaseSummaryMemo
 import com.youzheng.huicui.app.api.apis.DispatchApi
 import com.youzheng.huicui.app.api.apis.NotificationApi
 import com.youzheng.huicui.app.api.apis.OrgMemberApi
@@ -69,6 +72,8 @@ object ServiceLocator {
     lateinit var seaRepository: SeaRepository
         private set
     lateinit var notificationRepository: NotificationRepository
+
+    lateinit var playbookRepository: PlaybookRepository
         private set
     lateinit var recordingRepository: RecordingRepository
         private set
@@ -119,6 +124,7 @@ object ServiceLocator {
         workbenchRepository = WorkbenchRepository(retrofit.create(WorkbenchApi::class.java))
         seaRepository = SeaRepository(retrofit.create(DispatchApi::class.java))
         notificationRepository = NotificationRepository(retrofit.create(NotificationApi::class.java))
+        playbookRepository = PlaybookRepository(retrofit.create(AiApi::class.java))
         recordingRepository = RecordingRepository(
             sessions = db.callSessionDao(),
             uploads = db.uploadDao(),
@@ -149,5 +155,7 @@ object ServiceLocator {
         session.clear()
         runCatching { caseRepository.clearCache() }
         runCatching { recordingRepository.clearOnLogout() }
+        // 界面层的案件摘要（业主名/小区/房号）也是上一个账号的数据，别留给下一个登录的人
+        clearCaseSummaryMemo()
     }
 }

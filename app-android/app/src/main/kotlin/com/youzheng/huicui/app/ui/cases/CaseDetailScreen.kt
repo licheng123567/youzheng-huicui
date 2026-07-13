@@ -98,6 +98,9 @@ private fun DetailBody(d: CaseDetail) {
     val permissions = ServiceLocator.session.permissions()
     val c = d.case
 
+    // 后端按当前主体权限 + 案件状态机算出来的可用动作。已结案/已撤回的案件是空数组。
+    val actions = d.availableActions.orEmpty()
+
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(c?.acctNo.orEmpty(), style = MaterialTheme.typography.headlineSmall)
         Text("${c?.ownerName.orEmpty()} · ${c?.room.orEmpty()} · ${c?.projectName.orEmpty()}")
@@ -108,6 +111,16 @@ private fun DetailBody(d: CaseDetail) {
                 AssistChip(onClick = {}, enabled = false, label = { Text("已结案·信息脱敏") })
             }
         }
+
+        // 通话**前**：作战手册 + AI 通话前策略（开场白/要点/异议/红线）。
+        // 放在联系人上方——拨号之前该看的东西，不能排在拨号按钮后面。
+        // 手册是 range scope、无权限点，催收员与协调员都看得到（服务商侧只见已发布版，后端裁）。
+        PlaybookSection(
+            caseId = c?.id.orEmpty(),
+            projectId = c?.projectId,
+            batchId = c?.batchId,
+            strategy = d.preCallStrategy,
+        )
 
         HorizontalDivider()
         Text("联系人", style = MaterialTheme.typography.titleMedium)
@@ -141,20 +154,38 @@ private fun DetailBody(d: CaseDetail) {
             }
         }
 
-        // 通话结束回到 App，第一眼要看到「录音上来没有」
-        if (CaseActions.canCall(d, permissions)) {
+        // 通话结束回到 App，第一眼要看到「录音上来没有」，紧接着是这通电话的 AI 复盘与结果标记。
+        //
+        // 相比拨号按钮的门控（CaseActions.canCall），这里只去掉「存在可拨的联系人」这一条 ——
+        // 那是**拨号**的条件，不是**回看录音**的条件：号码被标记无效之后，之前那通电话的录音和复盘照样得看得到。
+        // 但 `call in availableActions` 这道状态机闸**必须留着**：已结案/已撤回的案件 actions 是空数组，
+        // 去掉它就会在一个只读归档页上照样打 /recordings/latest，然后画一行 403 红字。
+        if ("call" in actions && Permissions.CASE_CALL in permissions) {
             HorizontalDivider()
-            RecordingStatusCard(caseId = c?.id.orEmpty())
+            RecordingStatusCard(
+                caseId = c?.id.orEmpty(),
+                markCodes = d.markCodes.orEmpty(),
+                canMark = Permissions.CASE_FOLLOW in permissions,
+                // 「有效跟进重置释放倒计时」只对**持有人**成立（BR-M4-03/12），别对协调员乱许诺
+                isHolder = c?.holderId != null && c.holderId == ServiceLocator.session.accountId(),
+            )
         }
 
-        // 上门送达拍照存证：入口 = 有 case.follow 且案件还活着（availableActions 含 follow）。
-        // 已结案案件 actions 为空数组，这块整个不出现。
-        val actions = d.availableActions.orEmpty()
+        // 拍照留痕：两个角色都要，但**能做的事不一样**，UI 直接把差异画出来而不是等 403。
+        //
+        //   · 物业协调员（有 evidence.create）→ 完整「送达存证」：选送达类型（律师函/催收单/诉讼文书）
+        //     → 拍照 → 提交，可勾上链存证。上门送达文书本就是协调员的活（LEGAL_DELIVERY 待办只发给 PC）。
+        //   · 催收员（只有 case.follow）→ 「现场拍照留痕」：没有送达类型、没有存证勾。
+        //
+        // 曾经这里只门控 case.follow，于是催收员也看到一整套送达类型，末尾的存证勾却因没权限而消失 ——
+        // 半套 UI 配半套权限，这就是「交互逻辑很怪」的来源。但反过来把整节收窄到 evidence.create 也不对：
+        // 那会把催收员上门拍照留痕的唯一入口一并删掉，日后起争议他拿不出到场证据。
         if ("follow" in actions && Permissions.CASE_FOLLOW in permissions) {
             HorizontalDivider()
             DeliveryEvidenceSection(
                 caseId = c?.id.orEmpty(),
-                canEvidence = "evidence" in actions && Permissions.EVIDENCE_CREATE in permissions,
+                isCoordinator = Permissions.EVIDENCE_CREATE in permissions,
+                canEvidence = "evidence" in actions,
             )
         }
 

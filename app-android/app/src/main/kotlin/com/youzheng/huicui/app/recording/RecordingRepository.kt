@@ -1,7 +1,9 @@
 package com.youzheng.huicui.app.recording
 
 import com.youzheng.huicui.app.api.apis.CollectionApi
+import com.youzheng.huicui.app.api.models.AiReview
 import com.youzheng.huicui.app.api.models.LatestRecording
+import com.youzheng.huicui.app.api.models.MarkCallResultRequest
 import com.youzheng.huicui.app.data.db.CallSessionDao
 import com.youzheng.huicui.app.data.db.CallSessionEntity
 import com.youzheng.huicui.app.data.db.UploadDao
@@ -223,6 +225,40 @@ class RecordingRepository(
         val body = res.body()
         if (res.isSuccessful && body != null) Result.success(body)
         else Result.failure(IllegalStateException("查询失败（HTTP ${res.code()}）"))
+    } catch (e: IOException) {
+        Result.failure(e)
+    }
+
+    /**
+     * AI 复盘（GET /recordings/{id}/ai-review·BR-M5-04a）：对话记录 + 质检风险 + 下一步建议。
+     *
+     * 契约的 scope 是 case-actor、**不额外要权限点** —— 催收员和物业协调员都读得到自己经手的案件。
+     *
+     * 转写没跑完（PARSING）或平台没开 AI 时后端给 404：那不是错误，是「还没有」。
+     * 用 null 表示，别把一个正常状态渲染成红色报错。
+     */
+    suspend fun aiReview(recordingId: String): Result<AiReview?> = try {
+        val res = collectionApi.getAiReview(recordingId)
+        when {
+            res.isSuccessful -> Result.success(res.body())
+            res.code() == 404 -> Result.success(null)
+            else -> Result.failure(IllegalStateException("复盘查询失败（HTTP ${res.code()}）"))
+        }
+    } catch (e: IOException) {
+        Result.failure(e)
+    }
+
+    /**
+     * 通话结果标记（POST /recordings/{id}/ai-review·BR-M4-03a）。需要 case.follow。
+     *
+     * 标记码不是客户端硬编码的：取值来自 CFG-MARK-CODES，后端已经随 `CaseDetail.markCodes`
+     * 下发（含 label / enabled / connected / effectiveFollowUp），客户端照单渲染即可。
+     * 标记为「有效跟进」时服务端会重置 T_collector —— 也就是说这一下能救回一个临近自动释放的案件。
+     */
+    suspend fun markCallResult(recordingId: String, mark: String): Result<Unit> = try {
+        val res = collectionApi.markCallResult(recordingId, MarkCallResultRequest(mark))
+        if (res.isSuccessful) Result.success(Unit)
+        else Result.failure(IllegalStateException("标记失败（HTTP ${res.code()}）"))
     } catch (e: IOException) {
         Result.failure(e)
     }
