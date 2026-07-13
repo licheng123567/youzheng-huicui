@@ -124,7 +124,7 @@ jobs:
           HUICUI_IT_JDBC_URL: jdbc:postgresql://localhost:5472/huicui
           HUICUI_IT_JDBC_USER: huicui
           HUICUI_IT_JDBC_PASSWORD: Str0ngProdPw
-        run: mvn -B verify -Dsurefire.skip=true
+        run: mvn -B verify
 
       # 同样的失效方式要防：IT 被跳过（比如忘了给 JDBC_URL）时 failsafe 会安静地报 0 个用例，构建照样绿。
       - name: 断言资金并发 IT 真的跑了（防"跳过即绿"）
