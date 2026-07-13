@@ -116,15 +116,28 @@ public class RecordingsM4Controller {
         Integer dur = parseDurationOrNull(durationSec);
         long collectorId = parseAccountId(s);
 
-        // 地基期不跑 ASR：直接置 PARSING（BR-M4-01c 同链路），返 202。
         long recId = rec.insertRecording(caseId, collectorId, src, RecordingService.ST_PARSING, recAt, dur, phone);
 
         // BR-M4-01b：存音频原始字节供回听（协调员/催收员）。存储失败不阻断上传主流程。
         try { rec.storeAudio(recId, file.getBytes(), file.getContentType()); } catch (Exception ignore) { }
 
-        // v1.24.0：音频落库后提交百炼转写（异步任务，轮询器推进到 READY）。
-        // 必须在 storeAudio 之后——百炼是回拉我们给的 URL，音频还没入库就拉不到。
-        ai.submitAsr(recId);
+        // STT 预付扣费（BR-M5-02）。**上线前审计逮到的 P1**：v1.24.0 接真 ASR 时补了 submitAsr、
+        // 却漏了这里的扣费门——导致 ASR 启用后每条上传录音都被真转写却从不计费、余额为 0 也能无限转写，
+        // 预付闸门在主路径被绕过。与「补解析」同口径：分钟向上取整≥1、归属承接服务商。
+        // 用 tryCharge（不抛）而非 charge：录音是本次请求刚建的，扣费失败若回滚会把音频弄丢——
+        // 应保留录音并置 QUOTA_BLOCKED（返 202），前端显示「补解析」，充值后再走 parse 补扣。
+        long billOrg = balance.billingOrgOf(caseId, com.youzheng.huicui.common.BillingUnits.STT);
+        long minutes = Math.max(1L, (long) Math.ceil((dur == null ? 0 : dur) / 60.0));
+        boolean charged = balance.tryCharge(billOrg, com.youzheng.huicui.common.BillingUnits.STT,
+                java.math.BigDecimal.valueOf(minutes), caseId, "rec#" + recId, "录音转写扣减", collectorId);
+        if (charged) {
+            // v1.24.0：音频落库后提交百炼转写（异步任务，轮询器推进到 READY）。
+            // 必须在 storeAudio 之后——百炼是回拉我们给的 URL，音频还没入库就拉不到。
+            ai.submitAsr(recId);
+        } else {
+            // 余额不足：不提交转写、不产生成本，置 QUOTA_BLOCKED 等充值后补解析（复用既有闭环）。
+            rec.setStatus(recId, RecordingService.ST_PARSING, RecordingService.ST_QUOTA_BLOCKED);
+        }
 
         // 同步写一条 activity(type=CALL, ref→录音)。
         rec.writeActivity(collectorId, caseId, "CALL", "通话录音上传", "call_recording", recId, "CALL");

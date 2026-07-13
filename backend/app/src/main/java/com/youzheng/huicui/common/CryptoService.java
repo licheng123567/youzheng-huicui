@@ -18,7 +18,8 @@ import java.util.Base64;
  *
  * 【主密钥】huicui.crypto.master-key（环境变量 HUICUI_CRYPTO_KEY）。派生：SHA-256(masterKey) → 32 字节。
  *   **未配置 → encrypt 直接抛 409**：宁可存不进去，也不要把三方 key 明文躺在库里。
- *   dev profile 有内置串（application-dev.yml），prod 必须注入——ProdEnvironmentGuard 会拦。
+ *   dev profile 有内置串（application-dev.yml）。prod 建议注入：未注入不会硬失败（ProdGuard 启动时打
+ *   WARN，见 ProdGuard.announce），但后台存密钥会 409、且库里已有的密文一律解不开（静默回落 yml/env）。
  *
  * 【密文格式】base64(iv(12B) || ciphertext || tag(16B))。GCM 自带完整性校验：
  *   换了主密钥 / 密文被改 → decrypt 抛 AEADBadTagException，我们兜成「读不出来」而非 5xx。
