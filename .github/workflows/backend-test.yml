@@ -86,3 +86,60 @@ jobs:
           name: backend-surefire-reports
           path: backend/app/target/surefire-reports/**
           if-no-files-found: warn
+
+  # ── 资金并发 IT（*IT.java，failsafe）──────────────────────────────────────────
+  #
+  # 此前**没有任何 CI 作业跑过集成测试**：本文件的注释白纸黑字写着「只跑 surefire，不跑 failsafe」，
+  # 于是全仓唯一的并发测试（HoldCapConcurrencyIT）从来没有在任何地方执行过一次。
+  # 而资金正确性的每一条——唯一索引裁决、FOR UPDATE 串行化、CHECK 约束——**只在并发下才成立或失效**，
+  # 单测里根本表达不出来。核心资金链路当时的测试覆盖是 0。
+  #
+  # 这个作业补上那条防线：真 PG + 真线程，回款/佣金的并发不变量必须每次 PR 都被验一遍。
+  integration-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend/app
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16        # V1 的 script_lib.embedding vector(1024) 需要 pgvector
+        env: { POSTGRES_DB: huicui, POSTGRES_USER: huicui, POSTGRES_PASSWORD: Str0ngProdPw }
+        ports: ["5472:5432"]
+        options: >-
+          --health-cmd "pg_isready -U huicui" --health-interval 5s
+          --health-timeout 5s --health-retries 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: mvn verify（failsafe·资金并发 IT）
+        env:
+          HUICUI_IT_JDBC_URL: jdbc:postgresql://localhost:5472/huicui
+          HUICUI_IT_JDBC_USER: huicui
+          HUICUI_IT_JDBC_PASSWORD: Str0ngProdPw
+        run: mvn -B verify -Dsurefire.skip=true
+
+      # 同样的失效方式要防：IT 被跳过（比如忘了给 JDBC_URL）时 failsafe 会安静地报 0 个用例，构建照样绿。
+      - name: 断言资金并发 IT 真的跑了（防"跳过即绿"）
+        run: |
+          python3 - <<'PY'
+          import glob, sys, xml.etree.ElementTree as ET
+          n = fail = skip = 0
+          for f in glob.glob('target/failsafe-reports/*.xml'):
+              r = ET.parse(f).getroot()
+              n += int(r.get('tests', 0)); fail += int(r.get('failures', 0)) + int(r.get('errors', 0))
+              skip += int(r.get('skipped', 0))
+          print(f'failsafe: tests={n} failures={fail} skipped={skip}')
+          if n - skip < 4:
+              print('::error::资金并发 IT 实际执行数不足 4（被跳过了？HUICUI_IT_JDBC_URL 没生效？）')
+              sys.exit(1)
+          if fail:
+              sys.exit(1)
+          PY

@@ -11,6 +11,7 @@ import com.youzheng.huicui.web.dto.MyPayLinkItemDto;
 import com.youzheng.huicui.web.dto.PayLinkDto;
 import com.youzheng.huicui.web.dto.ReductionDto;
 import com.youzheng.huicui.web.dto.RepayLineDto;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -344,11 +346,28 @@ public class PayReduceRepayM4Controller {
     @ResponseStatus(HttpStatus.CREATED)
     @Transactional
     public RepayLineDto createRepayLine(@PathVariable("id") String id,
+                                        @RequestHeader(value = "Idempotency-Key", required = false) String idemKey,
                                         @RequestBody(required = false) Map<String, Object> body) {
         CurrentSubject s = SubjectContext.get();
         long caseId = parseCaseId(id);
         // case-actor 行级：CO 仅持有本人/PL-PC 本物业/SA-SE 平台（防同 org 非持有 CO 越权标他案回款）。
         CaseScopeM4Service.CaseRow c = scope.requireCaseActor(s, caseId);
+
+        // ── 幂等重放：同键已经记过一笔，就把**那一笔**还回去 ──────────────────────────
+        // 契约对 Idempotency-Key 的原话是「同 key 重复请求返回首次结果」。协调员双击「标注回款」时，
+        // 第二次请求必须拿回第一次那笔，而不是一个"重复了"的错误——否则界面无从知道钱到底记上没有。
+        // 这条查询只是快路径；真正的裁决在下面 INSERT 撞唯一索引 uq_repay_line_idem_key 的那一刻，
+        // 由数据库做（两个并发请求都走到这里、都查不到，是完全可能的）。
+        if (idemKey != null && !idemKey.isBlank()) {
+            RepayLineDto replay = findRepayByIdemKey(idemKey, caseId, c);
+            if (replay != null) return replay;
+        }
+
+        // 锁住案件行。两件事都要靠它：
+        //   ① 同一案件的并发回款登记被串行化 —— 否则下面 maybeSettle 的「累计回款 ≥ 应收 → 结清」
+        //      是个 read-modify-write，两笔并发回款可能都读到旧的累计值，结清判定就错了。
+        //   ② 与冲正/结清等其它写路径互斥。
+        jdbc.queryForObject("SELECT id FROM \"case\" WHERE id = ? FOR UPDATE", Long.class, caseId);
 
         Long amountCents = parseRequiredLong(body, "amountCents");        // 缺/非数→422
         if (amountCents <= 0) throw new ApiException(BizError.VALIDATION_422, "amountCents 非法");
@@ -367,12 +386,34 @@ public class PayReduceRepayM4Controller {
                         rs -> rs.next() ? (Long) rs.getObject("provider_id") : null, c.batchId());
         Long collectorAtRepay = c.holderId();
 
-        Long repayId = jdbc.queryForObject(
+        // ON CONFLICT DO NOTHING —— **不能用 try/catch DuplicateKeyException**。
+        //
+        // 在 PostgreSQL 里，一条语句只要违反约束，**整个事务立刻进入 aborted 状态**：
+        // 之后在同一事务里再发任何查询都会得到 "current transaction is aborted"。
+        // 也就是说「捕获 DuplicateKeyException，然后回查首次那一笔」这种写法**根本跑不通** ——
+        // 那条回查语句自己就会炸。（这一点是写并发测试时用真 PG 试出来的。）
+        // ON CONFLICT 让冲突不再抛异常：撞了就不插、返回空行，事务完好，可以继续把首次那笔查出来。
+        //
+        // 注意 `WHERE idem_key IS NOT NULL`：uq_repay_line_idem_key 是**部分唯一索引**，
+        // 推断冲突目标时必须带上它的谓词，否则 PG 找不到可推断的唯一索引而报错。
+        Long repayId = jdbc.query(
                 "INSERT INTO repay_line(case_id, batch_id, amount_cents, channel, paid_at, note, marked_by, settled,"
-                        + " provider_id_at_repay, collector_id_at_repay)"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?, false, ?, ?) RETURNING id",
-                Long.class, caseId, c.batchId(), amountCents, channel, Date.valueOf(paidAt), note, actorId,
-                providerAtRepay, collectorAtRepay);
+                        + " provider_id_at_repay, collector_id_at_repay, idem_key)"
+                        + " VALUES (?, ?, ?, ?, ?, ?, ?, false, ?, ?, ?)"
+                        + " ON CONFLICT (idem_key) WHERE idem_key IS NOT NULL DO NOTHING"
+                        + " RETURNING id",
+                rs -> rs.next() ? rs.getLong("id") : null,
+                caseId, c.batchId(), amountCents, channel, Date.valueOf(paidAt), note, actorId,
+                providerAtRepay, collectorAtRepay,
+                (idemKey == null || idemKey.isBlank()) ? null : idemKey);
+
+        if (repayId == null) {
+            // 没插进去 = 撞了幂等键：**这就是并发双击的现场**。两个请求都通过了上面的快路径查询，
+            // 数据库在这一刻把第二个挡了下来。把首次那一笔还回去，而不是造出第二笔钱。
+            RepayLineDto replay = findRepayByIdemKey(idemKey, caseId, c);
+            if (replay != null) return replay;
+            throw new ApiException(BizError.STATE_409, "回款登记冲突，请重试");   // 理论上到不了
+        }
 
         insertActivity(caseId, "NOTE", actorId,
                 "标注线下回款(" + channel + ")", "repay_line", repayId, null);
@@ -383,6 +424,27 @@ public class PayReduceRepayM4Controller {
         return new RepayLineDto(String.valueOf(repayId), String.valueOf(caseId),
                 c.ownerName(), c.room(), amountCents, channel, paidAt.toString(), false, null,
                 null, null, null, null, null, null, null, null, null, null);
+    }
+
+    /**
+     * 按幂等键取回**首次记的那一笔**回款。找不到返回 null。
+     *
+     * <p>键限定在同一案件内查（`case_id = ?`）：同一个键被拿去标另一个案件的回款，属于客户端用错了键，
+     * 那时该走真正的 INSERT 并撞唯一索引报错，而不是把 A 案件的回款当成 B 案件的结果返回。
+     */
+    private RepayLineDto findRepayByIdemKey(String idemKey, long caseId, CaseScopeM4Service.CaseRow c) {
+        return jdbc.query(
+                "SELECT id, amount_cents, channel, paid_at, reversed, reverse_reason FROM repay_line"
+                        + " WHERE idem_key = ? AND case_id = ?",
+                rs -> {
+                    if (!rs.next()) return null;
+                    return new RepayLineDto(
+                            String.valueOf(rs.getLong("id")), String.valueOf(caseId),
+                            c.ownerName(), c.room(), rs.getLong("amount_cents"), rs.getString("channel"),
+                            rs.getDate("paid_at").toLocalDate().toString(),
+                            rs.getBoolean("reversed"), rs.getString("reverse_reason"),
+                            null, null, null, null, null, null, null, null, null, null);
+                }, idemKey, caseId);
     }
 
     // ── [7] reverseRepayLine  POST /repay-lines/{id}/reverse ────────────────
@@ -410,6 +472,18 @@ public class PayReduceRepayM4Controller {
                 || (rl.prIdOut != null && isPaymentRequestActive(rl.prIdOut))) {
             throw new ApiException(BizError.STATE_409,
                     "回款已纳入未撤销支付申请单，须先撤销该单再冲正: " + repayId);
+        }
+
+        // 第三条线：**催收员佣金单**（co_pay_doc）。上面只检查了平台↔物业(IN)与平台↔服务商(OUT)两线，
+        // 从不检查服务商↔催收员这一线 —— 而 co_pay_doc 是全仓**唯一把佣金物化存储**（而非按需推导）的地方。
+        // 冲正一笔已经进了佣金单的回款，那张单里的 comm_cents 不会跟着变：
+        // 催收员保住了一笔已经不存在的钱的提成，且因为佣金是存下来的，这个错**无法自愈**。
+        // （settledCents > dueCents 从此变成一个可表示的状态。）
+        Long inCoPayDoc = jdbc.queryForObject(
+                "SELECT count(*) FROM co_pay_doc_line WHERE repay_line_id = ?", Long.class, repayId);
+        if (inCoPayDoc != null && inCoPayDoc > 0) {
+            throw new ApiException(BizError.STATE_409,
+                    "回款已纳入催收员佣金单，须先撤销该佣金单再冲正: " + repayId);
         }
         jdbc.update(
                 "UPDATE repay_line SET reversed = true, reverse_reason = ?, reversed_at = now(), updated_at = now()"

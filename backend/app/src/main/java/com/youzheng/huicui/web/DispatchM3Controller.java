@@ -413,6 +413,18 @@ public class DispatchM3Controller {
         }
 
         // 8) 写批次归属/比率/状态（批次粒度：付佣/列批次等仍按 batch.provider_id）。
+        //
+        // 倒挂的**另一侧**：把付佣比例抬到已有的收佣比例之上，一样是平台每笔回款都亏钱。
+        // 上面 proposeCommInRate 拦的是「把收佣压到付佣之下」，这里拦「把付佣抬到收佣之上」。
+        // 两侧都要有，否则绕一下就进去了。DB 层的 chk_batch_commission_not_inverted 是最后兜底。
+        java.math.BigDecimal commIn = jdbc.queryForObject(
+                "SELECT comm_in_rate FROM batch WHERE id = ?", java.math.BigDecimal.class, batchId);
+        if (commIn != null && in.payOutRate() != null && in.payOutRate().compareTo(commIn) > 0) {
+            throw new ApiException(BizError.VALIDATION_422,
+                    "付佣比例(" + in.payOutRate().toPlainString() + ")不得高于该批次的收佣比例("
+                            + commIn.toPlainString() + ")：否则平台每笔回款都亏钱。");
+        }
+
         jdbc.update("UPDATE batch SET provider_id = ?, pay_out_rate = ?, status = 'DISPATCHED', updated_at = now()"
                 + " WHERE id = ?", providerId, in.payOutRate(), batchId);
 

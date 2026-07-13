@@ -357,7 +357,13 @@ function openAct(kind: string, title: string, sourceSuggestionId?: string) {
     : kind === 'promise' ? { date: '', amountYuan: 0, installments: [], sourceSuggestionId }
     : kind === 'ticket' ? { type: '上门核实', note: '', sourceSuggestionId }
     : kind === 'close' ? { closeKind: 'WITHDRAWN', reasonCode: '', reasonNote: '' }
-    : kind === 'repay' ? { amountYuan: 0, channel: 'WECHAT_QR', paidAt: '', note: '' }
+    // idemKey 在**弹窗打开时**生成一次，提交时原样带上。
+    // 关键在「一次」：双击提交、或提交超时后重试，用的都是同一个键 →
+    // 后端按 repay_line.idem_key 的唯一索引把第二次挡下来，并把**第一次那笔**原样返回，
+    // 而不是再造出一笔 5000 元（案件会被误判结清、物业多收一笔佣金、服务商多付一笔、催收员多拿一笔提成）。
+    // 反例：在提交函数里现调 crypto.randomUUID() —— 每次点击都是新键，等于没有幂等。
+    // （本仓 SmsOrgDetail / QuotaOrgDetail 目前正是这么写的，见 PR 说明。）
+    : kind === 'repay' ? { amountYuan: 0, channel: 'WECHAT_QR', paidAt: '', note: '', idemKey: crypto.randomUUID() }
     : kind === 'legal' ? { type: 'COLLECTION_LETTER' }
     : kind === 'reduce' ? { type: '减免滞纳金', amountYuan: 0, reason: '' }
     : {}
@@ -453,7 +459,11 @@ async function submitAct() {
     var reason = (f.reasonCode === 'OTHER' && note) ? (label + '：' + note) : label
     res = await api.POST('/cases/{id}/close', { params: { path: { id } }, body: { kind: f.closeKind, reason } as any })
   }
-  else if (k === 'repay') res = await api.POST('/cases/{id}/repay-lines', { params: { path: { id } }, body: { amountCents: Math.round(f.amountYuan * 100), channel: f.channel, paidAt: f.paidAt, note: (f.note && f.note.trim()) ? f.note.trim() : undefined } as any })
+  else if (k === 'repay') res = await api.POST('/cases/{id}/repay-lines', {
+    // Idempotency-Key 用弹窗打开时生成的那一个（见 openAct）——双击/重试都是同一个键。
+    params: { path: { id }, header: { 'Idempotency-Key': f.idemKey } },
+    body: { amountCents: Math.round(f.amountYuan * 100), channel: f.channel, paidAt: f.paidAt, note: (f.note && f.note.trim()) ? f.note.trim() : undefined },
+  } as any)
   else if (k === 'legal') res = await api.POST('/cases/{id}/legal-docs', { params: { path: { id } }, body: { type: f.type } as any })
   else if (k === 'reduce') {
     if (!(f.reason && f.reason.trim())) { ElMessage.error('请填写减免原因'); return }
