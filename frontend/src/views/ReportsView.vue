@@ -70,22 +70,23 @@ const ic: Record<string, string> = {
   rate: 'M12 2 2 7l10 5 10-5z M2 17l10 5 10-5 M2 12l10 5 10-5',
 }
 
-// PL 回款率趋势（演示态条形）
-const repayTrend = computed(() => {
-  if (!data.value?.rows) return []
-  return [...data.value.rows].slice(0, 6).map((r: any) => ({
-    m: r.dimName?.slice(0, 7) || r.dimName || '—',
+// 按批次的回款率。
+//
+// 它曾经叫「回款率趋势」，并把 `dimName`（**批次名**）截前 7 个字当成月份画成时间趋势 ——
+// 回款率本身是真的（逐批 repayCents/dueCents），但那个横轴是假的：契约的
+// /reports/operation 是**按维度聚合**，不是按时间序列，根本没有月份这回事。
+// 数据真、标签假，比整块假数据更难发现。现在还原成它本来的样子：按批次列回款率。
+// 真要做时间趋势，得先在契约里加按月聚合的端点。
+const repayByBatch = computed(() => {
+  const rows = data.value?.rows ?? []
+  return [...rows].slice(0, 8).map((r: any) => ({
+    name: r.dimName || '—',
     rate: r.dueCents ? Math.round((r.repayCents || 0) / r.dueCents * 100) : 0,
   }))
 })
 
-// PL 催收周期分布（演示态）
-const cycleDist = computed(() => [
-  { seg: '≤30天', n: 12, pct: 40 },
-  { seg: '31-60天', n: 9, pct: 30 },
-  { seg: '61-90天', n: 6, pct: 20 },
-  { seg: '>90天', n: 3, pct: 10 },
-])
+// 「催收周期分布」已删除：它是四个写死的数字（≤30天 12 件 / 31-60天 9 件 …），
+// 注释自陈"演示态"，却原样呈给物业负责人。契约里没有任何按账龄分桶的端点。
 
 // 能力用量 KPI
 const capBilling = computed(() => {
@@ -317,32 +318,17 @@ onMounted(() => { load(); loadVl(); if (isPlatform.value) loadDrill() })
 
     <!-- ═══ PL：物业视角 ═══ -->
     <template v-else-if="role === 'PL' || role === 'PC'">
-      <!-- 回款率趋势 -->
+      <!-- 按批次回款率（横轴曾被伪装成月份，见 repayByBatch 注释） -->
       <div class="card">
-        <div class="card-h"><div class="t"><span class="bar"></span>回款率趋势</div><div class="ops"><span class="note" style="margin:0">{{ scopeLabel[role] || '本物业' }}</span></div></div>
-        <div v-for="t in repayTrend" :key="t.m" style="display:flex;align-items:center;gap:10px;margin:8px 0">
-          <span style="width:72px;font-size:13px">{{ t.m }}</span>
+        <div class="card-h"><div class="t"><span class="bar"></span>各批次回款率</div><div class="ops"><span class="note" style="margin:0">{{ scopeLabel[role] || '本物业' }}</span></div></div>
+        <div v-for="t in repayByBatch" :key="t.name" style="display:flex;align-items:center;gap:10px;margin:8px 0">
+          <span style="width:140px;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="t.name">{{ t.name }}</span>
           <div style="flex:1;background:#f0f0f0;border-radius:4px;height:14px">
             <div :style="{ width: t.rate + '%', background: 'var(--primary)', height: '14px', borderRadius: '4px' }"></div>
           </div>
           <span class="num" style="width:48px">{{ t.rate }}%</span>
         </div>
-        <div v-if="!repayTrend.length" class="note">暂无回款趋势数据</div>
-      </div>
-
-      <!-- 催收周期分布 -->
-      <div class="card">
-        <div class="card-h"><div class="t"><span class="bar"></span>催收周期分布</div><div class="ops"><span class="note" style="margin:0">{{ scopeLabel[role] || '本物业' }}</span></div></div>
-        <div v-for="d in cycleDist" :key="d.seg" style="display:flex;align-items:center;gap:10px;margin:8px 0">
-          <span style="width:80px;font-size:13px">{{ d.seg }}</span>
-          <div style="flex:1;background:#f0f0f0;border-radius:4px;height:14px">
-            <div :style="{ width: d.pct + '%', background: 'var(--primary)', height: '14px', borderRadius: '4px' }"></div>
-          </div>
-          <span class="num" style="width:80px">{{ d.n }} 件 / {{ d.pct }}%</span>
-        </div>
-        <div class="desc" style="margin-top:12px">
-          <div class="r"><div class="k">撤案合计</div><div class="v">— 件</div></div>
-        </div>
+        <div v-if="!repayByBatch.length" class="note">暂无回款数据</div>
       </div>
 
       <!-- 佣金支出聚合 -->

@@ -119,7 +119,6 @@ function doneNext() {
 const wbPeriod = ref<'今日' | '本月' | '自定义'>('本月')
 const wbFrom = ref('')
 const wbTo = ref('')
-const trendMode = ref<'按天' | '按月'>('按天')
 
 // SVG 图标路径（ds-admin stroke-based，来自原型 ic map）
 const icPaths: Record<string, string> = {
@@ -147,97 +146,48 @@ const icPaths: Record<string, string> = {
   briefcase: 'M4 7a2 2 0 012-2h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2zM8 7V5a2 2 0 012-2h4a2 2 0 012 2v2',
 }
 
-// KPI label → icon/color/trend 映射（回退关键词匹配）
+// KPI label → icon/color 映射（纯展示：图标与语义色）。
+//
+// **不再返回涨跌趋势**。这里曾经给每个 KPI 配一个写死的同比，比如
+//   '本月回款': { tx: '▲ 12%' }、'待跟进': { tx: '▼ 2' }
+// —— 数字是后端给的真值，可紧挨着它的「▲ 12% 较上月」是编的。
+// 这比整块假数据更阴险：它寄生在真数据旁边，看起来完全可信。
+// 契约里没有任何同比/环比端点，所以趋势位一律留空，直到真有数据。
 function kpiMeta(label: string): { i: string; c: string; t: string; tx: string } {
-  const exact: Record<string, { i: string; c: string; t: string; tx: string }> = {
-    '回款金额': { i: 'money', c: '#15A35B', t: 'up', tx: '▲ 12%' },
-    '全平台回款': { i: 'money', c: '#15A35B', t: 'up', tx: '▲ 15%' },
-    '本月回款': { i: 'money', c: '#15A35B', t: 'up', tx: '▲ 12%' },
-    '回款案件数': { i: 'check', c: '#2563EB', t: 'up', tx: '▲ 8' },
-    '在催案件': { i: 'cases', c: '#3b82f6', t: 'up', tx: '▲ 3' },
-    '本月回款(元)': { i: 'money', c: '#10b981', t: 'up', tx: '▲ 12%' },
-    '回款率': { i: 'chart', c: '#f59e0b', t: 'up', tx: '▲ 5%' },
-    '待跟进': { i: 'clock', c: '#ef4444', t: 'down', tx: '▼ 2' },
-    '本月通话': { i: 'phone', c: '#8b5cf6', t: 'up', tx: '▲ 8%' },
-    '新增案件': { i: 'plus', c: '#06b6d4', t: 'up', tx: '▲ 15' },
-    '待派单': { i: 'send', c: '#f97316', t: 'up', tx: '▲ 1' },
-    '已结清': { i: 'check', c: '#84cc16', t: 'up', tx: '▲ 9' },
-    '法务在办': { i: 'scale', c: '#a855f7', t: 'flat', tx: '—' },
-    '违约金收入': { i: 'coin', c: '#eab308', t: 'up', tx: '▲ 3%' },
-    '待办合计': { i: 'clock', c: '#f59e0b', t: 'flat', tx: '—' },
-    '待派超时': { i: 'send', c: '#ef4444', t: 'up', tx: '需关注' },
-  }
-  if (exact[label]) return exact[label]
-  // keyword fallback
-  if (label.includes('回款') && label.includes('金额')) return { i: 'money', c: '#15A35B', t: 'up', tx: '—' }
-  if (label.includes('回款') && label.includes('案')) return { i: 'check', c: '#2563EB', t: 'up', tx: '—' }
-  if (label.includes('回款')) return { i: 'money', c: '#15A35B', t: 'up', tx: '—' }
-  if (label.includes('案件') || label.includes('新增')) return { i: 'cases', c: '#2563EB', t: 'flat', tx: '—' }
-  if (label.includes('通话') || label.includes('分钟')) return { i: 'wallet', c: '#E6A23C', t: 'flat', tx: '—' }
-  if (label.includes('工单')) return { i: 'stamp', c: '#7C5CFC', t: 'flat', tx: '—' }
-  if (label.includes('短信')) return { i: 'sms', c: '#11A8B5', t: 'flat', tx: '—' }
-  if (label.includes('存证')) return { i: 'book', c: '#7C5CFC', t: 'flat', tx: '—' }
-  if (label.includes('链接')) return { i: 'sea', c: '#11A8B5', t: 'flat', tx: '—' }
-  if (label.includes('承诺')) return { i: 'clock', c: '#15A35B', t: 'flat', tx: '—' }
-  if (label.includes('在催')) return { i: 'mine', c: '#11A8B5', t: 'flat', tx: '—' }
-  if (label.includes('联系')) return { i: 'sms', c: '#2563EB', t: 'flat', tx: '—' }
-  if (label.includes('派单')) return { i: 'dispatch', c: '#2563EB', t: 'flat', tx: '—' }
-  if (label.includes('对账')) return { i: 'batch', c: '#11A8B5', t: 'flat', tx: '—' }
-  if (label.includes('全平台') || label.includes('平台')) return { i: 'money', c: '#15A35B', t: 'flat', tx: '—' }
-  if (label.includes('公海')) return { i: 'sea', c: '#E6A23C', t: 'flat', tx: '—' }
-  if (label.includes('服务商')) return { i: 'member', c: '#11A8B5', t: 'flat', tx: '—' }
-  if (label.includes('物业')) return { i: 'building', c: '#11A8B5', t: 'flat', tx: '—' }
-  return { i: 'mine', c: '#2563EB', t: 'flat', tx: '—' }
+  const flat = (i: string, c: string) => ({ i, c, t: 'flat', tx: '' })
+  if (label.includes('回款') && label.includes('案')) return flat('check', '#2563EB')
+  if (label.includes('回款')) return flat('money', '#15A35B')
+  if (label.includes('结清')) return flat('check', '#84cc16')
+  if (label.includes('待跟进') || label.includes('待办') || label.includes('承诺')) return flat('clock', '#E6A23C')
+  if (label.includes('通话') || label.includes('分钟')) return flat('phone', '#8b5cf6')
+  if (label.includes('案件') || label.includes('新增') || label.includes('在催')) return flat('cases', '#2563EB')
+  if (label.includes('工单')) return flat('stamp', '#7C5CFC')
+  if (label.includes('短信')) return flat('sms', '#11A8B5')
+  if (label.includes('存证')) return flat('book', '#7C5CFC')
+  if (label.includes('链接')) return flat('sea', '#11A8B5')
+  if (label.includes('法务')) return flat('scale', '#a855f7')
+  if (label.includes('派单') || label.includes('派超时')) return flat('dispatch', '#2563EB')
+  if (label.includes('释放') || label.includes('退回')) return flat('alert', '#E5484D')
+  if (label.includes('对账')) return flat('batch', '#11A8B5')
+  if (label.includes('公海')) return flat('sea', '#E6A23C')
+  if (label.includes('服务商')) return flat('member', '#11A8B5')
+  if (label.includes('物业')) return flat('building', '#11A8B5')
+  return flat('mine', '#2563EB')
 }
 
-// 经营 KPI 卡片（API wb.kpis 驱动，演示环境下补足 10+ 项）
-const DEMO_KPIS = [
-  { l: '在催案件', n: 28, i: 'briefcase', c: '#3b82f6', t: '↑3', tx: '较上月' },
-  { l: '本月回款(元)', n: '82,500', i: 'money', c: '#10b981', t: '↑12%', tx: '较上月' },
-  { l: '回款率', n: '62.3%', i: 'chart', c: '#f59e0b', t: '↑5%', tx: '较上月' },
-  { l: '待跟进', n: 15, i: 'clock', c: '#ef4444', t: '↓2', tx: '较上周' },
-  { l: '本月通话', n: 186, i: 'phone', c: '#8b5cf6', t: '↑8%', tx: '较上月' },
-  { l: '新增案件', n: 42, i: 'plus', c: '#06b6d4', t: '↑15', tx: '本月' },
-  { l: '待派单', n: 5, i: 'send', c: '#f97316', t: '↑1', tx: '需关注' },
-  { l: '已结清', n: 134, i: 'check', c: '#84cc16', t: '↑9', tx: '本月' },
-  { l: '法务在办', n: 3, i: 'scale', c: '#a855f7', t: '—', tx: '持平' },
-  { l: '违约金收入', n: '12,400', i: 'coin', c: '#eab308', t: '↑3%', tx: '本月' },
-]
-const dashboardKpis = computed(() => {
-  const apiKpis = (wb.value?.kpis ?? []).map((k: any) => {
+// 经营 KPI 卡片：**只认后端**（GET /workbench 的 kpis）。
+//
+// 这里曾经有一组 DEMO_KPIS（"在催案件 28 / 本月回款 82,500 / 回款率 62.3% ↑12%"），
+// 在 `apiKpis.length < 3` 时**追加**上去。而那个条件恰恰在**新租户、空数据**时成立 ——
+// 也就是说，最该显示"暂无数据"的时刻，客户看到的是一整屏编造的经营业绩，还带着
+// "较上月 ↑12%" 这种不可能存在的同比。这不是"待接 API"，是会让客户据此做决策的假数据。
+// 空状态永远好过编造的财务数字。
+const dashboardKpis = computed(() =>
+  (wb.value?.kpis ?? []).map((k: any) => {
     const meta = kpiMeta(k.label)
     return { l: k.label, n: k.value, i: meta.i, c: meta.c, t: meta.t, tx: meta.tx }
-  })
-  // 演示环境：API 返回不足时补 Demo 数据
-  if (apiKpis.length < 3) return [...apiKpis, ...DEMO_KPIS]
-  return apiKpis
-})
-
-// 回款趋势（演示态静态数据，API 暂未提供趋势端点）
-const TREND_DAY = [
-  { label: '06-25', v: 8, amt: '¥0.8万', n: 6 },
-  { label: '06-26', v: 12, amt: '¥1.2万', n: 9 },
-  { label: '06-27', v: 6, amt: '¥0.6万', n: 4 },
-  { label: '06-28', v: 15, amt: '¥1.5万', n: 11 },
-  { label: '06-29', v: 10, amt: '¥1.0万', n: 8 },
-  { label: '06-30', v: 18, amt: '¥1.8万', n: 13 },
-  { label: '07-01', v: 9, amt: '¥0.9万', n: 7 },
-]
-const TREND_MONTH = [
-  { label: '1月', v: 40, amt: '¥4.0万', n: 32 },
-  { label: '2月', v: 55, amt: '¥5.5万', n: 45 },
-  { label: '3月', v: 48, amt: '¥4.8万', n: 39 },
-  { label: '4月', v: 62, amt: '¥6.2万', n: 51 },
-  { label: '5月', v: 82, amt: '¥8.2万', n: 66 },
-  { label: '6月', v: 96, amt: '¥9.6万', n: 79 },
-]
-const repayTrend = computed(() => {
-  const arr = trendMode.value === '按月' ? TREND_MONTH : TREND_DAY
-  const max = Math.max(...arr.map((t) => t.v)) || 1
-  return arr.map((t) => ({ label: t.label, amt: t.amt, n: t.n, h: Math.round((t.v / max) * 100) }))
-})
-const repayTrendSum = computed(() => (trendMode.value === '按月' ? '¥38.3万' : '¥7.8万'))
-const repayTrendCnt = computed(() => repayTrend.value.reduce((a: number, t) => a + t.n, 0))
+  }),
+)
 
 // 今日看板 todos（API wb.todos 驱动，映射为 今日看板 展示格式）
 const dashboardTodos = computed(() => {
@@ -277,13 +227,6 @@ async function loadVlTeam() {
   vlHoldCap.value = (data as any)?.holdCap ?? 0
 }
 
-const superviseRows = computed(() => {
-  if (me.value?.role !== 'PL') return []
-  return [
-    { name: '钱协调', acct: 'pc_qian', handled: 42, tickets: 12, evidence: 7, resp: '2.1h', risk: 1, overdue: 2 },
-    { name: '孙协调', acct: 'pc_sun', handled: 30, tickets: 8, evidence: 3, resp: '3.4h', risk: 0, overdue: 0 },
-  ]
-})
 
 // 今日看板 → 跳转
 function todoJump(td: any) {
@@ -487,8 +430,13 @@ const cockpitChips = computed<Array<ChipDef & { n: string | number }>>(() => {
         </div>
       </div>
 
-      <!-- KPI 指标卡片 -->
-      <div v-if="dashboardKpis.length" class="kpis">
+      <!-- KPI 指标卡片：没有就显示空状态，绝不拿演示数据顶上（见 dashboardKpis 注释） -->
+      <div v-if="!dashboardKpis.length" class="card">
+        <div class="note" style="padding:24px 0;text-align:center">
+          暂无经营数据 —— 导入批次并开始催收后，这里会显示真实指标。
+        </div>
+      </div>
+      <div v-else class="kpis">
         <div class="kpi" v-for="s in dashboardKpis" :key="s.l">
           <div class="ic" :style="{ background: s.c }">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -525,41 +473,12 @@ const cockpitChips = computed<Array<ChipDef & { n: string | number }>>(() => {
           <div v-else class="note" style="padding:20px 0;text-align:center">今日暂无应办事项 ✅</div>
         </div>
 
-        <!-- 回款趋势 -->
-        <div class="card">
-          <div class="card-h">
-            <div class="t"><span class="bar"></span>回款趋势（{{ scopeLabel }}）</div>
-            <div class="ops">
-              <span class="segctrl">
-                <span :class="{ on: trendMode === '按天' }" @click="trendMode = '按天'">按天</span>
-                <span :class="{ on: trendMode === '按月' }" @click="trendMode = '按月'">按月</span>
-              </span>
-            </div>
-          </div>
-          <div style="display:flex;align-items:flex-end;gap:8px;height:150px;padding:8px 4px 0">
-            <div
-              v-for="t in repayTrend"
-              :key="t.label"
-              style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%"
-            >
-              <div style="font-size:11px;color:var(--sec)">{{ t.amt }}</div>
-              <div
-                :style="{
-                  width: '62%',
-                  background: 'var(--primary)',
-                  borderRadius: '4px 4px 0 0',
-                  height: t.h + '%',
-                  minHeight: '2px',
-                }"
-                :title="t.label + ' ' + t.amt + '·' + t.n + '件'"
-              ></div>
-              <div class="note" style="margin-top:4px;font-size:11px">{{ t.label }}</div>
-            </div>
-          </div>
-          <div class="note" style="margin-top:6px">
-            {{ trendMode }}回款（演示态）；本期合计 <b>{{ repayTrendSum }}</b> · 回款案件 <b>{{ repayTrendCnt }}</b> 件。
-          </div>
-        </div>
+        <!--
+          「回款趋势」图已删除：它 100% 是写死的（日期硬编码 06-25~07-01、金额 ¥38.3万），
+          从不调任何 API —— 契约里也**没有**按时间聚合回款的端点。
+          一张永远显示同一组假数字的趋势图，比没有这张图更糟。
+          真要做，先在契约里加按日/按月聚合回款的端点（见 PR 说明的「契约缺口」）。
+        -->
       </div>
 
       <!-- VL 团队即时看板（US-M10-03·原型 lines 150-168）：每个催收员的实时作业状态，仅 VL 工作台 -->
@@ -589,51 +508,12 @@ const cockpitChips = computed<Array<ChipDef & { n: string | number }>>(() => {
         </div>
       </template>
 
-      <!-- PL 协调员督导概览（原型 lines 171-187） -->
-      <template v-if="me.role === 'PL' && superviseRows.length">
-        <div class="card" style="margin-top:16px">
-          <div class="card-h">
-            <div class="t"><span class="bar"></span>协调员督导概览（本月）</div>
-            <div class="ops">
-              <button class="btn txt" @click="router.push('/members')">去工作督导 ›</button>
-            </div>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>协调员</th><th>处理案件</th><th>工单</th><th>存证</th><th>平均响应</th><th>质检风险</th><th>超时未处理</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="m in superviseRows"
-                :key="m.acct"
-                :style="(m.overdue || m.risk) ? 'background:#fff7f5' : undefined"
-              >
-                <td>
-                  {{ m.name }}
-                  <span v-if="m.overdue || m.risk" class="tag dan" style="font-size:11px">异常</span>
-                </td>
-                <td class="num">{{ m.handled }}</td>
-                <td class="num">{{ m.tickets }}</td>
-                <td class="num">{{ m.evidence }}</td>
-                <td>{{ m.resp }}</td>
-                <td>
-                  <span v-if="m.risk" class="tag dan">{{ m.risk }}</span>
-                  <span v-else class="tag suc">0</span>
-                </td>
-                <td>
-                  <span v-if="m.overdue" class="tag dan">{{ m.overdue }}</span>
-                  <span v-else>—</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <div class="note">
-            超时未处理 / 质检风险高的协调员标"异常"；点「去工作督导」发起 提醒/谈话/培训（演示态静态）。
-          </div>
-        </div>
-      </template>
+      <!--
+        「协调员督导概览」表已删除：它不只是缺数据，而是**虚构了人**——写死了"钱协调""孙协调"
+        两名并不存在的员工，连同他们的处理案件数/工单数/存证数/平均响应/质检风险/超时数。
+        契约里没有任何按协调员聚合作业绩效的端点，这张表从头到尾没有数据来源。
+        物业负责人会拿它去做绩效判断，所以它比一张空表危险得多。
+      -->
     </template>
 
     <!-- 加载中占位（wb 尚未返回） -->
