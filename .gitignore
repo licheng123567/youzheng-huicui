@@ -42,3 +42,8 @@ app-android/captures/
 *.aab
 *.keystore
 *.jks
+
+# 备份密钥：公钥可以入库（无害），但私钥**绝不能**进仓库——一旦入库，加密就等于没做。
+deploy/backup-private.pem
+deploy/*private*.pem
+deploy/backup/
