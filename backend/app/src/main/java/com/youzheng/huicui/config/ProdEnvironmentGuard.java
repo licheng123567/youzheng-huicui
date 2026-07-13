@@ -29,6 +29,8 @@ public class ProdEnvironmentGuard implements EnvironmentPostProcessor, Ordered {
 
     static final String DEV_SECRET =
             "dev-only-secret-change-in-prod-至少32字节用于HS256签名0123456789";
+    /** application-dev.yml 里的内置主密钥；生产用它 = 密文等同明文。 */
+    static final String DEV_CRYPTO_KEY = "dev-only-crypto-master-key-change-in-prod";
     /** HS256 要求密钥 ≥256 bit。 */
     static final int MIN_SECRET_BYTES = 32;
 
@@ -66,6 +68,23 @@ public class ProdEnvironmentGuard implements EnvironmentPostProcessor, Ordered {
         if (jwt.getBytes(StandardCharsets.UTF_8).length < MIN_SECRET_BYTES) {
             fail("HUICUI_JWT_SECRET 强度不足（HS256 要求 ≥" + MIN_SECRET_BYTES + " 字节，当前 "
                     + jwt.getBytes(StandardCharsets.UTF_8).length + " 字节）。");
+        }
+
+        // ── 加密主密钥：三方通道密钥（易保全/短信/百炼 ASR/DeepSeek）AES-256-GCM 落库要用它 ──
+        //
+        // 此前这一项**完全没进部署产物**（compose 不透传、.env.example 里也没有），
+        // 而护栏又不校验它 —— 于是生产起得来，运维在后台点「保存 ASR 密钥」却恒 409
+        // （CryptoService 写侧直接拒绝），并且会以为是 bug。ASR/LLM 的 key 只有落库这一条路
+        // （不像易保全/短信还有 yml 兜底），所以没有主密钥＝真 AI 在生产上永远不可用。
+        // 改成硬失败：宁可起不来，也不要起一个「AI 永远配不上」的实例。
+        String cryptoKey = env.getProperty("huicui.crypto.master-key", "");
+        if (isBlank(cryptoKey)) {
+            fail("HUICUI_CRYPTO_KEY 未配置：三方通道密钥（存证/短信/ASR/LLM）无法加密落库，"
+                    + "后台保存密钥会恒 409。生成：openssl rand -base64 32");
+        }
+        if (DEV_CRYPTO_KEY.equals(cryptoKey)) {
+            // 措辞刻意与 JWT 的「dev 内置串」区分开：deploy-shape 的两条断言靠这句话分辨是哪一把钥匙配错了
+            fail("HUICUI_CRYPTO_KEY 使用了 dev 内置主密钥：生产禁止使用开发主密钥（否则密文等同明文）。");
         }
 
         // ── 短信通道：启用则必须能真发出去 ──

@@ -24,6 +24,14 @@ spring:
       add-mappings: false                  # 无静态资源，404 走 /error → JsonErrorController（JSON 而非 HTML）
   mvc:
     throw-exception-if-no-handler-found: true
+  servlet:
+    multipart:
+      # 录音上传的**真实**限额就在这里。此前这一节根本不存在 → 落回 Spring 默认 1MB，
+      # 而一段 8k 采样的真实通话录音，一分钟就 ~1MB 起——上线当天录音必然 500，
+      # 核心闭环（录音→转写→复盘）第一步就断。代码层的软限额（录音 200MB / 附件 20MB）
+      # 校验的是**已经收进来**的字节数，拦不住在容器层就被拒掉的请求。
+      max-file-size: ${HUICUI_MAX_FILE_SIZE:200MB}      # 与 RecordingsM4Controller 的录音上限一致
+      max-request-size: ${HUICUI_MAX_REQUEST_SIZE:220MB} # 略大于单文件：多一份 multipart 头与表单字段的余量
   datasource:
     # 无默认值：prod 必须注入 SPRING_DATASOURCE_URL / _USERNAME / _PASSWORD（Spring 宽松绑定）。
     # dev 的默认值见 application-dev.yml。
