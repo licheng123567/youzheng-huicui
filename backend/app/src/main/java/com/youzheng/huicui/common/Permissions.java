@@ -32,6 +32,9 @@ public final class Permissions {
             case "PL" -> Set.of("proj.edit", "reduce.policy.edit", "case.follow", "case.paylink",
                     "case.repay.mark", "case.reduce", "reduce.approve", "evidence.create", "legal.create",
                     "qc.dispose", "qc.escalate", "case.close", "member.manage", "playbook.adopt", "ticket.handle",
+                    // case.hold：法律保留开关。产品决策——**由物业发起**（他们是纠纷第一线，也是数据责任主体）。
+                    // 投诉/诉讼/监管检查期间，置上它，留存清理（PII 去标识化、录音删除）就会跳过该案件。
+                    "case.hold",
                     "case.call");
             // 物业协调员 PC（纯协调/作业）：项目档案只读（无 proj.edit）；作战手册可优化（保留 playbook.adopt）。
             //   收权（对齐权限矩阵「PC 减免只线下留痕、无核准权」+「仅负责人管成员」）：去掉
@@ -40,6 +43,7 @@ public final class Permissions {
             case "PC" -> Set.of("case.follow", "case.paylink",
                     "case.repay.mark", "case.reduce", "evidence.create", "legal.create",
                     "qc.dispose", "qc.escalate", "case.close", "playbook.adopt", "ticket.handle",
+                    "case.hold",   // 法律保留（同 PL）：物业一线遇到投诉/诉讼，当场就能把该案件的清理暂停掉
                     "case.call");
                     // 物业侧：处理 CO 转来的工单(ticket.handle)；case.reduce 发起减免/留痕但无 reduce.approve 核准权（超档转 PL）。
                     // case.call：BR-M4-01a 物业(PL/PC)可获取/回填本物业案件通话录音并查看 AI 复盘（case-actor 行级裁剪仅本物业）

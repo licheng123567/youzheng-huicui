@@ -1122,6 +1122,38 @@ paths:
       requestBody: { content: { application/json: { schema: { type: object, properties: { mark: { $ref: '#/components/schemas/MarkCodeEnum' } }, required: [mark] } } } }
       responses: { '200': { description: ok }, '403': { $ref: '#/components/responses/Forbidden' } }
 
+  /cases/{id}/legal-hold:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    post:
+      operationId: setLegalHold
+      tags: [collection]
+      summary: 置法律保留(投诉/诉讼/监管检查期间暂停该案件的留存清理)
+      description: >
+        置上后，留存清理（业主 PII 去标识化 60 天、通话录音与转写删除 180 天）一律跳过该案件。
+        **由物业发起**（PL/PC）——他们是纠纷第一线，也是个人信息的责任主体。
+        reason 必填：这是个能让数据「不被删」的开关，不写理由就没法审计，会变成绕过留存策略的后门。
+        置/撤均写 audit_log。
+      x-permission: case.hold
+      x-data-scope: case-actor
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, description: '保留理由（如：业主已投诉至住建局 / 诉讼中，案号…）' } } } } }
+      responses:
+        '200': { description: ok }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      operationId: releaseLegalHold
+      tags: [collection]
+      summary: 撤销法律保留(该案件重新进入正常留存清理队列)
+      x-permission: case.hold
+      x-data-scope: case-actor
+      responses:
+        '200': { description: ok }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /cases/{id}/reductions:
     parameters: [ { $ref: '#/components/parameters/Id' } ]
     post:
