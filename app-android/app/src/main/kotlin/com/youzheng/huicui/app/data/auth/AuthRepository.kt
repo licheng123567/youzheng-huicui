@@ -6,6 +6,7 @@ import com.youzheng.huicui.app.api.models.LoginBySms
 import com.youzheng.huicui.app.api.models.Me
 import com.youzheng.huicui.app.api.models.SelectAccountRequest
 import com.youzheng.huicui.app.data.net.AuthEdgeApi
+import com.youzheng.huicui.app.data.net.HttpStatusException
 import com.youzheng.huicui.app.data.net.SmsCodeRequest
 import retrofit2.Response
 import java.io.IOException
@@ -37,11 +38,15 @@ class AuthRepository(
     }
 
     /** GET /me —— 拿 permissions[]，界面按它门控（CO 固定 8 项权限）。 */
+    /**
+     * 失败**带上状态码**（HttpStatusException）：冷启动恢复会话要靠它区分
+     * 「令牌真的失效了（401）」和「只是没网 / 后端抽风」——后者绝不能清令牌。
+     */
     suspend fun me(): Result<Me> = try {
         val res = authApi.getMe()
         val body = res.body()
         if (res.isSuccessful && body != null) Result.success(body)
-        else Result.failure(IllegalStateException("GET /me 失败：HTTP ${res.code()}"))
+        else Result.failure(HttpStatusException(res.code(), "GET /me 失败：HTTP ${res.code()}"))
     } catch (e: IOException) {
         Result.failure(e)
     }

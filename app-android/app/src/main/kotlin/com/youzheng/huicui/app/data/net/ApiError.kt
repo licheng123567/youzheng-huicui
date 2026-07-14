@@ -11,6 +11,16 @@ data class ApiError(
     val traceId: String? = null,
 )
 
+/**
+ * 带 HTTP 状态码的失败。
+ *
+ * 存在的理由：调用方经常**必须**区分「令牌失效（401）」和「这会儿网不通 / 后端 500」。
+ * 把两者都塞进一个无差别的 Result.failure，调用方只能一律按最坏情况处理 ——
+ * 冷启动恢复会话就因此把离线用户的有效令牌当成过期令牌删掉了。
+ */
+class HttpStatusException(val status: Int, message: String? = null) :
+    IllegalStateException(message ?: "HTTP $status")
+
 @PublishedApi
 internal val lenientJson: Json = Json { ignoreUnknownKeys = true; isLenient = true }
 

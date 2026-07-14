@@ -58,7 +58,11 @@ services:
       # ── 短信通道（启用时下列全部必填，且 PUBLIC_BASE 不能是 localhost）──
       HUICUI_SMS_ENABLED: ${HUICUI_SMS_ENABLED:-false}
       HUICUI_SMS_DRY_RUN: ${HUICUI_SMS_DRY_RUN:-false}
+      # PUBLIC_BASE 拼进给业主的缴费短信，**同时**是百炼回拉录音音频的公网地址（/v1/pub/recordings/{token}）——
+      # 启用短信或真 AI 任一，它都必须是真实可达域名（也正是 web/nginx 反代要保证同源的那个域名）。
       HUICUI_PUBLIC_BASE: ${HUICUI_PUBLIC_BASE:-http://localhost:5173}
+      # 演练开关：true=走完整链路但不真发短信、不计费。compose 必须透传，否则 .env 里设了也不生效（会真发）。
+      HUICUI_SMS_DRY_RUN: ${HUICUI_SMS_DRY_RUN:-false}
       HUICUI_SMS_SECRET_NAME: ${HUICUI_SMS_SECRET_NAME:-}
       HUICUI_SMS_SECRET_KEY: ${HUICUI_SMS_SECRET_KEY:-}
       HUICUI_SMS_BASE: ${HUICUI_SMS_BASE:-}
