@@ -81,6 +81,13 @@ huicui:
     pii-days: ${HUICUI_RETENTION_PII_DAYS:60}
     recording-days: ${HUICUI_RETENTION_RECORDING_DAYS:180}
     cron: ${HUICUI_RETENTION_CRON:0 30 3 * * *}   # 03:30，错开 03:00 的备份
+  # 话术飞轮定时结算（BR-M5-12 环6/环7）。见 FlywheelScheduler。
+  #   把真实通话结果（承诺兑现/回款）回流进话术库统计，并把达标的 AI 变体自动晋升为现行话术。
+  #   纯聚合、幂等；专家录入的话术永不自动晋升。话术库页面的「飞轮结算」按钮同时保留。
+  #   关掉它（auto=false）意味着不手点就不结算 —— 统计会一直停在上次快照上。
+  flywheel:
+    auto: ${HUICUI_FLYWHEEL_AUTO:true}
+    cron: ${HUICUI_FLYWHEEL_CRON:0 0 4 * * *}   # 04:00，错开 03:00 备份与 03:30 留存清理
   # 主密钥：三方通道密钥(易保全/短信)AES-256-GCM 落库时用它加密（V936）。
   # 未配置 → 后台存不了密钥（写侧 409），但读/回落 yml 的老路径照常工作——不影响环境变量部署的实例。
   crypto:

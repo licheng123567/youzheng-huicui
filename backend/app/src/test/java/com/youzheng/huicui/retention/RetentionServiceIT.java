@@ -56,6 +56,10 @@ class RetentionServiceIT {
         jdbc.update("DELETE FROM co_pay_doc");
         jdbc.update("DELETE FROM activity");
         jdbc.update("DELETE FROM repay_line");
+        // promise → case 是 ON DELETE RESTRICT：不先删承诺，任何造过承诺的用例（如 FlywheelSettlementIT）
+        // 都会让这里的 DELETE FROM "case" 炸在外键上 —— 而报错指向的是本用例的 setup，跟真凶毫无关系。
+        jdbc.update("DELETE FROM promise_installment");
+        jdbc.update("DELETE FROM promise");
         jdbc.update("DELETE FROM \"case\"");
 
         svc = new RetentionService(jdbc, new com.youzheng.huicui.storage.PgBlobStore(), true, 60, 180);

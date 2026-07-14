@@ -67,6 +67,8 @@ async function loadFlywheel() {
   flywheel.value = data ?? { funnel: [], wilsonTrend: [], note: '' }
 }
 // 飞轮结算:按真实通话结果(承诺兑现/回款)回流重算话术 wilson/转化率(BR-M5-12 环6)。
+// 后端每天 04:00 已自动跑一次(FlywheelScheduler),这个按钮是"立刻跑一次"——
+// 改了阈值/补了归因想马上看效果时用,不必等到明早。幂等,点几次都一样。
 const recomputing = ref(false)
 async function recompute() {
   recomputing.value = true
@@ -113,7 +115,8 @@ onMounted(() => { load(); loadFlywheel() })
       <div class="t"><span class="bar"></span>话术库</div>
       <div class="ops">
         <span class="note" style="margin:0">GET /script-lib · 飞轮护城河</span>
-        <button class="btn df sm" :disabled="recomputing" @click="recompute">{{ recomputing ? '结算中…' : '飞轮结算' }}</button>
+        <button class="btn df sm" :disabled="recomputing" title="每天 04:00 已自动结算一次；这里是立刻跑一次（幂等）"
+                @click="recompute">{{ recomputing ? '结算中…' : '立即结算' }}</button>
         <button class="btn" @click="openDlg">新建话术</button>
       </div>
     </div>

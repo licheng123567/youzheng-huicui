@@ -30,10 +30,12 @@ test.describe('SA 平台话术库还原', () => {
     await expect(page.getByText(/Wilson 下界趋势/)).toBeVisible()
   })
 
-  test('飞轮结算:按钮触发 recompute,回流重算成功提示', async ({ page }) => {
+  // 按钮改名「立即结算」：后端每天 04:00 已自动结算一次（FlywheelScheduler），
+  // 这个按钮的语义从"唯一入口"变成"不必等到明早"。手动通路仍必须能走通 —— 改了阈值要能立刻验证。
+  test('立即结算:按钮触发 recompute,回流重算成功提示', async ({ page }) => {
     await loginRole(page, 'SA')
     await page.getByRole('menuitem', { name: '平台话术库' }).click()
-    await page.getByRole('button', { name: '飞轮结算' }).click()
+    await page.getByRole('button', { name: '立即结算' }).click()
     await expect(page.getByText(/飞轮结算完成：回流重算/)).toBeVisible()
   })
 
