@@ -23,6 +23,17 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+
+# 备份失败必须**告警**，不能只往日志写一行 —— 没人会读那行日志，
+# 等你真要恢复的那天，才发现「三个月没有备份成功过」。
+# 备份的失效方式从来不是"报错了没人管"，而是"以为它一直在跑"。
+fail() {
+  echo "❌ $1" >&2
+  [ -x deploy/alert.sh ] && deploy/alert.sh CRIT "备份失败：$1" || true
+  exit 1
+}
+trap 'rc=$?; [ $rc -ne 0 ] && [ $rc -ne 200 ] && deploy/alert.sh CRIT "备份脚本异常退出（exit=$rc），本次没有产出备份。" >/dev/null 2>&1; exit $rc' ERR
+
 ENV_FILE="deploy/.env"
 [ -f "$ENV_FILE" ] || { echo "缺少 $ENV_FILE"; exit 1; }
 # shellcheck disable=SC1090
@@ -83,9 +94,9 @@ docker compose -f deploy/docker-compose.prod.yml --env-file "$ENV_FILE" \
 
 # 备份必须可验证：空文件/截断的 dump 比没有备份更危险
 SIZE=$(wc -c < "$TMP")
-[ "$SIZE" -gt 1024 ] || { echo "❌ 备份异常：仅 $SIZE 字节"; exit 1; }
+[ "$SIZE" -gt 1024 ] || fail "dump 异常：仅 $SIZE 字节（pg_dump 失败了？）"
 zcat "$TMP" | tail -5 | grep -q "PostgreSQL database dump complete" \
-  || { echo "❌ 备份不完整（缺 dump complete 标记）"; exit 1; }
+  || fail "dump 不完整（缺 dump complete 标记）——截断的备份比没有备份更危险"
 
 # ── 2. 加密：混合加密（AES 流式加数据，RSA 封住那把一次性 AES 密钥）──────────────
 # 不用 `openssl smime -encrypt`：它会把整份 dump 读进内存，而录音以 bytea 存库、

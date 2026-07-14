@@ -77,6 +77,8 @@ services:
     # **不再对宿主暴露 9091**：一切外部流量走 web（nginx）的 443。
     # 此前 "9091:9091" 绑在 0.0.0.0 上 —— JWT、业主姓名电话住址、录音字节全部明文过公网。
     # 只在 compose 内网暴露，nginx 通过服务名 backend:9091 访问。
+    labels:
+      autoheal: "true"            # 让 autoheal 在 HEALTHCHECK 判定 unhealthy 时把它重启掉
     expose:
       - "9091"
     logging:                      # 默认 json-file 无上限，迟早把磁盘（和同一块盘上的 PG 数据）撑爆
@@ -109,6 +111,23 @@ services:
     logging:
       driver: json-file
       options: { max-size: "50m", max-file: "5" }
+
+  autoheal:
+    # **容器 unhealthy 不会自愈** —— 这是 compose 的一个反直觉之处：
+    # `restart: unless-stopped` 只在容器**退出**时重启；HEALTHCHECK 失败只是把它标成 unhealthy，
+    # 然后它就一直不健康地挂在那儿，直到有人发现。
+    # autoheal 盯着 unhealthy 标记，超时就把容器重启掉（它只重启带 autoheal 标签的容器）。
+    image: willfarrell/autoheal:1.2.0
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: 30
+      AUTOHEAL_START_PERIOD: 120        # 给 backend 的 Flyway 迁移留足启动时间，别刚起来就被重启
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # 需要它才能重启别的容器
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
 volumes:
   huicui-pgdata:

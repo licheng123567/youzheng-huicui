@@ -47,3 +47,5 @@ app-android/captures/
 deploy/backup-private.pem
 deploy/*private*.pem
 deploy/backup/
+
+deploy/.monitor-state
