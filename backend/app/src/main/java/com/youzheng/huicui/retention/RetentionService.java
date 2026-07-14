@@ -51,16 +51,19 @@ public class RetentionService {
     private static final Logger log = LoggerFactory.getLogger(RetentionService.class);
 
     private final JdbcTemplate jdbc;
+    private final com.youzheng.huicui.storage.BlobStore blobs;
     private final boolean enabled;
     private final int piiDays;
     private final int recordingDays;
 
     public RetentionService(
             JdbcTemplate jdbc,
+            com.youzheng.huicui.storage.BlobStore blobs,
             @Value("${huicui.retention.enabled:true}") boolean enabled,
             @Value("${huicui.retention.pii-days:60}") int piiDays,
             @Value("${huicui.retention.recording-days:180}") int recordingDays) {
         this.jdbc = jdbc;
+        this.blobs = blobs;
         this.enabled = enabled;
         this.piiDays = piiDays;
         this.recordingDays = recordingDays;
@@ -119,6 +122,27 @@ public class RetentionService {
      */
     @Transactional
     public int purgeExpiredRecordings() {
+        // **先删对象存储里的音频**，再抹库里的 key。
+        // 顺序反了就会漏：key 一旦抹掉，就再也找不到那个对象，音频永远躺在桶里 ——
+        // 「库里删干净了、录音还在云上」等于没删，而且你不会知道。
+        if (blobs.isExternal()) {
+            java.util.List<String> keys = jdbc.queryForList(
+                    "SELECT r.audio_key FROM call_recording r"
+                            + " JOIN case_retention_anchor a ON a.case_id = r.case_id"
+                            + " WHERE r.audio_key IS NOT NULL"
+                            + "   AND NOT a.legal_hold AND a.recordings_purged_at IS NULL"
+                            + "   AND a.anchor_at < now() - (? || ' days')::interval",
+                    String.class, recordingDays);
+            for (String k : keys) {
+                try {
+                    blobs.delete(k);
+                } catch (RuntimeException e) {
+                    // 单个对象删不掉不该让整批清理挂掉；但必须喊出来，否则就成了静默残留。
+                    log.error("[Retention] 录音对象删除失败，PII 仍留在对象存储里：key={}", k, e);
+                }
+            }
+        }
+
         // 句段表：逐句转写文本（PII 密度最高的地方）
         jdbc.update(
                 "DELETE FROM transcript_segment WHERE recording_id IN ("
@@ -128,7 +152,8 @@ public class RetentionService {
                 recordingDays);
 
         jdbc.update(
-                "UPDATE call_recording r SET audio_bytes = NULL, transcript = NULL, updated_at = now()"
+                "UPDATE call_recording r SET audio_bytes = NULL, audio_key = NULL, transcript = NULL,"
+                        + " updated_at = now()"
                         + " FROM case_retention_anchor a"
                         + " WHERE a.case_id = r.case_id"
                         + "   AND NOT a.legal_hold AND a.recordings_purged_at IS NULL"

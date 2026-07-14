@@ -108,6 +108,17 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U huicui" --health-interval 5s
           --health-timeout 5s --health-retries 30
+      minio:
+        # 对象存储 IT：MinIO 与 AWS S3 / 阿里云 OSS 走同一套 S3 API，拿它当被测端就够了。
+        image: bitnami/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+          MINIO_DEFAULT_BUCKETS: huicui
+        ports: ["9100:9000"]
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 5s --health-timeout 5s --health-retries 30
 
     steps:
       - uses: actions/checkout@v4
@@ -124,6 +135,7 @@ jobs:
           HUICUI_IT_JDBC_URL: jdbc:postgresql://localhost:5472/huicui
           HUICUI_IT_JDBC_USER: huicui
           HUICUI_IT_JDBC_PASSWORD: Str0ngProdPw
+          HUICUI_IT_S3_ENDPOINT: http://localhost:9100
         run: mvn -B verify
 
       # 同样的失效方式要防：IT 被跳过（比如忘了给 JDBC_URL）时 failsafe 会安静地报 0 个用例，构建照样绿。
@@ -137,8 +149,8 @@ jobs:
               n += int(r.get('tests', 0)); fail += int(r.get('failures', 0)) + int(r.get('errors', 0))
               skip += int(r.get('skipped', 0))
           print(f'failsafe: tests={n} failures={fail} skipped={skip}')
-          if n - skip < 4:
-              print('::error::资金并发 IT 实际执行数不足 4（被跳过了？HUICUI_IT_JDBC_URL 没生效？）')
+          if n - skip < 10:
+              print('::error::集成测试实际执行数不足 10（被跳过了？JDBC/S3 端点没生效？）')
               sys.exit(1)
           if fail:
               sys.exit(1)

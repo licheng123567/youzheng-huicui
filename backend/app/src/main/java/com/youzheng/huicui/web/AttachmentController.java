@@ -42,7 +42,10 @@ public class AttachmentController {
     private final JdbcTemplate jdbc;
     private final RecordingService rec;
 
-    public AttachmentController(JdbcTemplate jdbc, RecordingService rec) {
+    private final com.youzheng.huicui.storage.BlobStore blobs;
+
+    public AttachmentController(JdbcTemplate jdbc, RecordingService rec, com.youzheng.huicui.storage.BlobStore blobs) {
+        this.blobs = blobs;
         this.jdbc = jdbc;
         this.rec = rec;
     }
@@ -76,10 +79,33 @@ public class AttachmentController {
         return (t != null && DELIVERY_TYPES.contains(t)) ? t : null;
     }
 
+    /** 双读：先对象存储（storage_key），没有再回落 bytea。key 有而对象没了 = 真故障，不静默当空。 */
+    private byte[] attachmentBytes(Map<String, Object> row, long attId) {
+        String key = (String) row.get("storage_key");
+        if (key != null && !key.isBlank()) {
+            byte[] b = blobs.get(key);
+            if (b == null) throw new IllegalStateException("附件对象丢失：key=" + key + " attId=" + attId);
+            return b;
+        }
+        return (byte[]) row.get("bytes");
+    }
+
     private long insertAttachment(long caseId, String sessionToken, MultipartFile file, Long uploadedBy, String deliveryType) {
         byte[] bytes;
         try { bytes = file.getBytes(); }
         catch (Exception e) { throw new ApiException(BizError.VALIDATION_422, "文件读取失败"); }
+
+        // 启用对象存储时字节进桶、库里只留 key；否则维持原样存 bytea（存量附件不受影响）。
+        if (blobs.isExternal()) {
+            String key = "attachments/" + caseId + "/" + java.util.UUID.randomUUID();
+            blobs.put(key, bytes, file.getContentType());
+            return jdbc.queryForObject(
+                    "INSERT INTO case_attachment(case_id, session_token, filename, content_type,"
+                            + " bytes, storage_key, uploaded_by, delivery_type)"
+                            + " VALUES (?, ?, ?, ?, NULL, ?, ?, ?) RETURNING id",
+                    Long.class, caseId, sessionToken, safeName(file),
+                    file.getContentType(), key, uploadedBy, normDeliveryType(deliveryType));
+        }
         return jdbc.queryForObject(
                 "INSERT INTO case_attachment(case_id, session_token, filename, content_type, bytes, uploaded_by, delivery_type)"
                         + " VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
@@ -111,7 +137,8 @@ public class AttachmentController {
         long attId = parseId(id);
         Map<String, Object> row;
         try {
-            row = jdbc.queryForMap("SELECT case_id, content_type, bytes FROM case_attachment WHERE id = ?", attId);
+            row = jdbc.queryForMap(
+                    "SELECT case_id, content_type, bytes, storage_key FROM case_attachment WHERE id = ?", attId);
         } catch (org.springframework.dao.EmptyResultDataAccessException e) {
             throw new ApiException(BizError.NOT_FOUND_404, "附件不存在: " + id);
         }
@@ -122,7 +149,8 @@ public class AttachmentController {
         return ResponseEntity.ok().header("Content-Type", ct).header("Cache-Control", "private, max-age=60")
                 .header("Content-Disposition", "attachment")
                 .header("X-Content-Type-Options", "nosniff")
-                .body((byte[]) row.get("bytes"));
+                // **双读**：新附件在对象存储里（storage_key），存量附件仍在 bytea。
+                .body(attachmentBytes(row, attId));
     }
 
     // ── [3] POST /cases/{id}/upload-sessions ─────────────────────────────────────

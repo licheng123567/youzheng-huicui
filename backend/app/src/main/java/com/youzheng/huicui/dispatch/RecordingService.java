@@ -41,9 +41,13 @@ public class RecordingService {
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
 
-    public RecordingService(JdbcTemplate jdbc, ObjectMapper json) {
+    private final com.youzheng.huicui.storage.BlobStore blobs;
+
+    public RecordingService(JdbcTemplate jdbc, ObjectMapper json,
+                            com.youzheng.huicui.storage.BlobStore blobs) {
         this.jdbc = jdbc;
         this.json = json;
+        this.blobs = blobs;
     }
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ISO_INSTANT;
@@ -167,10 +171,23 @@ public class RecordingService {
                 durationSec, phone);
     }
 
-    /** 存储上传的录音音频字节（BR-M4-01b，供回听）。 */
+    /**
+     * 存储上传的录音音频（BR-M4-01b，供回听）。
+     *
+     * <p>启用对象存储时字节进桶、库里只留一个 key；否则维持原样存 bytea。
+     * 切换是**单向且不影响存量**的：老录音的 audio_key 为空，读路径会回落到 bytea。
+     */
     public void storeAudio(long recId, byte[] bytes, String contentType) {
-        jdbc.update("UPDATE call_recording SET audio_bytes = ?, audio_content_type = ? WHERE id = ?",
-                bytes, contentType == null ? "application/octet-stream" : contentType, recId);
+        String ct = contentType == null ? "application/octet-stream" : contentType;
+        if (blobs.isExternal()) {
+            String key = "recordings/" + recId + "/" + java.util.UUID.randomUUID();
+            blobs.put(key, bytes, ct);
+            jdbc.update("UPDATE call_recording SET audio_key = ?, audio_bytes = NULL,"
+                    + " audio_content_type = ? WHERE id = ?", key, ct, recId);
+        } else {
+            jdbc.update("UPDATE call_recording SET audio_bytes = ?, audio_content_type = ? WHERE id = ?",
+                    bytes, ct, recId);
+        }
     }
 
     /** 取录音所属 case_id（供 audio 流式端点做 case-actor 裁剪）；不存在返 null。 */
@@ -179,17 +196,36 @@ public class RecordingService {
                 rs -> rs.next() ? rs.getLong(1) : null, recId);
     }
 
-    /** 取录音音频字节+Content-Type；无音频返 null。返回 [bytes, contentType]。 */
+    /**
+     * 取录音音频字节 + Content-Type；无音频返 null。返回 [bytes, contentType]。
+     *
+     * <p><b>双读</b>：先看 audio_key（新录音在对象存储里），没有再回落 audio_bytes（存量录音）。
+     * 顺序反过来就会把存量录音读成空 —— 一次重构把已有录音读丢，是绝不能接受的。
+     */
     public Object[] loadAudio(long recId) {
-        return jdbc.query(
-                "SELECT audio_bytes, audio_content_type FROM call_recording WHERE id = ?",
+        Object[] row = jdbc.query(
+                "SELECT audio_key, audio_bytes, audio_content_type FROM call_recording WHERE id = ?",
                 rs -> {
                     if (!rs.next()) return null;
+                    String key = rs.getString("audio_key");
                     byte[] b = rs.getBytes("audio_bytes");
-                    if (b == null) return null;
                     String ct = rs.getString("audio_content_type");
-                    return new Object[]{ b, ct == null ? "application/octet-stream" : ct };
+                    return new Object[]{ key, b, ct == null ? "application/octet-stream" : ct };
                 }, recId);
+        if (row == null) return null;
+
+        String key = (String) row[0];
+        byte[] bytes = (byte[]) row[1];
+        String ct = (String) row[2];
+
+        if (key != null && !key.isBlank()) {
+            byte[] fromStore = blobs.get(key);
+            if (fromStore != null) return new Object[]{ fromStore, ct };
+            // key 有、对象没了：这是**真故障**（桶被误删/权限丢了），不能静默当成"没有录音" ——
+            // 那会让人以为这通电话本来就没录上。
+            throw new IllegalStateException("录音对象丢失：key=" + key + " recId=" + recId);
+        }
+        return bytes == null ? null : new Object[]{ bytes, ct };
     }
 
     /** 写一条 activity（type=CALL/NOTE 等）。actor=当前主体；ref_type/ref_id 关联录音。 */

@@ -58,7 +58,7 @@ class RetentionServiceIT {
         jdbc.update("DELETE FROM repay_line");
         jdbc.update("DELETE FROM \"case\"");
 
-        svc = new RetentionService(jdbc, true, 60, 180);
+        svc = new RetentionService(jdbc, new com.youzheng.huicui.storage.PgBlobStore(), true, 60, 180);
 
         orgId = jdbc.queryForObject(
                 "INSERT INTO org(type,name,status) VALUES ('PROPERTY','测试物业','ACTIVE') RETURNING id", Long.class);
