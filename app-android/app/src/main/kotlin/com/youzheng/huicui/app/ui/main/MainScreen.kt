@@ -6,12 +6,14 @@ import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,7 +38,7 @@ import com.youzheng.huicui.app.ui.workbench.WorkbenchScreen
 private enum class Tab(val label: String, val icon: ImageVector) {
     WORKBENCH("工作台", Icons.Filled.Home),
     CASES("案件", Icons.Filled.List),
-    UPLOADS("录音", Icons.Filled.Refresh),
+    UPLOADS("录音", Icons.Filled.Phone),
     MESSAGES("消息", Icons.Filled.Notifications),
     ME("我的", Icons.Filled.AccountCircle),
 }
@@ -65,12 +67,20 @@ fun MainScreen(onLogout: () -> Unit) {
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,   // 灰底衬白卡，卡片才有「浮起来」的层次
         bottomBar = {
-            NavigationBar {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 Tab.entries.forEach { t ->
                     NavigationBarItem(
                         selected = tab == t,
                         onClick = { tab = t },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                            unselectedIconColor = MaterialTheme.colorScheme.outline,
+                            unselectedTextColor = MaterialTheme.colorScheme.outline,
+                        ),
                         icon = {
                             val badge = when (t) {
                                 Tab.MESSAGES -> unread
@@ -95,7 +105,7 @@ fun MainScreen(onLogout: () -> Unit) {
         when (tab) {
             Tab.WORKBENCH -> WorkbenchScreen(inner) { id -> openCaseId = id }
             Tab.CASES -> CasesScreen(inner) { id -> openCaseId = id }
-            Tab.UPLOADS -> UploadQueueScreen(inner)
+            Tab.UPLOADS -> UploadQueueScreen(inner) { id -> openCaseId = id }
             Tab.MESSAGES -> NotificationsScreen(inner) { unread = it }
             Tab.ME -> MeScreen(inner, me = ServiceLocator.session.me, onLogout = onLogout)
         }

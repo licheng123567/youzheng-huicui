@@ -25,6 +25,17 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_ONBOARDING, false)
         set(v) = prefs.edit().putBoolean(KEY_ONBOARDING, v).apply()
 
+    /**
+     * 「这个令牌还欠一次改密」。
+     *
+     * 后端首登会**连同令牌一起**下发 MUST_CHANGE_PASSWORD，而 `GET /me` 对这种令牌照样返回 200
+     * （它在鉴权白名单里），`Me` 里也没有任何标志位。所以冷启动恢复会话时，客户端自己不记一笔，
+     * 就会把「还没改密」的用户直接放进主页，然后每个业务请求挨个 403。
+     */
+    var mustChangePassword: Boolean
+        get() = prefs.getBoolean(KEY_MUST_CHANGE_PWD, false)
+        set(v) = prefs.edit().putBoolean(KEY_MUST_CHANGE_PWD, v).apply()
+
     fun restore() {
         RecordingEnvironment.overrideDir = recordingDirOverride
     }
@@ -33,5 +44,6 @@ class AppSettings(context: Context) {
         const val KEY_WIFI_ONLY = "upload_wifi_only"
         const val KEY_DIR = "recording_dir"
         const val KEY_ONBOARDING = "onboarding_done"
+        const val KEY_MUST_CHANGE_PWD = "must_change_password"
     }
 }

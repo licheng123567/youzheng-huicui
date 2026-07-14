@@ -29,10 +29,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
 import com.youzheng.huicui.app.ServiceLocator
 import com.youzheng.huicui.app.data.case.formatCents
 import com.youzheng.huicui.app.data.session.Permissions
 import com.youzheng.huicui.app.data.db.CaseEntity
+import com.youzheng.huicui.app.ui.common.Pill
+import com.youzheng.huicui.app.ui.theme.huicui
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -162,25 +165,47 @@ private fun OfflineBanner(cachedAt: Long?) {
 @Composable
 private fun CaseRow(c: CaseEntity, onOpenCase: (String) -> Unit) {
     Card(Modifier.fillMaxWidth().clickable { onOpenCase(c.id) }) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(c.acctNo, style = MaterialTheme.typography.titleSmall)
-                Text("¥${formatCents(c.dueCents.toInt())}", style = MaterialTheme.typography.titleSmall)
+                // 业主提到主行：催收员认人不认户号
+                Text(c.ownerName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                // 欠款是这张卡的重点，红色加粗
+                Text(
+                    "¥${formatCents(c.dueCents.toInt())}",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = huicui.danger,
+                )
             }
+            // 小区 + 房号（上门找门牌全靠它），户号退居次要
             Text(
-                "${c.ownerName} · ${c.room} · ${c.projectName}",
-                style = MaterialTheme.typography.bodySmall,
+                "${c.projectName} · ${c.room}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text(
-                statusLabel(c.status),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Pill(statusLabel(c.status), caseStatusColor(c.status))
+                Text(
+                    c.acctNo,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun caseStatusColor(status: String) = when (status) {
+    "IN_PROGRESS" -> MaterialTheme.colorScheme.primary
+    "SETTLED" -> huicui.success
+    "PENDING_DISPATCH", "PROVIDER_SEA" -> huicui.warning
+    "WITHDRAWN", "CLOSED" -> huicui.info
+    else -> huicui.info
 }
 
 fun statusLabel(s: String): String = when (s) {

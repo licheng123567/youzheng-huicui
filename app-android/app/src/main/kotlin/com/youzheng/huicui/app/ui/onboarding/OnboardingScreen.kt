@@ -85,7 +85,8 @@ fun OnboardingScreen(onDone: () -> Unit, onSkip: () -> Unit) {
     ) {
         Text("开启通话录音自动回传", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "有证慧催不会替你拨号，也不会在通话中录音。它读取的是**你手机系统自己录下的通话录音**，" +
+            // Compose 的 Text 不解析 Markdown：写 **强调** 只会把星号原样画到屏幕上（真机实测确认）
+            "有证慧催不会替你拨号，也不会在通话中录音。它读取的是「你手机系统自己录下的通话录音」，" +
                 "在通话结束后把它自动传回平台做转写与质检。以下四步只需设置一次。",
             style = MaterialTheme.typography.bodyMedium,
         )
