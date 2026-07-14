@@ -22,6 +22,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    logging:                      # 与 backend 同理：无上限的 json-file 会和 PG 数据抢同一块盘
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
     # 不对宿主暴露端口：只允许 compose 内网访问。需要外部连库时用 SSH 隧道。
 
   backend:
@@ -40,13 +43,23 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
       HUICUI_JWT_SECRET: ${HUICUI_JWT_SECRET:?必须设置且 ≥32 字节}
-      # 三方密钥落库主密钥（v1.23.0·AES-256-GCM）。不设：后台存任何三方 key 得 409，
-      # 且百炼/DeepSeek 无环境变量兜底 → 真 AI 整条链路无法启用。生成：openssl rand -base64 48。
-      # 一经落库切勿更换，否则库里旧密文全部解不开。
-      HUICUI_CRYPTO_KEY: ${HUICUI_CRYPTO_KEY:-}
+      # 三方通道密钥(存证/短信/ASR/LLM)AES-256-GCM 落库的主密钥。
+      # 此前它压根没进 compose —— 于是后台点「保存 ASR 密钥」恒 409，真 AI 在生产上永远用不了。
+      HUICUI_CRYPTO_KEY: ${HUICUI_CRYPTO_KEY:?必须设置（openssl rand -base64 32）}
+      # ── 初始管理员引导（仅首次部署填；起来并改密后即可从 .env 删掉）──
+      # 生产库是空的，没有这三项就没有任何人能登录。见 BootstrapAdminRunner。
+      HUICUI_BOOTSTRAP_ADMIN_USERNAME: ${HUICUI_BOOTSTRAP_ADMIN_USERNAME:-}
+      HUICUI_BOOTSTRAP_ADMIN_PASSWORD: ${HUICUI_BOOTSTRAP_ADMIN_PASSWORD:-}
+      HUICUI_BOOTSTRAP_ADMIN_PHONE: ${HUICUI_BOOTSTRAP_ADMIN_PHONE:-}
+      # ── 通用（此前这几项在 .env.example 里有、compose 却不透传 → 设了不生效）──
+      HUICUI_JWT_TTL: ${HUICUI_JWT_TTL:-86400}
+      HUICUI_MAX_FILE_SIZE: ${HUICUI_MAX_FILE_SIZE:-200MB}
+      HUICUI_MAX_REQUEST_SIZE: ${HUICUI_MAX_REQUEST_SIZE:-220MB}
       # ── 短信通道（启用时下列全部必填，且 PUBLIC_BASE 不能是 localhost）──
       HUICUI_SMS_ENABLED: ${HUICUI_SMS_ENABLED:-false}
-      # 拼进给业主的缴费短信，也作百炼回拉录音音频的公网地址——**启用短信或 AI 都必须是真实可达域名**。
+      HUICUI_SMS_DRY_RUN: ${HUICUI_SMS_DRY_RUN:-false}
+      # PUBLIC_BASE 拼进给业主的缴费短信，**同时**是百炼回拉录音音频的公网地址（/v1/pub/recordings/{token}）——
+      # 启用短信或真 AI 任一，它都必须是真实可达域名（也正是 web/nginx 反代要保证同源的那个域名）。
       HUICUI_PUBLIC_BASE: ${HUICUI_PUBLIC_BASE:-http://localhost:5173}
       # 演练开关：true=走完整链路但不真发短信、不计费。compose 必须透传，否则 .env 里设了也不生效（会真发）。
       HUICUI_SMS_DRY_RUN: ${HUICUI_SMS_DRY_RUN:-false}
@@ -61,9 +74,41 @@ services:
       HUICUI_EBQ_URL: ${HUICUI_EBQ_URL:-https://bs.sandbox.ebaoquan.org}
       HUICUI_EBQ_APPKEY: ${HUICUI_EBQ_APPKEY:-}
       HUICUI_EBQ_SECRET: ${HUICUI_EBQ_SECRET:-}
-    ports:
-      - "${BACKEND_PORT:-9091}:9091"
+    # **不再对宿主暴露 9091**：一切外部流量走 web（nginx）的 443。
+    # 此前 "9091:9091" 绑在 0.0.0.0 上 —— JWT、业主姓名电话住址、录音字节全部明文过公网。
+    # 只在 compose 内网暴露，nginx 通过服务名 backend:9091 访问。
+    expose:
+      - "9091"
+    logging:                      # 默认 json-file 无上限，迟早把磁盘（和同一块盘上的 PG 数据）撑爆
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
     # SPRING_PROFILES_ACTIVE 不设 → 基础 yml 默认 prod（fail-closed）
+
+  web:
+    # 反向代理 + TLS 终止 + 前端静态站。见 deploy/nginx.conf 里为什么这三件事必须一起做。
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      HUICUI_DOMAIN: ${HUICUI_DOMAIN:?必须设置你的域名，如 huicui.example.com}
+      # **这一行不能删**：nginx 官方镜像的 envsubst 默认会替换模板里**所有** $xxx，
+      # 而 nginx.conf 里满是 $host / $remote_addr / $proxy_add_x_forwarded_for 这类
+      # **nginx 自己的运行时变量** —— 不加过滤会被 envsubst 全部替换成空串，
+      # 代理头变空、跳转变成 https:///，站点直接坏掉。只放行 HUICUI_ 前缀。
+      NGINX_ENVSUBST_FILTER: "^HUICUI_"
+    # nginx.conf 里用了 ${HUICUI_DOMAIN}：用官方镜像的 envsubst 模板机制注入
+    volumes:
+      - ./nginx.conf:/etc/nginx/templates/default.conf.template:ro
+      - ./frontend-dist:/usr/share/nginx/html:ro     # 前端 `npm run build` 的产物拷到这里
+      - ./certbot/conf:/etc/letsencrypt:ro           # certbot 签发的证书
+      - ./certbot/www:/var/www/certbot:ro            # ACME challenge webroot
+    ports:
+      - "80:80"
+      - "443:443"
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
 
 volumes:
   huicui-pgdata:

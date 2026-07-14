@@ -38,10 +38,16 @@ jobs:
           docker rm "$cid" >/dev/null
           N=$(unzip -l /tmp/app.jar | grep -c 'db/migration/V')
           echo "jar 内迁移文件数: $N"
-          [ "$N" -ge 24 ] || { echo "::error::jar 内迁移不足 24 个（$N）——迁移没打进镜像"; exit 1; }
+          # 下限跟着真实迁移数走（当前 35）。写死 24 的话，"跳过了 10 个迁移"这种事照样能过闸。
+          [ "$N" -ge 35 ] || { echo "::error::jar 内迁移不足 35 个（$N）——迁移没打进镜像"; exit 1; }
           # 迁移必须来自 classpath，不得再依赖 filesystem 相对路径
           unzip -p /tmp/app.jar BOOT-INF/classes/application-prod.yml | grep -q 'filesystem:' \
             && { echo "::error::application-prod.yml 仍引用 filesystem 迁移路径"; exit 1; } || true
+
+          # multipart 限额必须在配置里。缺了就落回 Spring 默认 1MB —— 真实通话录音必然 500，
+          # 而这条在功能测试里看不出来（测试用的小样本能过）。
+          unzip -p /tmp/app.jar BOOT-INF/classes/application.yml | grep -q 'max-file-size' \
+            || { echo "::error::application.yml 缺 spring.servlet.multipart 限额——录音上传会落回 1MB 默认值"; exit 1; }
 
           U=$(docker run --rm --entrypoint id huicui-backend:ci -un)
           [ "$U" = "huicui" ] || { echo "::error::容器以 $U 运行，应为非 root 的 huicui"; exit 1; }
@@ -50,11 +56,13 @@ jobs:
           echo "✅ 镜像自检通过（迁移 $N 个 / 用户 $U / curl 就位）"
 
       # 配不全必须拒绝启动，且理由可操作。逐条断言 ProdGuard 的中文提示。
-      - name: fail-closed 实测（8 条，均应拒绝启动）
+      - name: fail-closed 实测（11 条，均应拒绝启动）
         run: |
           set -e
           GOOD_JWT=$(openssl rand -base64 48)
+          GOOD_CRYPTO=$(openssl rand -base64 32)
           DEV_SECRET='dev-only-secret-change-in-prod-至少32字节用于HS256签名0123456789'
+          DEV_CRYPTO='dev-only-crypto-master-key-change-in-prod'
           DS='jdbc:postgresql://x:5432/huicui'
 
           expect_reject() {
@@ -80,14 +88,35 @@ jobs:
             -e SPRING_DATASOURCE_URL="$DS" -e SPRING_DATASOURCE_PASSWORD=realpw -e HUICUI_JWT_SECRET="$DEV_SECRET"
           expect_reject "⑥ JWT 强度不足" "强度不足" \
             -e SPRING_DATASOURCE_URL="$DS" -e SPRING_DATASOURCE_PASSWORD=realpw -e HUICUI_JWT_SECRET=short
-          expect_reject "⑦ 短信启用但 PUBLIC_BASE=localhost" "仍是 localhost" \
+          # ⑦⑧ 是新增：主密钥缺失/用 dev 串。ASR/LLM 的 key 只有落库一条路，
+          # 没有主密钥＝后台存不了密钥＝真 AI 在生产上永远不可用，而且报错是一句莫名其妙的 409。
+          expect_reject "⑦ 加密主密钥未配置" "HUICUI_CRYPTO_KEY 未配置" \
+            -e SPRING_DATASOURCE_URL="$DS" -e SPRING_DATASOURCE_PASSWORD=realpw -e HUICUI_JWT_SECRET="$GOOD_JWT"
+          expect_reject "⑧ 加密主密钥=dev 内置串" "使用了 dev 内置主密钥" \
             -e SPRING_DATASOURCE_URL="$DS" -e SPRING_DATASOURCE_PASSWORD=realpw -e HUICUI_JWT_SECRET="$GOOD_JWT" \
+            -e HUICUI_CRYPTO_KEY="$DEV_CRYPTO"
+
+          expect_reject "⑨ 短信启用但 PUBLIC_BASE=localhost" "仍是 localhost" \
+            -e SPRING_DATASOURCE_URL="$DS" -e SPRING_DATASOURCE_PASSWORD=realpw -e HUICUI_JWT_SECRET="$GOOD_JWT" \
+            -e HUICUI_CRYPTO_KEY="$GOOD_CRYPTO" \
             -e HUICUI_SMS_ENABLED=true -e HUICUI_PUBLIC_BASE=http://localhost:5173
-          expect_reject "⑧ 存证启用但 URL=sandbox" "仍指向 sandbox" \
+          expect_reject "⑩ 存证启用但 URL=sandbox" "仍指向 sandbox" \
             -e SPRING_DATASOURCE_URL="$DS" -e SPRING_DATASOURCE_PASSWORD=realpw -e HUICUI_JWT_SECRET="$GOOD_JWT" \
+            -e HUICUI_CRYPTO_KEY="$GOOD_CRYPTO" \
             -e HUICUI_EBQ_ENABLED=true -e HUICUI_EBQ_APPKEY=k -e HUICUI_EBQ_SECRET=s
 
-      - name: 正路实测——配齐即起，24 迁移全跑，且不含 dev 种子
+          # ⑪ 引导口令太弱：宁可起不来，也不要建一个弱口令的超管（这是系统的第一把钥匙）。
+          # 注意它必须打真库（空库）才走得到引导逻辑，所以用 --network host 指向 CI 的 PG。
+          expect_reject "⑪ 引导口令过弱" "太短" \
+            --network host \
+            -e SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5460/huicui \
+            -e SPRING_DATASOURCE_USERNAME=huicui -e SPRING_DATASOURCE_PASSWORD=Str0ngProdPw \
+            -e HUICUI_JWT_SECRET="$GOOD_JWT" -e HUICUI_CRYPTO_KEY="$GOOD_CRYPTO" \
+            -e HUICUI_BOOTSTRAP_ADMIN_USERNAME=admin \
+            -e HUICUI_BOOTSTRAP_ADMIN_PASSWORD=short \
+            -e HUICUI_BOOTSTRAP_ADMIN_PHONE=13900000000
+
+      - name: 正路实测——配齐即起，迁移全跑，且不含 dev 种子
         run: |
           set -e
           docker run -d --name huicui-prod --network host \
@@ -95,6 +124,7 @@ jobs:
             -e SPRING_DATASOURCE_USERNAME=huicui \
             -e SPRING_DATASOURCE_PASSWORD=Str0ngProdPw \
             -e HUICUI_JWT_SECRET="$(openssl rand -base64 48)" \
+            -e HUICUI_CRYPTO_KEY="$(openssl rand -base64 32)" \
             huicui-backend:ci
 
           ok=0
@@ -128,11 +158,83 @@ jobs:
           S=$(q "SELECT count(*) FROM flyway_schema_history WHERE version IN ('900','910');")
           A=$(q "SELECT count(*) FROM account;")
           echo "  迁移=$M  dev种子=$S  account=$A"
-          [ "$M" -ge 24 ] || { echo "::error::只应用了 $M 个迁移，核心 schema 可能被跳过"; exit 1; }
+          [ "$M" -ge 35 ] || { echo "::error::只应用了 $M 个迁移，核心 schema 可能被跳过"; exit 1; }
           [ "$S" = "0" ]  || { echo "::error::prod 库里混入了 dev 种子迁移"; exit 1; }
-          [ "$A" = "0" ]  || { echo "::error::prod 库里有 $A 个账号，DevSeeder 不该在 prod 跑"; exit 1; }
+          # 不配引导变量 → 保持空库。引导必须是**显式**动作，不能有隐式默认管理员。
+          [ "$A" = "0" ]  || { echo "::error::prod 库里有 $A 个账号，不配引导变量时不该建账号"; exit 1; }
 
           echo "✅ 部署形态红线全过"
+
+      # 空库锁死是「部署成功但没人能登录」——上线第一天最先炸的那条。
+      # 光有 BootstrapAdminRunner 不算数，必须证明它真的建出了一个**能登录**的超管，
+      # 而且那个口令是**一次性**的（首登被强制改密）。
+      - name: 初始管理员引导实测——空库能引导出一个可登录、且被强制改密的超管
+        run: |
+          set -e
+          docker rm -f huicui-prod >/dev/null 2>&1 || true
+          q() { docker run --rm --network host -e PGPASSWORD=Str0ngProdPw postgres:16 \
+                  psql -h localhost -p 5460 -U huicui -d huicui -tAc "$1" | tr -d '[:space:]'; }
+
+          # 上一步跑完库里已有 schema 但 account=0（正是首次部署的真实形态）
+          [ "$(q 'SELECT count(*) FROM account;')" = "0" ] || { echo "::error::前置条件不成立：库里已有账号"; exit 1; }
+
+          BOOT_PW=$(openssl rand -base64 18)
+          docker run -d --name huicui-boot --network host \
+            -e SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5460/huicui \
+            -e SPRING_DATASOURCE_USERNAME=huicui -e SPRING_DATASOURCE_PASSWORD=Str0ngProdPw \
+            -e HUICUI_JWT_SECRET="$(openssl rand -base64 48)" \
+            -e HUICUI_CRYPTO_KEY="$(openssl rand -base64 32)" \
+            -e HUICUI_BOOTSTRAP_ADMIN_USERNAME=admin \
+            -e HUICUI_BOOTSTRAP_ADMIN_PASSWORD="$BOOT_PW" \
+            -e HUICUI_BOOTSTRAP_ADMIN_PHONE=13900000000 \
+            huicui-backend:ci
+
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:9091/v1/actuator/health || true)
+            [ "$code" = "200" ] && break
+            sleep 3
+          done
+          [ "$code" = "200" ] || { echo "::error::引导实例未就绪"; docker logs huicui-boot | tail -40; exit 1; }
+
+          [ "$(q "SELECT count(*) FROM account WHERE username='admin' AND role_template='SA';")" = "1" ] \
+            || { echo "::error::引导没建出 SA 账号"; docker logs huicui-boot | tail -30; exit 1; }
+          [ "$(q "SELECT must_change_password FROM account WHERE username='admin';")" = "t" ] \
+            || { echo "::error::引导账号未置 must_change_password —— .env 里的口令会变成长期管理员密码"; exit 1; }
+
+          # 真的能登录（这才是「不再锁在门外」的证明）
+          BODY=$(curl -s -X POST http://localhost:9091/v1/auth/login -H 'Content-Type: application/json' \
+                   -d "{\"username\":\"admin\",\"password\":\"$BOOT_PW\"}")
+          echo "$BODY" | grep -q '"token"' \
+            || { echo "::error::引导出的超管登录失败：$BODY"; exit 1; }
+          echo "$BODY" | grep -q '"mustChangePassword":true' \
+            || { echo "::error::登录未返回 mustChangePassword=true，首登强制改密没生效：$BODY"; exit 1; }
+
+          # 幂等：再起一次不得重复建号、不得覆盖
+          docker rm -f huicui-boot >/dev/null
+          docker run -d --name huicui-boot2 --network host \
+            -e SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5460/huicui \
+            -e SPRING_DATASOURCE_USERNAME=huicui -e SPRING_DATASOURCE_PASSWORD=Str0ngProdPw \
+            -e HUICUI_JWT_SECRET="$(openssl rand -base64 48)" \
+            -e HUICUI_CRYPTO_KEY="$(openssl rand -base64 32)" \
+            -e HUICUI_BOOTSTRAP_ADMIN_USERNAME=admin \
+            -e HUICUI_BOOTSTRAP_ADMIN_PASSWORD="$(openssl rand -base64 18)" \
+            -e HUICUI_BOOTSTRAP_ADMIN_PHONE=13900000000 \
+            huicui-backend:ci
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:9091/v1/actuator/health || true)
+            [ "$code" = "200" ] && break
+            sleep 3
+          done
+          [ "$(q 'SELECT count(*) FROM account;')" = "1" ] \
+            || { echo "::error::重复启动把账号建了多次——引导不幂等"; exit 1; }
+
+          echo "✅ 初始管理员引导：空库可引导 / 能登录 / 强制改密 / 重复启动幂等"
+
+      - name: 失败时导出引导容器日志
+        if: failure()
+        run: |
+          docker logs huicui-boot 2>&1 | tail -40 || true
+          docker logs huicui-boot2 2>&1 | tail -40 || true
 
       - name: 失败时导出容器日志
         if: failure()

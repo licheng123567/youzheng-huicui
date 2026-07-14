@@ -16,36 +16,86 @@
 | `mvn spring-boot:run`（本地/CI） | `dev`（由 spring-boot-maven-plugin 注入） | `classpath:db/migration` + `classpath:db/seed` | 起得来，带种子数据 |
 | `java -jar app.jar`（生产） | `prod`（基础 yml 默认值） | `classpath:db/migration`（不含种子） | **配不全就起不来** |
 
-所有 24 个迁移都打进了 jar，不再依赖任何相对路径。
+所有 35 个迁移都打进了 jar，不再依赖任何相对路径。
 
 ---
 
 ## 一、首次部署
 
+> **生产库是空的**：没有公开注册、没有种子账号（`db/seed` 不进 prod，`DevSeeder` 只在 dev 跑）。
+> 不做第 3 步的**初始管理员引导**，迁移会全绿、健康检查会全绿，然后**没有任何人能登录**。
+
+### 前置：域名与证书
+
+TLS 不是可选项——过网线的是业主真实姓名/电话/住址和通话录音。
+
 ```bash
-# 1. 准备环境变量
+# 1. 把域名 A 记录解析到本机公网 IP（Let's Encrypt 签证书要能回访）
+# 2. 首次签发证书（webroot 模式，需要 80 端口临时可达）
+mkdir -p deploy/certbot/conf deploy/certbot/www
+docker run --rm \
+  -v "$PWD/deploy/certbot/conf:/etc/letsencrypt" \
+  -v "$PWD/deploy/certbot/www:/var/www/certbot" \
+  -p 80:80 certbot/certbot certonly --standalone \
+  -d your-domain.example.com --agree-tos -m you@example.com --non-interactive
+
+# 3. 续证（加进 crontab，证书 90 天到期）
+#    0 3 * * 1 cd /path/to/repo && docker run --rm -v "$PWD/deploy/certbot/conf:/etc/letsencrypt" \
+#      -v "$PWD/deploy/certbot/www:/var/www/certbot" certbot/certbot renew --webroot -w /var/www/certbot \
+#      && docker compose -f deploy/docker-compose.prod.yml exec web nginx -s reload
+```
+
+### 部署
+
+```bash
+# 1. 环境变量
 cp deploy/.env.example deploy/.env
-vi deploy/.env          # 至少填 HUICUI_IMAGE_TAG、POSTGRES_PASSWORD、HUICUI_JWT_SECRET
+vi deploy/.env
+#    必填：HUICUI_IMAGE_TAG / POSTGRES_PASSWORD / HUICUI_JWT_SECRET / HUICUI_CRYPTO_KEY / HUICUI_DOMAIN
+#    生成密钥：openssl rand -base64 48   （CRYPTO_KEY 用 openssl rand -base64 32）
+#
+#    ⚠️ HUICUI_CRYPTO_KEY 一旦启用就不能再换：换了之后已落库的三方密钥密文全部解不开。
 
-# 生成强密钥
-openssl rand -base64 48
+# 2. 前端产物（nginx 静态站从这里读）
+npm --prefix frontend ci && npm --prefix frontend run build
+mkdir -p deploy/frontend-dist && cp -r frontend/dist/* deploy/frontend-dist/
 
-# 可用的镜像 tag：
-#   https://github.com/licheng123567/youzheng-huicui/pkgs/container/huicui-backend
+# 3. 初始管理员引导 —— 只在首次部署填这三项
+#    引导只在 account 表为空时执行；已有账号则自动跳过（重复启动安全）。
+#    口令要求 ≥12 位，太短会拒绝启动（宁可起不来，也不要一个弱口令超管）。
+cat >> deploy/.env <<EOF
+HUICUI_BOOTSTRAP_ADMIN_USERNAME=admin
+HUICUI_BOOTSTRAP_ADMIN_PASSWORD=$(openssl rand -base64 18)
+HUICUI_BOOTSTRAP_ADMIN_PHONE=13800000000
+EOF
+grep HUICUI_BOOTSTRAP_ADMIN_PASSWORD deploy/.env    # 记下它，马上要用来首次登录
 
-# 2. 起库 + 起后端（后端会自动跑 Flyway 建表）
-#    注意是 up -d，不带 --build：生产用 GHCR 上的不可变镜像，不现场构建。
+# 4. 起全栈（db + backend + web/nginx）
 docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d
 
-# 3. 验证
-curl -fsS http://localhost:9091/v1/actuator/health/readiness    # {"status":"UP"}
-curl -o /dev/null -w '%{http_code}\n' http://localhost:9091/v1/me   # 401 = 鉴权链路正常
+# 5. 验证
+curl -fsS https://your-domain.example.com/actuator/health      # {"status":"UP"}
+curl -o /dev/null -w '%{http_code}\n' https://your-domain.example.com/v1/me   # 401 = 鉴权链路正常
+```
+
+### 首次登录（必做，且要立刻做完）
+
+用第 3 步那个口令登录网页端。后端会**强制改密**（`must_change_password=TRUE`，
+未改密前除了 `GET /me` 和 `POST /me/password` 之外一切业务端点都是 403）。
+
+改完密码后：
+
+```bash
+# .env 里那个引导口令此刻已经作废，把三行删掉，别让它留在 .env 和 shell history 里
+sed -i '/HUICUI_BOOTSTRAP_ADMIN_/d' deploy/.env
 ```
 
 启动日志里应能看到：
 
 ```
-Successfully applied 24 migrations
+==================== 初始管理员已创建 ====================
+[Bootstrap] 平台组织「有证平台」+ 超管账号「admin」（id=1）已建好。
+Successfully applied 35 migrations
 [ProdGuard] ✅ 生产启动自检通过（数据源/JWT 已注入；短信=…，存证=…）
 ```
 
@@ -61,6 +111,14 @@ Successfully applied 24 migrations
 |---|---|
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | 数据库；口令不得为 `test` |
 | `HUICUI_JWT_SECRET` | ≥32 字节（HS256），且不得等于 dev 内置串。`openssl rand -base64 48` |
+| `HUICUI_CRYPTO_KEY` | 三方密钥（存证/短信/ASR/LLM）AES-256-GCM 落库的主密钥。`openssl rand -base64 32`。**不配则后台存不了任何三方密钥（恒 409），真 AI 永远不可用**。一旦启用不可更换——换了已落库的密文全解不开 |
+| `HUICUI_DOMAIN` | nginx 的 `server_name` 与证书路径。必须是已解析到本机的真实域名 |
+
+### 仅首次部署（引导完就删）
+
+| 变量 | 说明 |
+|---|---|
+| `HUICUI_BOOTSTRAP_ADMIN_USERNAME` / `_PASSWORD` / `_PHONE` | 空库时创建第一个平台超管。**不填 = 部署完没人能登录**。口令 ≥12 位；建出来的账号 `must_change_password=TRUE`，首登强制改密后这个口令即作废。只在 `account` 表为空时生效（重复启动幂等，不会覆盖已有账号） |
 
 ### 可选，但**不配就等于功能不可用**
 
@@ -141,6 +199,10 @@ zcat deploy/backup/huicui-XXXX.sql.gz | docker compose -f deploy/docker-compose.
 | `[ProdGuard] HUICUI_JWT_SECRET 强度不足` | 密钥 <32 字节 | `openssl rand -base64 48` |
 | `[ProdGuard] 数据源仍指向 dev 默认库` | 复制了 dev 配置 | 改 `SPRING_DATASOURCE_URL` |
 | `[ProdGuard] 启用短信但 HUICUI_PUBLIC_BASE 仍是 localhost` | 忘改域名 | 填真实可达域名 |
+| `[ProdGuard] HUICUI_CRYPTO_KEY 未配置` | 少了加密主密钥 | `openssl rand -base64 32`，填进 `.env` |
+| `[Bootstrap] HUICUI_BOOTSTRAP_ADMIN_PASSWORD 太短` | 引导口令 <12 位 | `openssl rand -base64 18` |
+| 登录页没有任何凭据能进 | 空库未做引导 | 见「一、首次部署」第 3 步；或已有账号但忘了口令，走成员管理重置 |
+| 录音上传 422 `MaxUploadSizeExceededException` | multipart 限额被调小了 | 检查 `HUICUI_MAX_FILE_SIZE` 与 `nginx.conf` 的 `client_max_body_size` 是否一致 |
 | Flyway `Validate failed: checksum mismatch` | 有人改了已应用的迁移 | 查清楚原因，勿直接 repair |
 
 ---
@@ -178,10 +240,11 @@ App **不上应用商店**（`MANAGE_EXTERNAL_STORAGE` + `READ_CALL_LOG` 在通�
 
 ## 七、尚未纳入（已知缺口）
 
-- **反向代理 / TLS**：当前 compose 直接暴露 9091。生产应在前面放 nginx/Caddy 终结 TLS，
-  并把前端静态资源与 `/v1` 反代到同源（后端未配置 CORS，隐含同源部署假设）。
 - **对象存储**：录音/附件仍是 PG `bytea`。
-- **监控**：仅有 `/actuator/health`，无指标采集与告警。
+- **监控**：仅有 `/actuator/health`，无指标采集与告警。容器 `unhealthy` 不会自动重启。
+- **备份未加密、未异地**：`deploy/backup/` 与 PG 数据在同一块盘上。而 dump 里是全量业主 PII + 录音。
 - **幂等键与登录票据仍是单机内存实现**：多实例部署前必须换 Redis。
+- **停权/离职账号的 JWT 最长 24h 后才失效**：`JwtAuthFilter` 不复核 `account.status`。
+- **数据无留存期限、无删除/注销路径**：录音、转写文本、手机号进库即永久。
 - **前端与 App 尚未镜像化**：本次只把后端做成了不可变镜像。前端是静态资源（重建代价低），
   App 走侧载分发。真要做「整站回退」，前端也得有对应的产物版本。
