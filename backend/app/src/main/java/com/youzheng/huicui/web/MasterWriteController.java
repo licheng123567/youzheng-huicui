@@ -368,6 +368,23 @@ public class MasterWriteController {
         if (Boolean.TRUE.equals(confirmed)) {
             throw new ApiException(BizError.STATE_409, "平台已确认收佣比例，不可再修改");
         }
+
+        // 佣金倒挂：收佣比例不得低于已生效的付佣比例，否则**平台在该批次的每一笔回款上都亏钱**。
+        //
+        // 此前唯一的护栏是上面那个 comm_in_confirmed 闸 —— 可它压根拦不住：
+        // comm_in_confirmed 全仓只有「平台定双佣」那一条路径会置 true，而**派单写 pay_out_rate 的路径不置它**。
+        // 于是一次正常派单之后标志仍是 false，物业就能把收佣比例改到已生效的付佣比例之下，
+        // 而对账页会照常把负毛利显示出来、不告警。
+        // DB 层已有 chk_batch_commission_not_inverted 兜底；这里先拦一道，是为了给出**能看懂的**错误，
+        // 而不是让用户撞一个数据库约束违例。
+        BigDecimal payOut = jdbc.queryForObject(
+                "SELECT pay_out_rate FROM batch WHERE id = ?", BigDecimal.class, batchId);
+        if (payOut != null && r.compareTo(payOut) < 0) {
+            throw new ApiException(BizError.VALIDATION_422,
+                    "收佣比例(" + r.toPlainString() + ")不得低于该批次已生效的付佣比例("
+                            + payOut.toPlainString() + ")：否则平台每笔回款都亏钱。");
+        }
+
         jdbc.update("UPDATE batch SET comm_in_rate = ?, comm_in_inherited = false,"
                 + " comm_in_confirmed = false, updated_at = now() WHERE id = ?", r, batchId);
         String proxyFor = proxyForOrg(s, batch.orgId());

@@ -993,9 +993,13 @@ public class DevSeeder implements CommandLineRunner {
 
         // 5) co_pay_doc（PENDING_PAY）：催收员内部结算占位，勾选 line2（C-1002 / 480000）
         //    amount = 480000 × 0.15 = 72000。内部已结以 co_pay_doc.status=SETTLED 判定，不污染平台 settled。
+        //
+        // 幂等键**必须**是「这笔回款是否已被任何佣金单占用」，不能是「有没有 PENDING_PAY 单」：
+        // 后者会在 E2E 把单结清成 SETTLED 之后重新成立 → 每次重启就给同一笔回款再种一张新单。
+        // 实测本地 dev 库因此累积出 6 张单指向同一笔回款（其中 5 张已 SETTLED）——
+        // 同一笔回款被"付"了 6 次佣金。这也正是 V938 那条唯一约束要在 DB 层兜住的东西。
         Integer cpdExists = jdbc.queryForObject(
-                "SELECT count(*) FROM co_pay_doc WHERE collector_id = ? AND status = 'PENDING_PAY' "
-                        + "AND line_ids @> ?::jsonb", Integer.class, coHolder, "[" + line2 + "]");
+                "SELECT count(*) FROM co_pay_doc_line WHERE repay_line_id = ?", Integer.class, line2);
         if (cpdExists == null || cpdExists == 0) {
             long coAmount = com.youzheng.huicui.common.Commission.lineCommissionCents(480000L, coRate); // 72000
             Long cpd = jdbc.queryForObject(

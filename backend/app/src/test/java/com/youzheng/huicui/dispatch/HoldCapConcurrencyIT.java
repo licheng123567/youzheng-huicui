@@ -84,8 +84,20 @@ class HoldCapConcurrencyIT {
 
         svc = new CaseStateService(jdbc, new ObjectMapper());
 
-        // 清理上次测试残留
+        // 清理上次测试残留。
+        //
+        // settings 必须先删：setHoldCap() 会写一行 settings(updated_by = 某个 CO 账号)，
+        // 而 fk_settings_updated_by 是 ON DELETE RESTRICT —— 不先删它，下一个用例清理 CO 账号时
+        // 就会撞外键。这个测试自它被写出来那天起就有这个毛病，只是**从来没有在任何地方跑过**
+        // （CI 明确排除 failsafe），所以没人发现。本 PR 把 IT 接进 CI，它当场就红了。
+        jdbc.update("DELETE FROM settings");
         jdbc.update("DELETE FROM audit_log");
+        // 两个 IT 共用同一个库：RepayConcurrencyIT 会留下 repay_line（并可能挂着佣金单），
+        // 它们外键指向 "case"，不先删就删不掉案件。按依赖顺序自底向上清。
+        jdbc.update("DELETE FROM co_pay_doc_line");
+        jdbc.update("DELETE FROM co_pay_doc");
+        jdbc.update("DELETE FROM activity");
+        jdbc.update("DELETE FROM repay_line");
         jdbc.update("DELETE FROM \"case\"");
         jdbc.update("DELETE FROM batch");
         jdbc.update("DELETE FROM project");
