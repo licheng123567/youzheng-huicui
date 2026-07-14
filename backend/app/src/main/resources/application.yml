@@ -51,6 +51,25 @@ logging:
 
 # 横切层
 huicui:
+  # 多实例放行开关。默认 false = 检测到同库上已有活实例就**拒绝启动**。
+  # 登录票据/短信验证码/发码冷却仍在进程内存里（见 SingleInstanceGuard 的说明）——
+  # 多实例下它们会静默半坏，而不是报错。真要扩容，先把这三样搬到 Redis 再放行。
+  allow-multi-instance: ${HUICUI_ALLOW_MULTI_INSTANCE:false}
+
+  # 对象存储（录音/附件）。默认 pg = 维持原样存 bytea，**不配置就行为零变化**。
+  #   录音是 8k 通话音频，一个批次几千通电话就能把库撑到几十 GB，拖累备份体积、恢复时长、连接池。
+  #   切到 s3：新录音进桶、库里只留 key；**存量录音仍在 bytea，读路径会回落**（双读，切换当天不会读丢）。
+  #   AWS S3 / 阿里云 OSS / MinIO 走同一套 API，只有 endpoint 与 path-style 不同。
+  storage:
+    type: ${HUICUI_STORAGE_TYPE:pg}          # pg | s3
+    s3:
+      endpoint: ${HUICUI_S3_ENDPOINT:}       # OSS: https://oss-cn-chengdu.aliyuncs.com；MinIO: http://minio:9000
+      region: ${HUICUI_S3_REGION:cn-north-1}
+      access-key: ${HUICUI_S3_ACCESS_KEY:}
+      secret-key: ${HUICUI_S3_SECRET_KEY:}
+      bucket: ${HUICUI_S3_BUCKET:}
+      path-style: ${HUICUI_S3_PATH_STYLE:true}   # 阿里云 OSS 要 false（virtual-host 风格），MinIO 要 true
+
   # 数据留存与去标识化（个保法：保存期限为实现目的所必需的最短时间）。见 RetentionService。
   #   PII（姓名/手机/身份证/住址/房号）→ 结案后 60 天去标识化
   #   通话录音 + 转写               → 结案后 180 天删除（举证窗口，不是 60 天：

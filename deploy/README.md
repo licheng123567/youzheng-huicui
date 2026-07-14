@@ -250,6 +250,74 @@ HUICUI_RETENTION_RECORDING_DAYS=180
 
 ---
 
+## 四之三、监控与告警
+
+```bash
+# 每 5 分钟巡检一次
+crontab -e
+*/5 * * * *  cd /opt/huicui && deploy/monitor.sh >> /var/log/huicui-monitor.log 2>&1
+```
+
+配 `HUICUI_ALERT_WEBHOOK`（钉钉/企业微信/飞书/Slack 自动识别）。**不配就等于没有监控** ——
+服务挂了、证书过期了、备份三天没成功了，你只能等客户打电话来告诉你。
+
+### 六个检查项（按「什么会先咬人」排序）
+
+| 检查 | 为什么 |
+|---|---|
+| 站点可达 | 走 nginx，即真实用户路径 |
+| 容器状态 | `unhealthy` **不会自愈**（见下），这里负责让你知道 |
+| **TLS 证书剩余天数** | **静默杀手**：certbot 续证失败没有任何动静，然后第 90 天整站在毫无预兆下全挂 |
+| **备份新鲜度** | **静默杀手**：备份失败只往日志写一行，等你要恢复那天才发现「三个月没备份了」 |
+| 磁盘水位 | 备份与 PG 数据同一块盘，写满一起完蛋 |
+| 数据库可连 | — |
+
+### 告警去重
+
+每 5 分钟一次，故障时若每次都发，一晚上 288 条 —— **那等于没有告警**（没人会看）。
+只在**状态翻转**时发（故障报一次、恢复报一次），持续故障每 `HUICUI_ALERT_REPEAT_HOURS`（默认 6h）复读一次。
+
+### 容器 unhealthy 不会自愈 → autoheal
+
+这是 compose 的一个反直觉之处：`restart: unless-stopped` 只在容器**退出**时重启；
+HEALTHCHECK 失败只是把它标成 `unhealthy`，然后它就一直不健康地挂在那儿。
+`autoheal` 容器盯着这个标记，超时就把它重启（只重启带 `autoheal: "true"` 标签的容器）。
+
+### 备份失败会主动告警
+
+`backup.sh` 失败时会直接发 CRIT，而不是只往日志写一行 ——
+备份的失效方式从来不是「报错了没人管」，而是**「以为它一直在跑」**。
+
+---
+
+## 四之四、对象存储（录音/附件）
+
+默认 `HUICUI_STORAGE_TYPE=pg` —— 录音与附件仍以 `bytea` 存在库里，**不配置就行为零变化**。
+
+**为什么该切**：录音是 8k 通话音频，一个批次几千通电话就能把库撑到几十 GB，而它拖累的是一整串东西 ——
+`pg_dump` 体积随录音线性增长（而这套备份还要加密、传异地）；一次回听要把整段音频读进 JVM，
+大对象长时间占住一条数据库连接（池子只有 10 条）；将来换库、做只读副本都得先把这几十 GB 挪走。
+
+```bash
+HUICUI_STORAGE_TYPE=s3
+HUICUI_S3_ENDPOINT=https://oss-cn-chengdu.aliyuncs.com   # 阿里云 OSS
+HUICUI_S3_ACCESS_KEY=... 
+HUICUI_S3_SECRET_KEY=...
+HUICUI_S3_BUCKET=huicui-media
+HUICUI_S3_PATH_STYLE=false        # 阿里云 OSS 用 virtual-host 风格；MinIO 用 true
+```
+
+**切换是安全的（双读）**：新录音进桶、库里只留 key；**存量录音仍在 `bytea`，读路径会自动回落** ——
+切换当天历史录音照样听得到。这一条有 IT 守着（`RecordingDualReadIT`），
+且做过变异验证：去掉回落，测试当场红。
+
+> ⚠️ 开了 `s3` 却没配全（缺 key/bucket）会**拒绝启动**，而不是悄悄回落到 bytea ——
+> 「以为切了对象存储、其实还在往库里塞」是这类开关最典型的失效方式，你会在库涨到几十 GB 时才发现。
+
+> 存量录音**不会自动搬到桶里**（留在 bytea，照常可读）。真要腾出 dump 体积，需要一次性搬迁脚本 —— 尚未提供。
+
+---
+
 ## 五、常见启动失败
 
 | 报错 | 原因 | 处置 |
@@ -299,7 +367,6 @@ App **不上应用商店**（`MANAGE_EXTERNAL_STORAGE` + `READ_CALL_LOG` 在通�
 
 ## 七、尚未纳入（已知缺口）
 
-- **对象存储**：录音/附件仍是 PG `bytea`。
 - **监控**：仅有 `/actuator/health`，无指标采集与告警。容器 `unhealthy` 不会自动重启。
 - **备份未加密、未异地**：`deploy/backup/` 与 PG 数据在同一块盘上。而 dump 里是全量业主 PII + 录音。
 - **幂等键与登录票据仍是单机内存实现**：多实例部署前必须换 Redis。

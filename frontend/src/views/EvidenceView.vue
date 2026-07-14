@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
+import Pager from '../components/Pager.vue'
 import { useAuth } from '../stores/auth'
 import { evidenceSceneLabel, evidenceStatusLabel } from '../constants/enums'
 import { downloadAuthedFile } from '../utils/download'
@@ -11,16 +12,23 @@ import { downloadAuthedFile } from '../utils/download'
 const auth = useAuth()
 const canCreate = computed<boolean>(function () { return auth.has('evidence.create') })
 const items = ref<any[]>([])
+// 分页：此前硬编码 page:1 且无分页控件 —— 超出一页的数据静默消失，用户无从得知。
+const page = ref(1)
+const size = ref(30)
+const total = ref(0)
+function onPage(p: number) { page.value = p; load() }
+
 const loading = ref(false)
 const verify = ref<any>(null)
 const vdlg = ref(false)
 
 async function load() {
   loading.value = true
-  const { data, error } = await api.GET('/evidence', { params: { query: { page: 1, size: 30 } } as any })
+  const { data, error } = await api.GET('/evidence', { params: { query: { page: page.value, size: size.value } } as any })
   loading.value = false
   if (error) { ElMessage.error('存证加载失败'); return }
   items.value = (data as any)?.items ?? []
+  total.value = (data as any)?.meta?.total ?? 0
 }
 // 验真（public 端点·任何人凭存证号可验）
 async function doVerify(row: any) {
@@ -101,6 +109,8 @@ onMounted(load)
         </tr>
       </tbody>
     </table>
+
+    <Pager :page="page" :size="size" :total="total" @update:page="onPage" />
 
     <div class="note">存证只向物业按次计费、三场景同价；每次有可下载证书 + 第三方/法院核验。存证失败不计费，可点「重试」重新发起。</div>
 

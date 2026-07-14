@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
+import Pager from '../components/Pager.vue'
 import type { components } from '../api/schema'
 import DsDrawer from '../components/DsDrawer.vue'
 
@@ -11,6 +12,11 @@ type ScriptStatus = components['schemas']['ScriptStatusEnum']
 type ScriptInput = components['schemas']['ScriptInput']
 
 const items = ref<any[]>([])
+// 分页：此前硬编码 page:1 且无分页控件——超出一页的数据静默消失。
+const page = ref(1)
+const size = ref(50)
+const total = ref(0)
+function onPage(p: number) { page.value = p; load() }
 const loading = ref(false)
 const filter = ref({ scene: '', source: '', status: '' })
 const pctRate = (r?: number) => (r == null ? '—' : (r * 100).toFixed(1) + '%')
@@ -35,11 +41,12 @@ const truncate = (t?: string, n = 40) =>
 async function load() {
   loading.value = true
   const { data, error } = await api.GET('/script-lib', {
-    params: { query: { scene: filter.value.scene || undefined, source: filter.value.source || undefined, status: filter.value.status || undefined, page: 1, size: 50 } } as any,
+    params: { query: { scene: filter.value.scene || undefined, source: filter.value.source || undefined, status: filter.value.status || undefined, page: page.value, size: size.value } } as any,
   })
   loading.value = false
   if (error) { ElMessage.error('加载话术库失败'); return }
   items.value = (data as any)?.items ?? []
+  total.value = (data as any)?.meta?.total ?? 0
 }
 function resetFilter() { filter.value = { scene: '', source: '', status: '' }; load() }
 // 场景选项从当前数据去重
@@ -160,6 +167,8 @@ onMounted(() => { load(); loadFlywheel() })
         </tr>
       </tbody>
     </table>
+
+    <Pager :page="page" :size="size" :total="total" @update:page="onPage" />
 
     <!-- 话术有效性飞轮（承诺·回款转化信号 BR-M5-12） -->
     <div class="sec-title" style="margin-top:18px">话术有效性飞轮（承诺·回款转化信号）</div>

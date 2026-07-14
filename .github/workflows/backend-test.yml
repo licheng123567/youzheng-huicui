@@ -119,11 +119,27 @@ jobs:
           java-version: '21'
           cache: maven
 
+      # 对象存储 IT 的被测端。用 step 而不是 service container：
+      # 官方 minio/minio 需要 `server /data` 参数，而 service container 不支持自定义 command
+      # （bitnami/minio 那个带默认 command 的镜像已经没有 latest tag 了）。
+      - name: 起 MinIO（S3 协议·对象存储 IT 用）
+        run: |
+          docker run -d --name minio -p 9100:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 \
+            minio/minio:latest server /data
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9100/minio/health/live && break
+            sleep 2
+          done
+          docker run --rm --network host --entrypoint sh minio/mc -c \
+            "mc alias set m http://localhost:9100 minioadmin minioadmin123 && mc mb -p m/huicui"
+
       - name: mvn verify（failsafe·资金并发 IT）
         env:
           HUICUI_IT_JDBC_URL: jdbc:postgresql://localhost:5472/huicui
           HUICUI_IT_JDBC_USER: huicui
           HUICUI_IT_JDBC_PASSWORD: Str0ngProdPw
+          HUICUI_IT_S3_ENDPOINT: http://localhost:9100
         run: mvn -B verify
 
       # 同样的失效方式要防：IT 被跳过（比如忘了给 JDBC_URL）时 failsafe 会安静地报 0 个用例，构建照样绿。
@@ -137,8 +153,8 @@ jobs:
               n += int(r.get('tests', 0)); fail += int(r.get('failures', 0)) + int(r.get('errors', 0))
               skip += int(r.get('skipped', 0))
           print(f'failsafe: tests={n} failures={fail} skipped={skip}')
-          if n - skip < 4:
-              print('::error::资金并发 IT 实际执行数不足 4（被跳过了？HUICUI_IT_JDBC_URL 没生效？）')
+          if n - skip < 10:
+              print('::error::集成测试实际执行数不足 10（被跳过了？JDBC/S3 端点没生效？）')
               sys.exit(1)
           if fail:
               sys.exit(1)

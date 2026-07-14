@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
+import Pager from '../components/Pager.vue'
 import { useAuth } from '../stores/auth'
 import { useRoleFields } from '../composables/useRoleFields'
 import { caseStatusLabel } from '../constants/enums'
@@ -25,14 +26,20 @@ const total = ref(0)
 const loading = ref(false)
 const acting = ref('')
 
+// 分页：此前硬编码 page:1 且没有分页控件 —— 第 21 个批次既看不见、也无从得知它存在（静默截断）。
+const page = ref(1)
+const size = ref(20)
+
 async function load() {
   loading.value = true
-  const { data, error } = await api.GET('/batches', { params: { query: { page: 1, size: 20 } } })
+  const { data, error } = await api.GET('/batches', { params: { query: { page: page.value, size: size.value } } })
   loading.value = false
   if (error) { ElMessage.error('加载失败'); return }
   items.value = data?.items ?? []
   total.value = data?.meta?.total ?? 0
 }
+
+function onPage(p: number) { page.value = p; load() }
 
 // M3 派单/重派（用户定：批次一律整体派 WHOLE，不拆分——同批一个服务商，催不动走 结项→重派）。
 // 动作按状态互斥：未派+无承接史→「派单」；未派+有承接史(结项过)→「重派」；已派→只有「结项」。
@@ -373,6 +380,8 @@ onMounted(() => { load(); if (route.query.openImport === '1') openImport() })
         </tr>
       </tbody>
     </table>
+
+    <Pager :page="page" :size="size" :total="total" @update:page="onPage" />
 
     <!-- 派单/重派：① 派单对象 → ② 承接服务商 → ③ 佣金比例（撮合设定） -->
     <DsDrawer v-model="dlg" :title="(form.redispatch ? '重派' : '派单') + (dispBatch ? ' · ' + dispBatch.code : '')" :width="680">

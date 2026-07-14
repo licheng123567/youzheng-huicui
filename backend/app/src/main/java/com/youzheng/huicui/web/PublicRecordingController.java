@@ -33,7 +33,10 @@ public class PublicRecordingController {
 
     private final JdbcTemplate jdbc;
 
-    public PublicRecordingController(JdbcTemplate jdbc) {
+    private final com.youzheng.huicui.storage.BlobStore blobs;
+
+    public PublicRecordingController(JdbcTemplate jdbc, com.youzheng.huicui.storage.BlobStore blobs) {
+        this.blobs = blobs;
         this.jdbc = jdbc;
     }
 
@@ -42,13 +45,19 @@ public class PublicRecordingController {
         Map<String, Object> row;
         try {
             row = jdbc.queryForMap(
-                    "SELECT r.audio_bytes, r.audio_content_type"
+                    "SELECT r.id, r.audio_key, r.audio_bytes, r.audio_content_type"
                             + " FROM recording_pub_token t JOIN call_recording r ON r.id = t.recording_id"
                             + " WHERE t.token = ? AND t.expires_at > now()", token);
         } catch (Exception e) {
             throw new ApiException(BizError.NOT_FOUND_404, "音频不存在或链接已过期");
         }
+        // **双读**：新录音在对象存储里（audio_key），存量录音仍在 bytea。
+        // 漏掉这一处，切到对象存储后百炼就回拉不到音频 —— 转写会静默地永远停在 PARSING。
         byte[] audio = (byte[]) row.get("audio_bytes");
+        String key = (String) row.get("audio_key");
+        if (key != null && !key.isBlank()) {
+            audio = blobs.get(key);
+        }
         if (audio == null || audio.length == 0) {
             throw new ApiException(BizError.NOT_FOUND_404, "音频不存在或链接已过期");
         }
