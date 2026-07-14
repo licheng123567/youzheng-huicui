@@ -171,6 +171,10 @@ jobs:
       - name: 初始管理员引导实测——空库能引导出一个可登录、且被强制改密的超管
         run: |
           set -e
+          # 优雅停机（SIGTERM）：生产就是这么停的（compose stop / autoheal restart 都发 SIGTERM）。
+          # 用 `rm -f` 直接 SIGKILL 的话，实例来不及摘除自己的心跳行，
+          # 下一个实例会被 SingleInstanceGuard 拦住 —— 那是停法不对，不是护栏错。
+          docker stop -t 20 huicui-prod >/dev/null 2>&1 || true
           docker rm -f huicui-prod >/dev/null 2>&1 || true
           q() { docker run --rm --network host -e PGPASSWORD=Str0ngProdPw postgres:16 \
                   psql -h localhost -p 5460 -U huicui -d huicui -tAc "$1" | tr -d '[:space:]'; }
@@ -210,6 +214,7 @@ jobs:
             || { echo "::error::登录未返回 mustChangePassword=true，首登强制改密没生效：$BODY"; exit 1; }
 
           # 幂等：再起一次不得重复建号、不得覆盖
+          docker stop -t 20 huicui-boot >/dev/null 2>&1 || true
           docker rm -f huicui-boot >/dev/null
           docker run -d --name huicui-boot2 --network host \
             -e SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5460/huicui \
