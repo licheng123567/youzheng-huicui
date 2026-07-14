@@ -15,7 +15,6 @@ const pct = (r?: number) => r != null ? (r * 100).toFixed(1) + '%' : '—'
 
 // ── 角色判定 ──
 const isCollector = computed(() => auth.me?.role === 'CO')
-const isCoordinator = computed(() => auth.me?.role === 'PC')
 // 批次优先入口 = 除催收员外的所有可见「案件管理」角色（PC 亦批次优先，对标原型 PC 案件管理）。
 const isManagerRole = computed(() => auth.me?.role !== 'CO')
 
@@ -111,8 +110,15 @@ watch(() => auth.me, (me) => {
       <div class="t"><span class="bar"></span>案件管理 — 选择批次查看案件明细</div>
       <div class="ops">
         <span class="note" style="margin:0">共 {{ total }} 个批次</span>
-        <!-- 协调员(PC)不导入批次（导入是负责人/平台职责，对标原型 PC 案件管理无导入入口） -->
-        <button v-if="(auth.has('batch.import') || auth.has('proj.edit')) && !isCoordinator" class="btn sm" @click="openImport">+ 导入批次</button>
+        <!--
+          导入批次是**平台**的活：`POST /batches:import` 的 x-permission 是 `batch.import`，
+          而物业负责人（PL）的权限集里根本没有它（只有 SA/SE 有）。
+          此前这里多写了一个 `|| auth.has('proj.edit')` —— proj.edit 是 PL 的项目档案权限，
+          于是 PL 看得见「+ 导入批次」，点下去：`/batches` 裸列表是平台专属，守卫把他弹回工作台；
+          就算放行了路由，POST 也必然 403。**看得见却用不了的按钮，比没有按钮更伤人**。
+          门控严格对齐契约的 x-permission，不再用「差不多的权限」凑。
+        -->
+        <button v-if="auth.has('batch.import')" class="btn sm" @click="openImport">+ 导入批次</button>
       </div>
     </div>
 
@@ -172,7 +178,11 @@ watch(() => auth.me, (me) => {
           <td @click.stop><a class="btn txt" @click="viewBatch(row)">查看案件明细 ›</a></td>
         </tr>
         <tr v-if="!loading && !batches.length">
-          <td colspan="8" style="text-align:center;color:var(--sec);padding:32px 0">暂无批次，点击「+ 导入批次」导入催收单。</td>
+          <!-- 空状态也要按权限分叉：没有导入权的人（如物业负责人）看到「点击+导入批次」只会更困惑 -->
+          <td colspan="8" style="text-align:center;color:var(--sec);padding:32px 0">
+            <template v-if="auth.has('batch.import')">暂无批次，点击「+ 导入批次」导入催收单。</template>
+            <template v-else>暂无批次。批次由平台导入后，会出现在这里。</template>
+          </td>
         </tr>
       </tbody>
     </table>
