@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
+import Pager from '../components/Pager.vue'
 import { useAuth } from '../stores/auth'
 import { roleLabel, roleHint } from '../constants/roles'
 import { permLabel } from '../constants/permissions'
@@ -14,6 +15,11 @@ import DsDrawer from '../components/DsDrawer.vue'
 const auth = useAuth()
 const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
 const members = ref<any[]>([])
+// 分页：此前硬编码 page:1 —— 第 51 个成员既看不见也无从得知。
+const page = ref(1)
+const size = ref(50)
+const total = ref(0)
+function onPage(p: number) { page.value = p; load() }
 const orgs = ref<any[]>([])
 const isPlatform = () => auth.has('org.manage')
 // 工作督导 tab：仅组织负责人(有 member.manage 且非平台) 可见——VL 督催收员 / PL 督协调员。
@@ -40,10 +46,11 @@ async function load() {
   // v1.21.1 平台只看平台成员：与「平台只建平台员工(SA/SE)·BR-M1-04a」的写口径对齐。
   // 端点本身对平台仍是全量（CoordinatorPicker 靠它跨组织挑物业协调员），故收窄在页面这一层用 orgId 参数。
   // 服务商/物业的成员由各自负责人在自己的成员管理里维护，平台既不看也不管。
-  const q: any = { page: 1, size: 50 }
+  const q: any = { page: page.value, size: size.value }
   if (isPlatform()) q.orgId = String((auth.me as any)?.org?.id ?? '')
   const m = await api.GET('/members', { params: { query: q } as any })
   members.value = (m.data as any)?.items ?? []
+  total.value = (m.data as any)?.meta?.total ?? 0
   if (isPlatform()) orgs.value = ((await api.GET('/orgs', { params: { query: { page: 1, size: 50 } } as any })).data as any)?.items ?? []
   if (showSupervise.value) loadSupervise()
 }
@@ -360,6 +367,8 @@ onMounted(load)
           </tr>
         </tbody>
       </table>
+
+      <Pager :page="page" :size="size" :total="total" @update:page="onPage" />
     </template>
     </template>
     <!-- ══ /成员列表 tab ══ -->

@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
+import Pager from '../components/Pager.vue'
 import { statusLabel } from '../constants/enums'
 import DsDrawer from '../components/DsDrawer.vue'
 
@@ -9,13 +10,20 @@ import DsDrawer from '../components/DsDrawer.vue'
 // 自包含视图，挂 /org-mgmt；不依赖 router/main.ts/AppLayout 改动。
 
 const orgs = ref<any[]>([])
+// 分页：此前硬编码 page:1 且无分页控件 —— 超出一页的数据静默消失，用户无从得知。
+const page = ref(1)
+const size = ref(50)
+const total = ref(0)
+function onPage(p: number) { page.value = p; load() }
+
 
 const typeTag = (t: string) => t === 'PLATFORM' ? 'pri' : (t === 'PROVIDER' ? 'war' : 'inf')
 const typeLabel = (t: string) => t === 'PLATFORM' ? '平台' : (t === 'PROVIDER' ? '服务商' : (t === 'PROPERTY' ? '物业' : (t || '—')))
 
 async function load() {
-  const { data } = await api.GET('/orgs', { params: { query: { page: 1, size: 50 } } as any })
+  const { data } = await api.GET('/orgs', { params: { query: { page: page.value, size: size.value } } as any })
   orgs.value = (data as any)?.items ?? []
+  total.value = (data as any)?.meta?.total ?? 0
 }
 
 // B-04方案A：一次性凭据交付令牌展示（契约未必返回，容错处理）
@@ -120,6 +128,8 @@ onMounted(load)
         </tr>
       </tbody>
     </table>
+
+    <Pager :page="page" :size="size" :total="total" @update:page="onPage" />
 
     <!-- 新建组织（POST /orgs · OrgInput） -->
     <DsDrawer v-model="oDlg" title="新建组织 + 绑负责人" :width="440">

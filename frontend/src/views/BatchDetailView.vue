@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
+import Pager from '../components/Pager.vue'
 import { useAuth } from '../stores/auth'
 import { useRoleFields } from '../composables/useRoleFields'
 import CoordinatorPicker from '../components/CoordinatorPicker.vue'
@@ -56,9 +57,24 @@ async function loadReduceTiers() {
     tiersSource.value = (rt.data as any)?.source ?? null
   }
 }
+// 分页：此前硬编码 page:1 size:100 —— **一个批次最多只显示 100 个案件**，
+// 第 101 个既看不见也无从得知。而一批催收单动辄几百上千户。
+const casePage = ref(1)
+const caseSize = ref(50)
+const caseTotal = ref(0)
+
+async function loadCases() {
+  const r = await api.GET('/cases', {
+    params: { query: { batchId: bid, page: casePage.value, size: caseSize.value } } as any,
+  })
+  cases.value = (r.data as any)?.items ?? []
+  caseTotal.value = (r.data as any)?.meta?.total ?? 0
+}
+function onCasePage(p: number) { casePage.value = p; loadCases() }
+
 async function loadAll() {
   await loadBatch()
-  cases.value = ((await api.GET('/cases', { params: { query: { batchId: bid, page: 1, size: 100 } } as any })).data as any)?.items ?? []
+  await loadCases()
   await loadReduceTiers()
   await loadPlaybook()
   await loadCommStatus()
@@ -455,6 +471,8 @@ onMounted(loadAll)
           <tr v-if="!filteredCases.length"><td colspan="7" class="empty-cell">{{ cases.length ? '无匹配案件' : '暂无案件' }}</td></tr>
         </tbody>
       </table>
+
+      <Pager :page="casePage" :size="caseSize" :total="caseTotal" @update:page="onCasePage" />
     </div>
 
     <!-- BC-01 协调员维护对话框(复用 CoordinatorPicker) -->

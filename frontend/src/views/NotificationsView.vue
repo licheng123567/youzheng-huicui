@@ -2,9 +2,16 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
+import Pager from '../components/Pager.vue'
 
 // 消息中心(GET /notifications · BR-M4-23 互推闭环)：未读列表 + 标已读。
 const items = ref<any[]>([])
+// 分页：此前硬编码 page:1 且无分页控件 —— 超出一页的数据静默消失，用户无从得知。
+const page = ref(1)
+const size = ref(50)
+const total = ref(0)
+function onPage(p: number) { page.value = p; load() }
+
 const unreadOnly = ref(false)
 // 后端实际会发四类通知：TICKET_NEW/TICKET_RECEIPT(FollowUpM4Controller)、
 // QC_HANDLING/QC_RECTIFIED(QcM5Controller)。少映射一个，用户就会看到 `QC_HANDLING` 这样的裸码。
@@ -18,8 +25,9 @@ const TYPE_LABEL: Record<string, string> = {
 const WARN_TYPES = new Set(['TICKET_NEW', 'QC_HANDLING'])
 
 async function load() {
-  const { data } = await api.GET('/notifications', { params: { query: { unreadOnly: unreadOnly.value, page: 1, size: 50 } } as any })
+  const { data } = await api.GET('/notifications', { params: { query: { unreadOnly: unreadOnly.value, page: page.value, size: size.value } } as any })
   items.value = (data as any)?.items ?? []
+  total.value = (data as any)?.meta?.total ?? 0
 }
 async function markRead(n: any) {
   if (n.read) return
@@ -58,6 +66,8 @@ onMounted(load)
 
     <!-- 空态 -->
     <div v-else class="wl-empty">暂无消息</div>
+
+    <Pager :page="page" :size="size" :total="total" @update:page="onPage" />
   </div>
 </template>
 

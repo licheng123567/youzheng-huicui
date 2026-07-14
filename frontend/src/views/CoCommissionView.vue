@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
+import Pager from '../components/Pager.vue'
 import { channelLabel } from '../constants/enums'
 import DsDrawer from '../components/DsDrawer.vue'
 
@@ -21,6 +22,17 @@ const payTab = ref<'all' | 'unpaid' | 'settled'>('all')
 const isSettled = (d: any) => d.status === 'SETTLED'
 const shownDocs = computed(() => coDocs.value.filter((d) =>
   payTab.value === 'all' ? true : payTab.value === 'settled' ? isSettled(d) : !isSettled(d)))
+// 分页：佣金支付单此前硬编码 page:1 size:50，第 51 张单既看不见也无从得知。
+const docPage = ref(1)
+const docSize = ref(50)
+const docTotal = ref(0)
+function onDocPage(p: number) { docPage.value = p; load() }
+
+// **口径诚实化**：下面这几个合计是在**当前这一页**上 reduce 出来的。
+// 单数超过一页时，它们就不是全量合计 —— 而钱的数字看不出错，最危险。
+// 契约里没有「按状态聚合佣金单金额」的端点（缺口已记在 PR 里），
+// 在补上它之前，界面必须如实说这是「本页合计」，绝不能让人当成全量。
+const docTruncated = computed(() => docTotal.value > coDocs.value.length)
 const unpaidCount = computed(() => coDocs.value.filter((d) => !isSettled(d)).length)
 const settledCount = computed(() => coDocs.value.filter(isSettled).length)
 const unpaidAmount = computed(() => coDocs.value.filter((d) => !isSettled(d)).reduce((s, d) => s + (d.amountCents || 0), 0))
@@ -40,7 +52,8 @@ const docGroups = computed(() => {
 async function load() {
   loading.value = true
   const r1 = await api.GET('/co-commissions', { params: { query: { page: 1, size: 50 } } })
-  const r2 = await api.GET('/co-pay-docs', { params: { query: { page: 1, size: 50 } } })
+  const r2 = await api.GET('/co-pay-docs', { params: { query: { page: docPage.value, size: docSize.value } } })
+  docTotal.value = (r2.data as any)?.meta?.total ?? 0
   loading.value = false
   if (r1.error) { ElMessage.error('加载佣金名册失败（可能无权限 403）'); coco.value = [] }
   else coco.value = (r1.data as any)?.items ?? []
@@ -159,8 +172,11 @@ onMounted(load)
         <span :class="{ on: payTab === 'settled' }" @click="payTab = 'settled'">已结算 {{ settledCount }}</span>
       </span>
       <span class="note" style="margin:0">
-        未结算合计 <b style="color:var(--warn,#e6a23c)">{{ yuan(unpaidAmount) }}</b> ·
-        已结算合计 <b style="color:var(--ok,#67c23a)">{{ yuan(settledAmount) }}</b>
+        {{ docTruncated ? '本页' : '' }}未结算合计 <b style="color:var(--warn,#e6a23c)">{{ yuan(unpaidAmount) }}</b> ·
+        {{ docTruncated ? '本页' : '' }}已结算合计 <b style="color:var(--ok,#67c23a)">{{ yuan(settledAmount) }}</b>
+        <span v-if="docTruncated" style="color:var(--warn,#e6a23c)">
+          （共 {{ docTotal }} 张单，以上仅为当前页合计——全量聚合端点待补）
+        </span>
       </span>
     </div>
     <!-- 按催收员归拢：组头=该催收员的单数/金额小计;组内每张单可下钻明细(单支付单视角) -->
@@ -193,6 +209,8 @@ onMounted(load)
         <tr v-if="!shownDocs.length"><td colspan="6" class="note" style="text-align:center">{{ coDocs.length ? '该分档下暂无佣金单' : '暂无佣金支付单' }}</td></tr>
       </tbody>
     </table>
+
+    <Pager :page="docPage" :size="docSize" :total="docTotal" @update:page="onDocPage" />
 
     <!-- 佣金明细：某催收员 → 批次统计(案件数/回款/应结/已结/未结) → 待结算/已结算分档；待结算内选明细生成 -->
     <DsDrawer v-model="gdlg" :title="`佣金明细 · ${gCollector?.name ?? ''}`" :width="860">

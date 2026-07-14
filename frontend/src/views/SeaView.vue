@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
+import Pager from '../components/Pager.vue'
 import { useAuth } from '../stores/auth'
 import DsDrawer from '../components/DsDrawer.vue'
 
@@ -14,6 +15,11 @@ const isPlatformSide = computed(() => auth.me?.role === 'SA' || auth.me?.role ==
 // 待接单 tab 只对能承接的人(服务商负责人)有意义——按权限点判,不写死角色名
 const canAccept = computed(() => auth.has('case.accept'))
 const items = ref<any[]>([])
+// 分页：此前硬编码 page:1 且无分页控件 —— 超出一页的数据静默消失，用户无从得知。
+const page = ref(1)
+const size = ref(50)
+function onPage(p: number) { page.value = p; load() }
+
 const total = ref(0)
 const loading = ref(false)
 const acting = ref('')
@@ -43,7 +49,7 @@ function t2Urgent(at: string) { const h = t2Hours(at); return h > 0 && h < 24 }
 
 async function load() {
   loading.value = true
-  const { data, error } = await api.GET('/sea', { params: { query: { pool: pool.value, page: 1, size: 50 } } })
+  const { data, error } = await api.GET('/sea', { params: { query: { pool: pool.value, page: page.value, size: size.value } } })
   loading.value = false
   if (error) {
     // sea.view 是 2026-07 新加的权限点(BR-M3-29),权限集签在 JWT 里——
@@ -270,6 +276,8 @@ const evTag = (ev: string) => EV_TAG[ev] ?? 'inf'
           </tr>
         </tbody>
       </table>
+
+    <Pager :page="page" :size="size" :total="total" @update:page="onPage" />
     </template>
 
     <template v-else>

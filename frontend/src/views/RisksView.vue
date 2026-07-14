@@ -3,6 +3,7 @@ import { onMounted, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
+import Pager from '../components/Pager.vue'
 import { useAuth } from '../stores/auth'
 import { useRoleFields } from '../composables/useRoleFields'
 import { riskLevelLabel, riskVerdictLabel, disposeTaskStatusLabel } from '../constants/enums'
@@ -21,6 +22,11 @@ const { isPlatform, isProperty } = useRoleFields()
 // 归属方(VL/PL/PC 有 qc.dispose)：可见本组织整改任务 + 提交整改回执。
 const isOwner = computed(() => auth.has('qc.dispose'))
 const risks = ref<any[]>([])
+// 分页：此前硬编码 page:1 且无分页控件——超出一页的数据静默消失。
+const page = ref(1)
+const size = ref(30)
+const total = ref(0)
+function onPage(p: number) { page.value = p; load() }
 const tasks = ref<any[]>([])
 const loading = ref(false)
 // 平台处理决定分档
@@ -49,8 +55,9 @@ const levelTag = (l: string) => ({ HIGH: 'dan', MID: 'war', LOW: 'inf' } as any)
 
 async function load() {
   loading.value = true
-  const r = await api.GET('/risks', { params: { query: { page: 1, size: 30 } } as any })
+  const r = await api.GET('/risks', { params: { query: { page: page.value, size: size.value } } as any })
   risks.value = (r.data as any)?.items ?? []
+  total.value = (r.data as any)?.meta?.total ?? 0
   if (isPlatform.value || isOwner.value) {
     const t = await api.GET('/dispose-tasks', { params: { query: { page: 1, size: 20 } } as any })
     tasks.value = (t.data as any)?.items ?? []
@@ -214,6 +221,8 @@ onMounted(load)
           </tr>
         </tbody>
       </table>
+
+    <Pager :page="page" :size="size" :total="total" @update:page="onPage" />
     </template>
 
     <DsDrawer v-model="ddlg" title="风险处置">
