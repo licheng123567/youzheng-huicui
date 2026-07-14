@@ -3,6 +3,7 @@ package com.youzheng.huicui.web;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.youzheng.huicui.audit.AuditService;
 import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.postgresql.ds.PGSimpleDataSource;
@@ -173,6 +174,17 @@ class FlywheelSettlementIT {
 
         new FlywheelScheduler(svc, true).tick();
         assertThat(uses(sid)).as("auto=true 时定时器要真的结算（否则加了个不干活的定时器）").isEqualTo(1);
+    }
+
+    /**
+     * 自己造的承诺自己收走。CI 里所有 IT 共用一个库，而 promise → case 是 ON DELETE RESTRICT：
+     * 留在库里的承诺会让别的用例（清场时 DELETE FROM "case"）炸在外键上，报错还指向人家的 setup。
+     */
+    @AfterAll
+    static void cleanup() {
+        if (jdbc == null) return;
+        jdbc.update("DELETE FROM promise WHERE case_id = ?", caseId);
+        jdbc.update("DELETE FROM \"case\" WHERE id = ?", caseId);
     }
 
     // ── helpers ──
