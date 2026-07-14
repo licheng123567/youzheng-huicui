@@ -167,27 +167,54 @@ Flyway 只会应用新增迁移。`validate-on-migrate: true` 已开启：若已
 
 ---
 
-## 四、备份
+## 四、备份（加密 + 异地）
+
+> 库里是业主的**真实姓名、电话、住址、欠费金额、通话录音、转写文本**。
+> `backup.sh` 默认**拒绝产出明文备份** —— 忘配公钥会大声报错，而不是悄悄留下一份谁都能读的 dump。
+
+### 一次性准备：生成密钥对（在你自己的电脑上，**不要在服务器上**）
 
 ```bash
-deploy/backup.sh                       # 立即备份一次，落到 deploy/backup/
-# 每天 03:00 自动备份：
+openssl genrsa -out huicui-backup-private.pem 4096      # ← 离线保管，绝不上服务器
+openssl rsa -in huicui-backup-private.pem -pubout -out huicui-backup-public.pem
+scp huicui-backup-public.pem <服务器>:/opt/huicui/deploy/backup-public.pem
+```
+
+**为什么必须非对称**：用口令做对称加密是没用的 —— 口令就存在这台机器的 `.env` 里，
+攻击者拿到机器就同时拿到备份和口令。公钥只能加密，私钥离线：**服务器被拖库也解不开备份**。
+
+私钥丢了 = 备份永久打不开。没有后门，也不该有后门。请当作最高级别凭据保管。
+
+### 日常
+
+```bash
+deploy/backup.sh                       # 立即备份一次（产出 .sql.gz.enc + .key.enc 一对）
 crontab -e
 0 3 * * *  cd /opt/huicui && deploy/backup.sh >> /var/log/huicui-backup.log 2>&1
 ```
 
-脚本会校验 dump 完整性（大小 + `dump complete` 标记），残缺的备份直接报错——
-比"以为有备份"安全。默认保留 14 天（`BACKUP_RETAIN_DAYS`）。
+脚本会先校验 dump 完整性（大小 + `dump complete` 标记）**再加密**——
+残缺的备份直接报错，比"以为有备份"安全。默认保留 14 天（`BACKUP_RETAIN_DAYS`）。
+
+### 异地（生产必配）
+
+不配 `BACKUP_UPLOAD_CMD`，备份就只存在于**本机、与 PG 数据同一块盘**：
+磁盘损坏或服务器被入侵时，备份会和数据一起消失。
+
+```bash
+BACKUP_UPLOAD_CMD='aws s3 cp {} s3://my-bucket/huicui/'      # {} 会被替换成文件路径
+# 或 ossutil / rclone，不绑定云厂商
+```
+
+### 恢复
+
+见 **[RESTORE.md](./RESTORE.md)**。
+
+> ⚠️ **上线前务必演练一次恢复。** 没有演练过的备份等于没有备份 ——
+> 你既不知道私钥还在不在，也不知道流程走不走得通，而你会在最糟的那天才发现。
 
 > ⚠️ 录音与附件目前以 `bytea` 存在库里（V921/V923），dump 体积会随使用快速增长。
 > 迁到对象存储之前，备份窗口与恢复时长都要按这个前提规划。
-
-**恢复演练务必在非生产库上做**：
-
-```bash
-zcat deploy/backup/huicui-XXXX.sql.gz | docker compose -f deploy/docker-compose.prod.yml \
-  --env-file deploy/.env exec -T db psql -U "$POSTGRES_USER" -d restore_test
-```
 
 ---
 

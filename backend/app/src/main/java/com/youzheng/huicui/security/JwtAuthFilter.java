@@ -83,10 +83,25 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             CurrentSubject subject = jwt.parse(auth.substring(7));
             SubjectContext.set(subject);
 
-            // M-a：must_change_password 后端强制拦截——仅前端告知不足，须后端也卡住。
-            // 从 DB 读标志（JWT 不含此字段；DB 是唯一权威来源）。
-            if (isMustChangeRequired(subject.accountId())
-                    && !isMustChangeAllowed(req.getMethod(), path)) {
+            // 账号状态每请求复核（DB 是唯一权威来源）。
+            //
+            // 此前这里**只查 must_change_password，从不查 account.status** —— 而 JWT 默认 24h 有效。
+            // 于是：停权 / 离职的员工，在最长 24 小时内**照样能继续拉业主的姓名、电话、住址、
+            // 通话录音**。停权只在「下次登录」时才生效，可他根本不需要再登录一次。
+            // 对催收系统来说这是实打实的数据泄露口子，不是"待优化"。
+            //
+            // 现在：状态与 must_change 一次查完（本来就有这一次查询，不增加开销），
+            // 非 ACTIVE 立刻 401 —— 客户端拿到 401 会清 token 并回登录页，等于**当场踢下线**。
+            //
+            // 注意只卡 account.status，**不卡 org.status**：组织停用的口径是「停新单、不断存量」
+            // （BR/v1.22.0）—— 成员照常登录、在催案件照常作业。把组织停用也做成踢人，会把
+            // 一次商务纠纷升级成"整个物业的人立刻无法作业"，与产品口径相悖。
+            AccountState st = loadAccountState(subject.accountId());
+            if (st == null || !"ACTIVE".equals(st.status())) {
+                write401(res, "账号已停用或不存在，请联系管理员");
+                return;
+            }
+            if (st.mustChangePassword() && !isMustChangeAllowed(req.getMethod(), path)) {
                 write403(res, "首次登录须先修改密码，请调用 POST /me/password");
                 return;
             }
@@ -99,21 +114,28 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         }
     }
 
+    /** 账号在 DB 里的权威状态。 */
+    record AccountState(String status, boolean mustChangePassword) {}
+
     /**
-     * 查 account.must_change_password。列不存在（迁移未跑）时降级 false，避免 5xx。
+     * 一次查完账号状态与 must_change_password。
+     *
+     * <p><b>DB 异常时返回 null（= 拒绝）而不是放行</b>。老实现在 catch 里 {@code return false}
+     * （降级放行），那对 must_change 尚可，但对「账号是否已被停权」绝不能这么办 ——
+     * 一次数据库抖动就等于给所有已停权的令牌开了后门。鉴权失败必须 fail-closed。
      */
-    private boolean isMustChangeRequired(String accountId) {
-        if (accountId == null || accountId.isBlank()) return false;
+    private AccountState loadAccountState(String accountId) {
+        if (accountId == null || accountId.isBlank()) return null;
         try {
             long id = Long.parseLong(accountId);
-            Boolean v = jdbc.query(
-                    "SELECT must_change_password FROM account WHERE id = ?",
-                    rs -> rs.next() ? rs.getBoolean("must_change_password") : null,
+            return jdbc.query(
+                    "SELECT status, must_change_password FROM account WHERE id = ?",
+                    rs -> rs.next()
+                            ? new AccountState(rs.getString("status"), rs.getBoolean("must_change_password"))
+                            : null,
                     id);
-            return Boolean.TRUE.equals(v);
         } catch (Exception e) {
-            // 列不存在或 DB 异常：降级放行，不因此拦截合法请求
-            return false;
+            return null;   // fail-closed：查不到/查不动 → 当作不可用，拒绝请求
         }
     }
 
