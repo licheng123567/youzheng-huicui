@@ -49,6 +49,15 @@ services:
       HUICUI_MAX_REQUEST_SIZE: ${HUICUI_MAX_REQUEST_SIZE:-220MB}
       # 覆盖镜像默认的 MaxRAMPercentage=75：在 900m 限制下 75% 会顶到 OOM，压到 55%（≈495m 堆）。
       JAVA_OPTS: "-XX:MaxRAMPercentage=55 -XX:+ExitOnOutOfMemoryError"
+      # ── 短信（智讯云普通短信·验证码登录/开户用）。enabled=true 时下列必填 ──
+      HUICUI_SMS_ENABLED: ${HUICUI_SMS_ENABLED:-false}
+      HUICUI_SMS_DRY_RUN: ${HUICUI_SMS_DRY_RUN:-false}
+      HUICUI_SMS_SECRET_NAME: ${HUICUI_SMS_SECRET_NAME:-}
+      HUICUI_SMS_SECRET_KEY: ${HUICUI_SMS_SECRET_KEY:-}
+      HUICUI_SMS_BASE: ${HUICUI_SMS_BASE:-}
+      HUICUI_SMS_SIGN: ${HUICUI_SMS_SIGN:-【捷信驰科技】}
+      HUICUI_SMS_TPL_VERIFY: ${HUICUI_SMS_TPL_VERIFY:-}
+      HUICUI_SMS_TPL_PAYLINK: ${HUICUI_SMS_TPL_PAYLINK:-}
     ports:
       - "127.0.0.1:9091:9091"     # 只回环，外部一律走宝塔 nginx 的 443
     mem_limit: 900m

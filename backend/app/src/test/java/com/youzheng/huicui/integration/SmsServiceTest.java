@@ -84,6 +84,30 @@ class SmsServiceTest {
     }
 
     @Test
+    void 配了验证码模板_只传一个变量即验证码本身() {
+        // 智讯云验证码模板 18964 只有 1 个变量 {s7}=验证码，"5分钟"写死在文案里。
+        // 若传成 [code,"5"] 两个变量，与单变量模板不匹配会发送失败——这条守住"只传 1 个"。
+        SmsConfigService cfg = org.mockito.Mockito.mock(SmsConfigService.class);
+        when(cfg.smsEnabled(any())).thenReturn(true);
+        when(cfg.resolveSignName(any())).thenReturn("【捷信驰科技】");
+        when(cfg.ymlTemplateId(anyString())).thenReturn("18964");
+        SmsService svc = new SmsService(jdbc, client,
+                org.mockito.Mockito.mock(com.youzheng.huicui.common.BalanceService.class),
+                cfg, "https://h5.example.com");
+        when(client.isDryRun()).thenReturn(false);
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<List<String>> vars =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        String code = svc.sendVerificationCode("13800001234");
+
+        org.mockito.Mockito.verify(client).sendSms(
+                eq("13800001234"), any(), eq("18964"), vars.capture(), eq("【捷信驰科技】"));
+        assertEquals(List.of(code), vars.getValue(),
+                "验证码模板只有 1 个变量，必须只传验证码本身（多传会与单变量模板不匹配、发送失败）");
+    }
+
+    @Test
     void 验证码网关失败_落FAILED并继续抛出() {
         when(client.isDryRun()).thenReturn(false);
         when(client.sendSms(anyString(), anyString(), any(), any(), anyString()))

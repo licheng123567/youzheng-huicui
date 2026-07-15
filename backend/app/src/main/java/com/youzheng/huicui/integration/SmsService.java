@@ -72,7 +72,9 @@ public class SmsService {
             String verifySign = cfg.resolveSignName(null);
             String tplVerify = cfg.ymlTemplateId(SmsConfigService.KIND_NOTIFY);   // NOTIFY 分支返回 verify-code 模板
             if (!tplVerify.isBlank()) {
-                sms.sendSms(phone, null, tplVerify, List.of(code, "5"), verifySign);   // 模板变量 [验证码, 有效分钟]
+                // 智讯云验证码模板只有 1 个变量 = 验证码本身（"5分钟内有效"写死在模板文案里，不是变量）。
+                // 传成 [code,"5"] 两个变量会与单变量模板不匹配、发送失败——这里必须只传验证码。
+                sms.sendSms(phone, null, tplVerify, List.of(code), verifySign);
             } else {
                 sms.sendSms(phone, "您的验证码是" + code + "，5分钟内有效，请勿泄露。", null, null, verifySign);
             }

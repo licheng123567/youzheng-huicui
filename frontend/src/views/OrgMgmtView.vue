@@ -30,9 +30,13 @@ async function load() {
 const setupTokenDlg = ref(false)
 const setupTokenVal = ref('')
 const setupTokenLabel = ref('')
-function showSetupToken(token: string, label: string) {
+const setupTokenPhone = ref('')
+const showTokenFallback = ref(false)
+function showSetupToken(token: string, label: string, phone: string) {
   setupTokenVal.value = token
   setupTokenLabel.value = label
+  setupTokenPhone.value = phone || ''
+  showTokenFallback.value = false
   setupTokenDlg.value = true
 }
 function copySetupToken() {
@@ -61,11 +65,7 @@ async function createOrg() {
   load()
   // 若响应带一次性凭据则容错展示（契约未必有该字段）
   const token = (data as any)?.ownerSetupToken
-  if (token) {
-    showSetupToken(token, '负责人初始凭据（带外转交，24h 有效，一次性）')
-  } else {
-    ElMessage.success('已建组织 + 绑负责人')
-  }
+  showSetupToken(token || '', '组织已创建，负责人可直接用手机验证码登录', oForm.value.ownerPhone)
 }
 
 // 改绑负责人（PATCH /orgs/{id}/owner · {newPhone, resetPassword:true}）
@@ -84,11 +84,7 @@ async function rebindOwner(o: any) {
     if (error) { ElMessage.error('改绑失败：' + ((error as any)?.message ?? '')); return }
     load()
     const token = (data as any)?.ownerSetupToken
-    if (token) {
-      showSetupToken(token, '负责人重置凭据（带外转交，24h 有效，一次性）')
-    } else {
-      ElMessage.success('已改绑负责人')
-    }
+    showSetupToken(token || '', '已改绑负责人，新负责人可直接用手机验证码登录', newPhone)
   } catch { /* 取消 */ }
 }
 
@@ -150,18 +146,32 @@ onMounted(load)
       </template>
     </DsDrawer>
 
-    <!-- B-04方案A：一次性凭据交付 Token 展示弹窗（容错；契约未必返回） -->
-    <el-dialog v-model="setupTokenDlg" title="一次性凭据 Token（带外转交）" width="500px" :close-on-click-modal="false">
-      <el-alert type="warning" :closable="false" style="margin-bottom:12px"
-        :title="setupTokenLabel + ' — 此 Token 仅展示一次，关闭后不可再查，请立即复制并带外告知。'" />
-      <el-input :model-value="setupTokenVal" readonly type="textarea" :rows="3"
-        style="font-family:monospace;font-size:13px;word-break:break-all" />
-      <div style="font-size:12px;color:#999;margin-top:6px">
-        收到 Token 的负责人须访问 <b>POST /auth/setup-password</b>（{token, newPassword}）设置初始密码后方可登录；首次登录后强制改密。
+    <!-- 开户成功：主推「手机验证码登录」，一次性 Token 降级为备用（个别号码收不到码时用） -->
+    <el-dialog v-model="setupTokenDlg" title="账号已创建" width="520px" :close-on-click-modal="false">
+      <el-alert type="success" :closable="false" style="margin-bottom:12px" :title="setupTokenLabel" />
+      <div style="font-size:14px;line-height:1.9">
+        请让负责人这样登录（无需复制任何链接）：
+        <ol style="margin:6px 0 0;padding-left:20px">
+          <li>打开登录页，选 <b>「手机验证码」</b></li>
+          <li>输入手机号 <b style="color:var(--primary)">{{ setupTokenPhone || '（开户时填的手机号）' }}</b>，点获取验证码</li>
+          <li>填收到的验证码登录，<b>首次登录按提示设置自己的密码</b></li>
+        </ol>
+      </div>
+      <div v-if="setupTokenVal" style="margin-top:14px;border-top:1px dashed var(--bd);padding-top:10px">
+        <a class="btn txt" style="padding:0;font-size:12px;color:var(--sec)" @click="showTokenFallback = !showTokenFallback">
+          {{ showTokenFallback ? '收起' : '备用：手机收不到验证码？用一次性设密令牌 ▾' }}
+        </a>
+        <div v-if="showTokenFallback" style="margin-top:8px">
+          <el-input :model-value="setupTokenVal" readonly type="textarea" :rows="3"
+            style="font-family:monospace;font-size:13px;word-break:break-all" />
+          <div style="font-size:12px;color:#999;margin-top:6px">
+            此令牌仅展示一次、24h 有效、一次性。带外转交负责人，走设密流程后即可登录（首登仍强制改密）。
+          </div>
+          <el-button size="small" type="primary" plain style="margin-top:8px" @click="copySetupToken">复制令牌</el-button>
+        </div>
       </div>
       <template #footer>
-        <el-button type="primary" @click="copySetupToken">复制 Token</el-button>
-        <el-button @click="setupTokenDlg=false">关闭</el-button>
+        <el-button type="primary" @click="setupTokenDlg=false">知道了</el-button>
       </template>
     </el-dialog>
   </div>
