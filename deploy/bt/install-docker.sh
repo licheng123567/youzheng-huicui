@@ -25,7 +25,10 @@ cat > /etc/docker/daemon.json <<'JSON'
 }
 JSON
 
-dnf -y install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+# alinux3 预装 runc/containerd，与 docker-ce 源的 containerd.io 冲突：
+# --allowerasing 让 dnf 用 docker-ce 的版本替换掉系统自带的（安全，无别的东西依赖它）。
+dnf -y install --allowerasing \
+  docker-ce docker-ce-cli containerd.io docker-compose-plugin
 systemctl enable --now docker
 
 echo "[versions]"
