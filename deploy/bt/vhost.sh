@@ -22,8 +22,7 @@ server {
     location / { return 301 https://\$host\$request_uri; }
 }
 server {
-    listen 443 ssl;
-    http2 on;
+    listen 443 ssl http2;
     server_name $DOMAIN;
 
     ssl_certificate     $CERTDIR/fullchain.pem;
@@ -58,5 +57,7 @@ server {
 }
 EOF
 
-$NGINX -t && systemctl reload nginx
+# nginx -t 单独一行：失败时 set -e 会真正中止（不再谎报"已生效"）
+$NGINX -t
+systemctl reload nginx
 echo "vhost 已生效：https://$DOMAIN"
