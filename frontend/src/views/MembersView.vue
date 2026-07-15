@@ -97,9 +97,13 @@ async function submitSupervise() {
 const setupTokenDlg = ref(false)
 const setupTokenVal = ref('')
 const setupTokenLabel = ref('')
-function showSetupToken(token: string, label: string) {
+const setupTokenPhone = ref('')
+const showTokenFallback = ref(false)
+function showSetupToken(token: string, label: string, phone: string) {
   setupTokenVal.value = token
   setupTokenLabel.value = label
+  setupTokenPhone.value = phone || ''
+  showTokenFallback.value = false
   setupTokenDlg.value = true
 }
 function copySetupToken() {
@@ -116,13 +120,8 @@ async function createOrg() {
   const { data, error } = await api.POST('/orgs', { body: { ...oForm.value } as any })
   if (error) { ElMessage.error('建组织失败：' + ((error as any)?.message ?? '')); return }
   oDlg.value = false; load()
-  // B-04方案A：展示一次性 setupToken，平台须带外告知 owner
   const token = (data as any)?.ownerSetupToken
-  if (token) {
-    showSetupToken(token, '负责人初始凭据（带外转交，24h 有效，一次性）')
-  } else {
-    ElMessage.success('已建组织+绑负责人')
-  }
+  showSetupToken(token || '', '组织已创建，负责人可直接用手机验证码登录', oForm.value.ownerPhone)
 }
 async function rebindOwner(o: any) {
   try {
@@ -131,13 +130,8 @@ async function rebindOwner(o: any) {
     const { data, error } = await api.PATCH('/orgs/{id}/owner', { params: { path: { id: String(o.id) } }, body: { newPhone, resetPassword: true } as any })
     if (error) { ElMessage.error('改绑失败：' + ((error as any)?.message ?? '')); return }
     load()
-    // B-04方案A：展示一次性 setupToken
     const token = (data as any)?.ownerSetupToken
-    if (token) {
-      showSetupToken(token, '负责人重置凭据（带外转交，24h 有效，一次性）')
-    } else {
-      ElMessage.success('已改绑负责人')
-    }
+    showSetupToken(token || '', '已改绑负责人，新负责人可直接用手机验证码登录', newPhone)
   } catch { /* 取消 */ }
 }
 
@@ -183,7 +177,9 @@ async function createMember() {
   }
   const { error } = await api.POST('/members', { body: body as any })
   if (error) { ElMessage.error('创建失败：' + ((error as any)?.message ?? '')); return }
-  ElMessage.success('已创建（须用「重置密码」发放一次性凭据告知成员）'); cDlg.value = false; load()
+  cDlg.value = false; load()
+  // 有短信后成员直接用手机验证码登录，不必再走「重置密码」发令牌
+  showSetupToken('', '成员已创建，可直接用手机验证码登录', cForm.value.phone)
 }
 // 编辑成员（PATCH /members/{id} · MemberPatch{name?, permissions?, dataScope?}）
 const eDlg = ref(false)
@@ -226,19 +222,14 @@ async function toggle(row: any) {
 }
 // 重置密码（B-04方案A：不收明文密码——服务端清口令+发一次性 setupToken，展示后带外告知成员）
 const pDlg = ref(false)
-const pForm = ref<any>({ id: '', name: '' })
-function openReset(row: any) { pForm.value = { id: row.id, name: row.name }; pDlg.value = true }
+const pForm = ref<any>({ id: '', name: '', phone: '' })
+function openReset(row: any) { pForm.value = { id: row.id, name: row.name, phone: row.phone }; pDlg.value = true }
 async function submitReset() {
   const { data, error } = await api.POST('/members/{id}/reset-password', { params: { path: { id: pForm.value.id } }, body: {} as any })
   if (error) { ElMessage.error('重置失败：' + ((error as any)?.message ?? '')); return }
   pDlg.value = false
-  // B-04方案A：展示一次性 setupToken
   const token = (data as any)?.setupToken
-  if (token) {
-    showSetupToken(token, '成员凭据（带外告知 ' + pForm.value.name + '，24h 有效，一次性）')
-  } else {
-    ElMessage.success('已重置凭据')
-  }
+  showSetupToken(token || '', '已重置 ' + pForm.value.name + ' 的登录，可用手机验证码重新登录设密码', pForm.value.phone)
 }
 onMounted(load)
 </script>
@@ -374,17 +365,31 @@ onMounted(load)
     <!-- ══ /成员列表 tab ══ -->
 
     <!-- B-04方案A：一次性凭据交付 Token 展示弹窗（复制按钮+带外告知说明） -->
-    <el-dialog v-model="setupTokenDlg" title="一次性凭据 Token（带外转交）" width="500px" :close-on-click-modal="false">
-      <el-alert type="warning" :closable="false" style="margin-bottom:12px"
-        :title="setupTokenLabel + ' — 此 Token 仅展示一次，关闭后不可再查，请立即复制并带外告知。'" />
-      <el-input :model-value="setupTokenVal" readonly type="textarea" :rows="3"
-        style="font-family:monospace;font-size:13px;word-break:break-all" />
-      <div style="font-size:12px;color:#999;margin-top:6px">
-        收到 Token 的负责人/成员须访问 <b>POST /auth/setup-password</b>（{token, newPassword}）设置初始密码后方可登录；首次登录后强制改密。
+    <el-dialog v-model="setupTokenDlg" title="账号已创建" width="520px" :close-on-click-modal="false">
+      <el-alert type="success" :closable="false" style="margin-bottom:12px" :title="setupTokenLabel" />
+      <div style="font-size:14px;line-height:1.9">
+        请让本人这样登录（无需复制任何链接）：
+        <ol style="margin:6px 0 0;padding-left:20px">
+          <li>打开登录页，选 <b>「手机验证码」</b></li>
+          <li>输入手机号 <b style="color:var(--primary)">{{ setupTokenPhone || '（开户时填的手机号）' }}</b>，点获取验证码</li>
+          <li>填收到的验证码登录，<b>首次登录按提示设置自己的密码</b></li>
+        </ol>
+      </div>
+      <div v-if="setupTokenVal" style="margin-top:14px;border-top:1px dashed var(--bd);padding-top:10px">
+        <a class="btn txt" style="padding:0;font-size:12px;color:var(--sec)" @click="showTokenFallback = !showTokenFallback">
+          {{ showTokenFallback ? '收起' : '备用：手机收不到验证码？用一次性设密令牌 ▾' }}
+        </a>
+        <div v-if="showTokenFallback" style="margin-top:8px">
+          <el-input :model-value="setupTokenVal" readonly type="textarea" :rows="3"
+            style="font-family:monospace;font-size:13px;word-break:break-all" />
+          <div style="font-size:12px;color:#999;margin-top:6px">
+            此令牌仅展示一次、24h 有效、一次性。带外转交本人，走设密流程后即可登录（首登仍强制改密）。
+          </div>
+          <el-button size="small" type="primary" plain style="margin-top:8px" @click="copySetupToken">复制令牌</el-button>
+        </div>
       </div>
       <template #footer>
-        <el-button type="primary" @click="copySetupToken">复制 Token</el-button>
-        <el-button @click="setupTokenDlg=false">关闭</el-button>
+        <el-button type="primary" @click="setupTokenDlg=false">知道了</el-button>
       </template>
     </el-dialog>
 
