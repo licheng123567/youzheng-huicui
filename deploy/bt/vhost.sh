@@ -50,7 +50,7 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
     location = /actuator/health {
-        proxy_pass http://127.0.0.1:9091/actuator/health;
+        proxy_pass http://127.0.0.1:9091/v1/actuator/health;
     }
     location / {
         try_files \$uri \$uri/ /index.html;
