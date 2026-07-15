@@ -1,0 +1,60 @@
+# 有证慧催 · 宝塔共存形态（只跑 db + backend，不带 nginx/前端容器）
+#
+# 与 deploy/docker-compose.prod.yml 的区别：
+#   · 不起 web(nginx)/autoheal —— 前置反代复用宿主机上正在跑的宝塔 nginx（那台 nginx 还扛着
+#     screen/vr/yzb 三个生产站，绝不能抢它的 80/443）。
+#   · backend 只发布到 127.0.0.1:9091（宿主回环），由宝塔 nginx 反代过来；PG 只在 compose 内网。
+#   · 内存兜底：这台机器仅 1.8G 且有别的站在跑，给两个容器都设 mem_limit，JVM 限堆到 55%，
+#     OOM 只会杀我们自己的容器（restart 拉起），不波及现有站。
+#
+#   起：cd /root/huicui/deploy && docker compose -p huicui --env-file .env -f bt/docker-compose.bt.yml up -d
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?}
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      - huicui-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "3" }
+
+  backend:
+    image: ${HUICUI_IMAGE:-ghcr.io/licheng123567/huicui-backend}:${HUICUI_IMAGE_TAG:?}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      HUICUI_JWT_SECRET: ${HUICUI_JWT_SECRET:?}
+      HUICUI_CRYPTO_KEY: ${HUICUI_CRYPTO_KEY:?}
+      HUICUI_PUBLIC_BASE: ${HUICUI_PUBLIC_BASE:?}
+      HUICUI_BOOTSTRAP_ADMIN_USERNAME: ${HUICUI_BOOTSTRAP_ADMIN_USERNAME:-}
+      HUICUI_BOOTSTRAP_ADMIN_PASSWORD: ${HUICUI_BOOTSTRAP_ADMIN_PASSWORD:-}
+      HUICUI_BOOTSTRAP_ADMIN_PHONE: ${HUICUI_BOOTSTRAP_ADMIN_PHONE:-}
+      HUICUI_MAX_FILE_SIZE: ${HUICUI_MAX_FILE_SIZE:-200MB}
+      HUICUI_MAX_REQUEST_SIZE: ${HUICUI_MAX_REQUEST_SIZE:-220MB}
+      # 覆盖镜像默认的 MaxRAMPercentage=75：在 900m 限制下 75% 会顶到 OOM，压到 55%（≈495m 堆）。
+      JAVA_OPTS: "-XX:MaxRAMPercentage=55 -XX:+ExitOnOutOfMemoryError"
+    ports:
+      - "127.0.0.1:9091:9091"     # 只回环，外部一律走宝塔 nginx 的 443
+    mem_limit: 900m
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "3" }
+
+volumes:
+  huicui-pgdata:
