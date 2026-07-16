@@ -11,8 +11,8 @@ test.describe('US-M1 登录与多账号', () => {
 
   test('一号多账号(duo_pc)→出现选择→选定身份进工作台', async ({ page }) => {
     await page.goto('/login')
-    await page.getByPlaceholder(/用户名/).fill('duo_pc')
-    await page.getByPlaceholder(/口令/).fill(DEV_PW)
+    await page.getByPlaceholder(/账号名|用户名/).fill('duo_pc')
+    await page.getByPlaceholder(/密码|口令/).fill(DEV_PW)
     await page.getByRole('button', { name: /登\s*录/ }).click()
     await expect(page.getByText(/该手机号?关联多个账号/)).toBeVisible()  // 多账号选择出现
     const choices = page.getByRole('button', { name: /多账号·/ })
