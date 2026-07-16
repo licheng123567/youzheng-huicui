@@ -20,7 +20,7 @@ ADMPW=$(openssl rand -base64 18 | tr -d '/+=' | head -c 18)
 cat > "$ENV" <<EOF
 # 有证慧催 · 生产环境变量（本文件含密钥，勿外传、勿入库）
 # 生成时间：由 gen-env.sh 在服务器本地生成
-HUICUI_IMAGE_TAG=sha-8686ab9
+HUICUI_IMAGE_TAG=main
 HUICUI_IMAGE=ghcr.io/licheng123567/huicui-backend
 
 POSTGRES_DB=huicui
