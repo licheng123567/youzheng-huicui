@@ -9,8 +9,8 @@ const auth = useAuth()
 const router = useRouter()
 const route = useRoute()
 const mode = ref<'password' | 'sms'>('password')
-const username = ref('admin'); const password = ref('Admin@123')
-const phone = ref('13900009000'); const code = ref('')
+const username = ref(''); const password = ref('')
+const phone = ref(''); const code = ref('')
 const loading = ref(false); const smsSent = ref(false)
 const showPwd = ref(false)   // 密码明文切换（展示用）
 const countdown = ref(0); let timer: ReturnType<typeof setInterval> | null = null
@@ -95,12 +95,12 @@ async function pick(a: any) {
             <template v-if="mode === 'password'">
               <div class="field">
                 <label class="l">账号名</label>
-                <div class="wrap"><input v-model="username" autocomplete="username" placeholder="用户名（admin / duo_pc 多账号）" /></div>
+                <div class="wrap"><input v-model="username" autocomplete="username" placeholder="请输入账号名" /></div>
               </div>
               <div class="field">
                 <label class="l">密码</label>
                 <div class="wrap">
-                  <input v-model="password" :type="showPwd ? 'text' : 'password'" autocomplete="current-password" placeholder="口令（Admin@123）" @keyup.enter="submit" />
+                  <input v-model="password" :type="showPwd ? 'text' : 'password'" autocomplete="current-password" placeholder="请输入密码" @keyup.enter="submit" />
                   <span class="eye" @click="showPwd = !showPwd" :title="showPwd ? '隐藏密码' : '显示密码'">
                     <svg v-if="!showPwd" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                     <svg v-else viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
@@ -111,7 +111,7 @@ async function pick(a: any) {
             <template v-else>
               <div class="field">
                 <label class="l">手机号</label>
-                <div class="wrap"><input v-model="phone" type="tel" maxlength="11" placeholder="手机号（13900009000 多账号）" /></div>
+                <div class="wrap"><input v-model="phone" type="tel" maxlength="11" placeholder="请输入手机号" /></div>
               </div>
               <div class="field">
                 <label class="l">验证码</label>
