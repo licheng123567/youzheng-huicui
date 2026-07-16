@@ -71,16 +71,16 @@ async function submit() {
         </div>
       </div>
       <div class="desc">
-        <div class="r"><div class="k">登录密码</div><div class="v">已设置 · 可自助修改（校验旧密码）<a class="btn txt" @click="open">修改密码</a></div></div>
+        <div class="r"><div class="k">登录密码</div><div class="v">设置密码后可用「手机号 + 密码」登录；验证码登录用户首次设置无需旧密码<a class="btn txt" @click="open">设置 / 修改密码</a></div></div>
         <div class="r"><div class="k">绑定手机</div><div class="v">手机改绑由管理员 / 负责人交接（BR-M1-02）</div></div>
       </div>
       <div class="note">手机标识（登录名）不变，换人靠改绑手机 + 重置密码交接同一账号。</div>
     </div>
 
     <!-- 改密弹窗：含校验，保留 Element Plus 原样 -->
-    <DsDrawer v-model="dlg" title="修改密码">
+    <DsDrawer v-model="dlg" title="设置 / 修改密码">
       <el-form label-width="90px">
-        <el-form-item label="旧密码"><el-input v-model="form.oldPassword" type="password" show-password /></el-form-item>
+        <el-form-item label="旧密码"><el-input v-model="form.oldPassword" type="password" show-password placeholder="首次设置可留空（验证码登录用户）" /></el-form-item>
         <el-form-item label="新密码"><el-input v-model="form.newPassword" type="password" show-password placeholder="至少 6 位" /></el-form-item>
         <el-form-item label="确认新密码"><el-input v-model="form.confirm" type="password" show-password /></el-form-item>
       </el-form>

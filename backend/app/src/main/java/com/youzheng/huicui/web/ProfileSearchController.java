@@ -33,7 +33,9 @@ public class ProfileSearchController {
     @PostMapping("/me/password")
     public Map<String, Object> changeOwnPassword(@RequestBody(required = false) Map<String, Object> body) {
         CurrentSubject s = SubjectContext.get();
-        String oldPw = reqStr(body, "oldPassword"), newPw = reqStr(body, "newPassword");
+        // oldPassword 可空：验证码登录的用户从没设过密码，首次设密没有旧密码可填。
+        String oldPw = optStr(body, "oldPassword");
+        String newPw = reqStr(body, "newPassword");
         if (newPw.length() < 6) throw new ApiException(BizError.VALIDATION_422, "新密码过弱(至少 6 位)");
         Long me = parseLong(s.accountId());
         if (me == null) throw new ApiException(BizError.AUTH_401, "无效主体");
@@ -44,7 +46,11 @@ public class ProfileSearchController {
             throw new ApiException(BizError.AUTH_401, "账号不存在");
         }
         String hash = (String) row.get("password_hash");
-        if (hash == null || !bcrypt.matches(oldPw, hash)) throw new ApiException(BizError.AUTH_401, "旧密码错误");
+        // 已设过密码 → 必须校验旧密码；从没设过（验证码登录用户）→ 允许直接设初始密码
+        //（此端点本身要求已登录，身份已由 JWT 确认，无需再用旧密码二次确认）。
+        if (hash != null && (oldPw == null || !bcrypt.matches(oldPw, hash))) {
+            throw new ApiException(BizError.AUTH_401, "旧密码错误");
+        }
         // M-a：改密同时清 must_change_password 标志（首次改密后解锁全部 API）。
         jdbc.update("UPDATE account SET password_hash = ?, must_change_password = FALSE, updated_at = now() WHERE id = ?",
                 bcrypt.encode(newPw), me);
@@ -104,6 +110,13 @@ public class ProfileSearchController {
         String s = v == null ? null : String.valueOf(v);
         if (s == null || s.isBlank()) throw new ApiException(BizError.VALIDATION_422, k + " 必填");
         return s;
+    }
+
+    /** 可空字段：缺失或空白返回 null（不抛）。用于 oldPassword——验证码用户首次设密无旧密码。 */
+    private String optStr(Map<String, Object> b, String k) {
+        Object v = b == null ? null : b.get(k);
+        String s = v == null ? null : String.valueOf(v);
+        return (s == null || s.isBlank()) ? null : s;
     }
     private static Long parseLong(String v) {
         try { return v == null ? null : Long.valueOf(v.trim()); } catch (RuntimeException e) { return null; }
