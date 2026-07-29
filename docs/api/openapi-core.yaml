@@ -3732,7 +3732,7 @@ components:
     OrgInput: { type: object, required: [type, name, ownerAccount, ownerPhone], properties: { type: { $ref: '#/components/schemas/OrgTypeEnum' }, name: { type: string }, ownerAccount: { type: string }, ownerPhone: { type: string } } }
     Org:
       type: object
-      description: '组织（B-04方案A：POST /orgs 201 响应及 PATCH /orgs/{id}/owner?resetPassword=true 响应含 ownerSetupToken 一次性明文；列表/GET 始终 null）'
+      description: '组织（负责人账号名与完整手机号由 ownerAccountId 左连接 account 返回；B-04方案A：POST /orgs 201 响应及 PATCH /orgs/{id}/owner?resetPassword=true 响应含 ownerSetupToken 一次性明文；列表/GET 始终 null）'
       properties:
         id: { type: string }
         type: { $ref: '#/components/schemas/OrgTypeEnum' }
