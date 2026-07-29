@@ -80,12 +80,21 @@ do
 done
 require_grep '13900000001' "$UAT_DIR/verify.sh"
 require_grep '13800000000' "$UAT_DIR/verify.sh"
+require_grep '/v1/actuator/health' "$UAT_DIR/verify.sh"
+require_grep 'unauth.*401|401.*unauth' "$UAT_DIR/verify.sh"
+require_grep 'members\?orgId=' "$UAT_DIR/verify.sh"
+require_grep '\{"SA", "SE"\}' "$UAT_DIR/verify.sh"
+reject_grep 'Admin@123' "$UAT_DIR/verify.sh"
 require_grep '--confirm' "$UAT_DIR/reset.sh"
 require_grep 'huicui-uat-pgdata' "$UAT_DIR/reset.sh"
+require_grep '^docker volume rm huicui-uat-pgdata$' "$UAT_DIR/reset.sh"
+require_grep 'UAT_IMAGE_TAG=\$tag docker compose' "$UAT_DIR/reset.sh"
+require_grep 'verify\.sh' "$UAT_DIR/reset.sh"
 reject_grep 'huicui-pgdata' "$UAT_DIR/reset.sh"
 
 rendered=$(mktemp)
-trap 'rm -f "$rendered"' EXIT HUP INT TERM
+scratch=$(mktemp -d)
+trap 'rm -f "$rendered"; rm -rf "$scratch"' EXIT HUP INT TERM
 
 docker compose \
   --project-name huicui-uat \
@@ -153,5 +162,52 @@ for name, expected in limits.items():
     assert int(service["deploy"]["resources"]["limits"]["memory"]) == expected
     assert set(service["networks"]) == {"uat"}
 PY
+
+mkdir -p "$scratch/bin" "$scratch/state" "$scratch/artifacts"
+spy="$scratch/docker.calls"
+cat >"$scratch/bin/docker" <<'SH'
+#!/bin/sh
+printf '%s|%s\n' "${UAT_IMAGE_TAG:-}" "$*" >>"$UAT_DOCKER_SPY"
+SH
+chmod +x "$scratch/bin/docker"
+
+# 错误确认词必须在任何 Docker 调用前返回 64。
+: >"$spy"
+set +e
+UAT_DOCKER_SPY="$spy" UAT_DOCKER_BIN="$scratch/bin/docker" \
+  "$UAT_DIR/reset.sh" --confirm wrong-target >/dev/null 2>&1
+rc=$?
+set -e
+[ "$rc" -eq 64 ] || fail "reset wrong-target returned $rc instead of 64"
+[ ! -s "$spy" ] || fail 'reset called Docker for an invalid confirmation target'
+
+# 非法 active-sha 必须在 down/rm 前失败。
+printf '%s\n' '-invalid-tag' >"$scratch/state/active-sha"
+: >"$spy"
+set +e
+UAT_DOCKER_SPY="$spy" UAT_DOCKER_BIN="$scratch/bin/docker" \
+  UAT_ENV_FILE="$ENV_FILE" UAT_STATE_DIR="$scratch/state" \
+  "$UAT_DIR/reset.sh" --confirm huicui-uat >/dev/null 2>&1
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail 'reset accepted an invalid active SHA'
+[ ! -s "$spy" ] || fail 'reset called Docker before rejecting an invalid active SHA'
+
+# 合法 SHA 只允许既定 project/volume/down/up；随后 verify 因假地址失败是预期行为。
+sha=0123456789abcdef0123456789abcdef01234567
+printf '%s\n' "$sha" >"$scratch/state/active-sha"
+: >"$spy"
+set +e
+UAT_DOCKER_SPY="$spy" UAT_DOCKER_BIN="$scratch/bin/docker" \
+  UAT_ENV_FILE="$ENV_FILE" UAT_STATE_DIR="$scratch/state" \
+  UAT_ARTIFACT_DIR="$scratch/artifacts" UAT_BASE_URL=http://127.0.0.1:1 \
+  "$UAT_DIR/reset.sh" --confirm huicui-uat >/dev/null 2>&1
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail 'reset unexpectedly skipped the final live verification'
+require_grep '^|compose --project-name huicui-uat .* down$' "$spy"
+require_grep '^|volume rm huicui-uat-pgdata$' "$spy"
+require_grep "^$sha|compose --project-name huicui-uat .* up -d$" "$spy"
+[ "$(wc -l <"$spy" | tr -d ' ')" -eq 3 ] || fail 'reset issued unexpected Docker calls'
 
 echo 'uat static contract: PASS'

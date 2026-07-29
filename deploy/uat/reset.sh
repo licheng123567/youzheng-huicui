@@ -22,15 +22,20 @@ STATE_DIR=${UAT_STATE_DIR:-/var/lib/huicui-uat}
 COMPOSE_FILE="$REPO_ROOT/deploy/uat/docker-compose.uat.yml"
 ACTIVE_SHA="$STATE_DIR/active-sha"
 BASE=${UAT_BASE_URL:-http://127.0.0.1:6090}
+UAT_DOCKER_BIN=${UAT_DOCKER_BIN:-docker}
+
+docker() {
+  command "$UAT_DOCKER_BIN" "$@"
+}
 
 [ -f "$ENV_FILE" ] || fail "environment file not found: $ENV_FILE"
 [ -f "$COMPOSE_FILE" ] || fail "compose file not found: $COMPOSE_FILE"
 [ -f "$ACTIVE_SHA" ] || fail "active SHA not found: $ACTIVE_SHA"
 
 tag=$(sed -n '1p' "$ACTIVE_SHA")
-[ -n "$tag" ] || fail "active SHA is empty: $ACTIVE_SHA"
+[ "${#tag}" -eq 40 ] || fail "active SHA must be a full 40-character Git SHA: $ACTIVE_SHA"
 case "$tag" in
-  *[!A-Za-z0-9._-]*) fail "active SHA contains invalid characters: $ACTIVE_SHA" ;;
+  *[!0-9a-f]*) fail "active SHA must contain only lowercase hexadecimal characters: $ACTIVE_SHA" ;;
 esac
 
 docker compose \
