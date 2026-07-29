@@ -41,6 +41,7 @@ for required in \
   "$UAT_DIR/Dockerfile.smoke" \
   "$UAT_DIR/nginx.conf" \
   "$ENV_FILE" \
+  "$UAT_DIR/README.md" \
   "$UAT_DIR/verify.sh" \
   "$UAT_DIR/reset.sh" \
   "$UAT_DIR/deploy.sh" \
@@ -108,6 +109,41 @@ require_grep '^ENV[[:space:]]+HUICUI_REVISION=' "$UAT_DIR/Dockerfile.web"
 require_grep 'process\.env\.HUICUI_REVISION' "$REPO_ROOT/frontend/vite.config.ts"
 require_grep 'PLAYWRIGHT_BASE_URL' "$REPO_ROOT/frontend/playwright.uat.config.ts"
 require_grep 'PLAYWRIGHT_ARTIFACT_DIR' "$REPO_ROOT/frontend/playwright.uat.config.ts"
+require_grep 'process\.env\.PLAYWRIGHT_BASE_URL' "$REPO_ROOT/frontend/playwright.config.ts"
+require_grep 'webServer:[[:space:]]*externalBaseURL[[:space:]]*\?[[:space:]]*undefined' "$REPO_ROOT/frontend/playwright.config.ts"
+
+REPORTS_DRILL="$REPO_ROOT/frontend/e2e/reports-drill.spec.ts"
+require_grep "import[[:space:]]+\{[[:space:]]*loginRole,[[:space:]]*DEV_PW[[:space:]]*\}[[:space:]]+from './helpers'" "$REPORTS_DRILL"
+reject_grep 'http://localhost:9091' "$REPORTS_DRILL"
+reject_grep 'Admin@123' "$REPORTS_DRILL"
+
+README="$UAT_DIR/README.md"
+require_grep 'ssh -N -L 6090:127\.0\.0\.1:6090 root@47\.108\.81\.205' "$README"
+require_grep 'http://127\.0\.0\.1:6090' "$README"
+reject_grep 'http://47\.108\.81\.205:6090' "$README"
+require_grep '/root/repos/youzheng-huicui\.git' "$README"
+require_grep 'cd /root/huicui-uat-src' "$README"
+require_grep '/opt/huicui-uat/bin/worker\.sh' "$README"
+reject_grep '/root/repos/huicui\.git' "$README"
+reject_grep 'hooks/worker\.sh' "$README"
+for marker in active-sha failed-sha rollback-failed-sha last-known-good-sha
+do
+  require_grep "$marker" "$README"
+done
+for command in install-hook.sh verify.sh reset.sh Dockerfile Dockerfile.web Dockerfile.smoke route_coverage.py gen:api static-contract.sh members.spec.ts
+do
+  require_grep "$command" "$README"
+done
+for secret in UAT_POSTGRES_PASSWORD UAT_JWT_SECRET UAT_CRYPTO_KEY UAT_DEV_PASSWORD
+do
+  require_grep "$secret" "$README"
+done
+require_grep 'openssl rand' "$README"
+require_grep '--profile smoke' "$README"
+require_grep 'HUICUI_VERSION=sha-\$sha' "$README"
+require_grep 'up -d --wait' "$README"
+require_grep '^export UAT_DEV_PASSWORD$' "$README"
+reject_grep '^set -a$' "$README"
 
 for account in admin plat_se cuihu_pl cuihu_pc jx_vl jx_co1
 do

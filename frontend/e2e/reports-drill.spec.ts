@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { loginRole } from './helpers'
+import { loginRole, DEV_PW } from './helpers'
 
 // v1.25.0 平台经营报表穿透（用户诉求：「可以根据物业公司的聚合向下穿透统计，也可以根据服务商穿透统计」）。
 // 此前平台视角是两张写死「暂无数据」的空表（区域损益/佣金毛利）+ 一张批次平表——看不出哪家贡献多少，也钻不下去。
@@ -77,11 +77,11 @@ test.describe('v1.25.0 平台经营报表穿透', () => {
   // 最要紧的不是列出来，而是**和【结算对账】页对得上**——同一笔钱在两个页面给两个数是最伤信任的 bug。
   test('SA：物业列表的佣金六列，与结算对账页逐批对得上', async ({ page, request }) => {
     // 权威口径直接问后端要（/recon/rollup-dual 是结算对账页的数据源）——别去猜前端把 token 存哪儿。
-    const login = await request.post('http://localhost:9091/v1/auth/login', {
-      data: { loginType: 'password', username: 'admin', password: 'Admin@123' },
+    const login = await request.post('/v1/auth/login', {
+      data: { loginType: 'password', username: 'admin', password: DEV_PW },
     })
     const token = (await login.json()).token
-    const res = await request.get('http://localhost:9091/v1/recon/rollup-dual?page=1&size=50', {
+    const res = await request.get('/v1/recon/rollup-dual?page=1&size=50', {
       headers: { Authorization: `Bearer ${token}` },
     })
     const items = (await res.json()).items ?? []
