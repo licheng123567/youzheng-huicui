@@ -159,17 +159,29 @@ require_grep "rev-parse --verify 'refs/heads/main\^\{commit\}'" "$README"
 [ "$(grep -Ec '^[[:space:]]*set -eu$' "$README")" -ge 2 ] || \
   fail 'runbook secret initialization and Playwright blocks must both fail closed'
 require_grep 'UAT_DEV_PASSWORD is missing or empty' "$README"
-python3 -I - "$README" <<'PY'
+python3 -I -O - "$README" <<'PY'
 import sys
 
 text = open(sys.argv[1], encoding="utf-8").read()
+secret_positions = [
+    text.index(f"{name}=$(openssl rand")
+    for name in ("db_secret", "jwt_secret", "crypto_secret", "dev_password")
+]
+nonempty = text.index('test -n "$db_secret" && test -n "$jwt_secret"')
+env_tmp = text.index("env_tmp=$(mktemp")
+cleanup_trap = text.index("trap 'test -z")
+queue_fd = text.index("exec 8>/var/lib/huicui-uat/queue.lock")
+queue_lock = text.index("flock 8", queue_fd)
+queue_tip = text.index("rev-parse --verify 'refs/heads/main^{commit}'")
+queue_move = text.index('mv "$pending_tmp" /var/lib/huicui-uat/pending-sha')
+playwright_block = text.index("(\nset -eu\nUAT_DEV_PASSWORD=$(awk")
+playwright_nonempty = text.index('test -n "$UAT_DEV_PASSWORD" ||', playwright_block)
+playwright_export = text.index("export UAT_DEV_PASSWORD", playwright_block)
 checks = (
-    text.index("db_secret=$(openssl rand") < text.index("env_tmp=$(mktemp"),
-    text.index("env_tmp=$(mktemp") < text.index('mv "$env_tmp" /root/huicui-uat.env'),
-    text.index("exec 8>/var/lib/huicui-uat/queue.lock")
-    < text.index("rev-parse --verify 'refs/heads/main^{commit}'"),
-    text.index("rev-parse --verify 'refs/heads/main^{commit}'")
-    < text.index('mv "$pending_tmp" /var/lib/huicui-uat/pending-sha'),
+    max(secret_positions) < nonempty < env_tmp < cleanup_trap,
+    cleanup_trap < text.index('mv "$env_tmp" /root/huicui-uat.env'),
+    queue_fd < queue_lock < queue_tip < queue_move,
+    playwright_block < playwright_nonempty < playwright_export,
 )
 if not all(checks):
     raise SystemExit("runbook fail-closed steps are out of order")
@@ -207,52 +219,68 @@ docker compose \
   --profile smoke \
   config --format json >"$rendered"
 
-python3 -I - "$rendered" <<'PY'
+python3 -I -O - "$rendered" <<'PY'
 import json
 import sys
 
+def require(condition, detail):
+    if not condition:
+        raise SystemExit(f"compose contract failed: {detail}")
+
 config = json.load(open(sys.argv[1], encoding="utf-8"))
-assert config["name"] == "huicui-uat"
-assert config["networks"]["uat"]["name"] == "huicui-uat-network"
-assert config["volumes"]["huicui-uat-pgdata"]["name"] == "huicui-uat-pgdata"
+require(config["name"] == "huicui-uat", "project name")
+require(config["networks"]["uat"]["name"] == "huicui-uat-network", "network name")
+require(
+    config["volumes"]["huicui-uat-pgdata"]["name"] == "huicui-uat-pgdata",
+    "volume name",
+)
 
 services = config["services"]
 db, backend, web, smoke = (services[name] for name in ("db", "backend", "web", "smoke"))
-assert not db.get("ports"), "db service must not publish any host port"
-assert db["volumes"] == [{
-    "type": "volume",
-    "source": "huicui-uat-pgdata",
-    "target": "/var/lib/postgresql/data",
-    "volume": {},
-}]
+require(not db.get("ports"), "db service must not publish any host port")
+require(
+    db["volumes"] == [{
+        "type": "volume",
+        "source": "huicui-uat-pgdata",
+        "target": "/var/lib/postgresql/data",
+        "volume": {},
+    }],
+    "db volume mount",
+)
 
 def only_port(service, host_ip, published, target):
     ports = service.get("ports", [])
-    assert len(ports) == 1, ports
+    require(len(ports) == 1, f"expected one port, got {ports!r}")
     port = ports[0]
-    assert port.get("host_ip") == host_ip, port
-    assert str(port["published"]) == str(published), port
-    assert int(port["target"]) == target, port
+    require(port.get("host_ip") == host_ip, f"host IP: {port!r}")
+    require(str(port["published"]) == str(published), f"published port: {port!r}")
+    require(int(port["target"]) == target, f"target port: {port!r}")
 
 only_port(backend, "127.0.0.1", 9092, 9091)
 only_port(web, "127.0.0.1", 6090, 80)
 
-assert backend["depends_on"]["db"]["condition"] == "service_healthy"
-assert web["depends_on"]["backend"]["condition"] == "service_healthy"
-assert smoke["depends_on"]["web"]["condition"] == "service_healthy"
+require(backend["depends_on"]["db"]["condition"] == "service_healthy", "backend dependency")
+require(web["depends_on"]["backend"]["condition"] == "service_healthy", "web dependency")
+require(smoke["depends_on"]["web"]["condition"] == "service_healthy", "smoke dependency")
 env = backend["environment"]
-assert env["SPRING_PROFILES_ACTIVE"] == "dev"
-assert env["SPRING_DATASOURCE_URL"].startswith("jdbc:postgresql://db:5432/")
-assert env["MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED"] == "true"
-assert env["HUICUI_DEV_PASSWORD"] != "Admin@123"
-assert env["JAVA_OPTS"].startswith("-XX:MaxRAMPercentage=55 ")
-assert smoke["environment"]["UAT_DEV_PASSWORD"] == env["HUICUI_DEV_PASSWORD"]
-assert smoke["environment"]["PLAYWRIGHT_BASE_URL"] == "http://web"
-assert smoke["environment"]["PLAYWRIGHT_ARTIFACT_DIR"] == "/artifacts"
-assert any(
-    volume["type"] == "bind" and volume["target"] == "/artifacts"
-    for volume in smoke.get("volumes", [])
-), smoke.get("volumes")
+require(env["SPRING_PROFILES_ACTIVE"] == "dev", "backend profile")
+require(env["SPRING_DATASOURCE_URL"].startswith("jdbc:postgresql://db:5432/"), "database URL")
+require(env["MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED"] == "true", "health probes")
+require(env["HUICUI_DEV_PASSWORD"] != "Admin@123", "UAT password isolation")
+require(env["JAVA_OPTS"].startswith("-XX:MaxRAMPercentage=55 "), "JVM memory options")
+require(
+    smoke["environment"]["UAT_DEV_PASSWORD"] == env["HUICUI_DEV_PASSWORD"],
+    "smoke password",
+)
+require(smoke["environment"]["PLAYWRIGHT_BASE_URL"] == "http://web", "smoke base URL")
+require(smoke["environment"]["PLAYWRIGHT_ARTIFACT_DIR"] == "/artifacts", "smoke artifact env")
+require(
+    any(
+        volume["type"] == "bind" and volume["target"] == "/artifacts"
+        for volume in smoke.get("volumes", [])
+    ),
+    f"smoke artifact mount: {smoke.get('volumes')!r}",
+)
 
 limits = {
     "db": 256 * 1024 * 1024,
@@ -262,9 +290,12 @@ limits = {
 }
 for name, expected in limits.items():
     service = services[name]
-    assert int(service["mem_limit"]) == expected, (name, service["mem_limit"])
-    assert int(service["deploy"]["resources"]["limits"]["memory"]) == expected
-    assert set(service["networks"]) == {"uat"}
+    require(int(service["mem_limit"]) == expected, f"{name} mem_limit")
+    require(
+        int(service["deploy"]["resources"]["limits"]["memory"]) == expected,
+        f"{name} deploy memory",
+    )
+    require(set(service["networks"]) == {"uat"}, f"{name} networks")
 PY
 
 mkdir -p "$scratch/bin" "$scratch/state" "$scratch/artifacts"
