@@ -1,0 +1,88 @@
+name: huicui-uat
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${UAT_POSTGRES_DB}
+      POSTGRES_USER: ${UAT_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${UAT_POSTGRES_PASSWORD}
+    volumes:
+      - huicui-uat-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 256M
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks:
+      - uat
+
+  backend:
+    image: huicui-uat-backend:${UAT_IMAGE_TAG}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${UAT_POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${UAT_POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${UAT_POSTGRES_PASSWORD}
+      HUICUI_JWT_SECRET: ${UAT_JWT_SECRET}
+      HUICUI_CRYPTO_KEY: ${UAT_CRYPTO_KEY}
+      HUICUI_PUBLIC_BASE: ${UAT_PUBLIC_BASE:-http://47.108.81.205:6090}
+      JAVA_OPTS: -XX:MaxRAMPercentage=55 -XX:+ExitOnOutOfMemoryError
+    ports:
+      - "127.0.0.1:9092:9091"
+    mem_limit: 600M
+    deploy:
+      resources:
+        limits:
+          memory: 600M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    networks:
+      - uat
+
+  web:
+    image: huicui-uat-web:${UAT_IMAGE_TAG}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "6090:80"
+    mem_limit: 128M
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks:
+      - uat
+
+networks:
+  uat:
+    name: huicui-uat-network
+
+volumes:
+  huicui-uat-pgdata:
+    name: huicui-uat-pgdata

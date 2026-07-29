@@ -1,0 +1,11 @@
+FROM mcr.microsoft.com/playwright:v1.61.1-noble
+WORKDIR /work
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend/playwright.uat.config.ts ./playwright.uat.config.ts
+COPY frontend/e2e/helpers.ts ./e2e/helpers.ts
+COPY frontend/e2e/uat-smoke.spec.ts ./e2e/uat-smoke.spec.ts
+
+ENTRYPOINT ["npx", "playwright", "test", "--config=playwright.uat.config.ts"]
