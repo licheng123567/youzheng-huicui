@@ -5,9 +5,9 @@ services:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${UAT_POSTGRES_DB}
-      POSTGRES_USER: ${UAT_POSTGRES_USER}
-      POSTGRES_PASSWORD: ${UAT_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${UAT_POSTGRES_DB:?UAT_POSTGRES_DB is required}
+      POSTGRES_USER: ${UAT_POSTGRES_USER:?UAT_POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${UAT_POSTGRES_PASSWORD:?UAT_POSTGRES_PASSWORD is required}
     volumes:
       - huicui-uat-pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -29,19 +29,19 @@ services:
       - uat
 
   backend:
-    image: huicui-uat-backend:${UAT_IMAGE_TAG}
+    image: huicui-uat-backend:${UAT_IMAGE_TAG:?UAT_IMAGE_TAG is required}
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: dev
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${UAT_POSTGRES_DB}
-      SPRING_DATASOURCE_USERNAME: ${UAT_POSTGRES_USER}
-      SPRING_DATASOURCE_PASSWORD: ${UAT_POSTGRES_PASSWORD}
-      HUICUI_JWT_SECRET: ${UAT_JWT_SECRET}
-      HUICUI_CRYPTO_KEY: ${UAT_CRYPTO_KEY}
-      HUICUI_DEV_PASSWORD: ${UAT_DEV_PASSWORD}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${UAT_POSTGRES_DB:?UAT_POSTGRES_DB is required}
+      SPRING_DATASOURCE_USERNAME: ${UAT_POSTGRES_USER:?UAT_POSTGRES_USER is required}
+      SPRING_DATASOURCE_PASSWORD: ${UAT_POSTGRES_PASSWORD:?UAT_POSTGRES_PASSWORD is required}
+      HUICUI_JWT_SECRET: ${UAT_JWT_SECRET:?UAT_JWT_SECRET is required}
+      HUICUI_CRYPTO_KEY: ${UAT_CRYPTO_KEY:?UAT_CRYPTO_KEY is required}
+      HUICUI_DEV_PASSWORD: ${UAT_DEV_PASSWORD:?UAT_DEV_PASSWORD is required}
       HUICUI_PUBLIC_BASE: ${UAT_PUBLIC_BASE:-http://127.0.0.1:6090}
       MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
       JAVA_OPTS: -XX:MaxRAMPercentage=55 -XX:+ExitOnOutOfMemoryError
@@ -61,7 +61,7 @@ services:
       - uat
 
   web:
-    image: huicui-uat-web:${UAT_IMAGE_TAG}
+    image: huicui-uat-web:${UAT_IMAGE_TAG:?UAT_IMAGE_TAG is required}
     restart: unless-stopped
     depends_on:
       backend:

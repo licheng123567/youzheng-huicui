@@ -49,7 +49,7 @@ require_grep '6090:80' "$COMPOSE_FILE"
 require_grep 'huicui-uat-pgdata:' "$COMPOSE_FILE"
 require_grep 'SPRING_PROFILES_ACTIVE:[[:space:]]+dev' "$COMPOSE_FILE"
 require_grep 'MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED:[[:space:]]+"true"' "$COMPOSE_FILE"
-require_grep 'HUICUI_DEV_PASSWORD:[[:space:]]+\$\{UAT_DEV_PASSWORD\}' "$COMPOSE_FILE"
+require_grep 'HUICUI_DEV_PASSWORD:[[:space:]]+\$\{UAT_DEV_PASSWORD:\?' "$COMPOSE_FILE"
 require_grep 'UAT_WEB_BIND:-127\.0\.0\.1' "$COMPOSE_FILE"
 require_grep 'memory:[[:space:]]+256M' "$COMPOSE_FILE"
 require_grep 'memory:[[:space:]]+600M' "$COMPOSE_FILE"
@@ -74,7 +74,7 @@ docker compose \
   -f "$COMPOSE_FILE" \
   config --format json >"$rendered"
 
-python3 - "$rendered" <<'PY'
+python3 -I - "$rendered" <<'PY'
 import json
 import sys
 
