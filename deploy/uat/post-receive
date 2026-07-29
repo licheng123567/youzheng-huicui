@@ -1,0 +1,29 @@
+#!/bin/sh
+set -eu
+umask 077
+
+STATE_DIR=${UAT_STATE_DIR:-/var/lib/huicui-uat}
+RUNNER=${UAT_RUNNER:-/opt/huicui-uat/bin/worker.sh}
+NULL_SHA=0000000000000000000000000000000000000000
+queued=
+
+mkdir -p "$STATE_DIR"
+
+while read -r oldrev newrev refname; do
+  if [ "$refname" != refs/heads/main ] || [ "$newrev" = "$NULL_SHA" ]; then
+    continue
+  fi
+  [ "${#newrev}" -eq 40 ] || continue
+  case "$newrev" in
+    *[!0-9a-f]*) continue ;;
+  esac
+
+  temporary=$(mktemp "$STATE_DIR/pending-sha.XXXXXX")
+  printf '%s\n' "$newrev" >"$temporary"
+  mv "$temporary" "$STATE_DIR/pending-sha"
+  queued=1
+done
+
+if [ -n "$queued" ]; then
+  nohup "$RUNNER" </dev/null >/dev/null 2>&1 &
+fi

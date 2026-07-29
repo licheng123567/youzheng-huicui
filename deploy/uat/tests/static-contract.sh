@@ -43,6 +43,10 @@ for required in \
   "$ENV_FILE" \
   "$UAT_DIR/verify.sh" \
   "$UAT_DIR/reset.sh" \
+  "$UAT_DIR/deploy.sh" \
+  "$UAT_DIR/worker.sh" \
+  "$UAT_DIR/post-receive" \
+  "$UAT_DIR/install-hook.sh" \
   "$REPO_ROOT/frontend/e2e/uat-smoke.spec.ts" \
   "$REPO_ROOT/frontend/playwright.uat.config.ts"
 do
@@ -51,6 +55,28 @@ done
 
 require_executable "$UAT_DIR/verify.sh"
 require_executable "$UAT_DIR/reset.sh"
+require_executable "$UAT_DIR/deploy.sh"
+require_executable "$UAT_DIR/worker.sh"
+require_executable "$UAT_DIR/post-receive"
+require_executable "$UAT_DIR/install-hook.sh"
+
+require_grep 'refs/heads/main' "$UAT_DIR/post-receive"
+require_grep 'flock' "$UAT_DIR/worker.sh"
+require_grep 'pending-sha' "$UAT_DIR/worker.sh"
+require_grep 'active-sha' "$UAT_DIR/deploy.sh"
+require_grep 'failed-sha' "$UAT_DIR/deploy.sh"
+require_grep 'HUICUI_REVISION' "$UAT_DIR/deploy.sh"
+require_grep 'verify\.sh' "$UAT_DIR/deploy.sh"
+require_grep '--profile[[:space:]]+smoke[[:space:]]+run[[:space:]]+--rm[[:space:]]+smoke' "$UAT_DIR/deploy.sh"
+require_grep 'up[[:space:]]+-d[[:space:]]+--wait' "$UAT_DIR/deploy.sh"
+require_grep 'UAT_ARTIFACT_DIR=\$ARTIFACT_DIR' "$UAT_DIR/deploy.sh"
+require_grep 'mv "\$PENDING_SHA" "\$claimed"' "$UAT_DIR/worker.sh"
+require_grep 'checkout[[:space:]]+-f[[:space:]]+"\$sha"' "$UAT_DIR/worker.sh"
+require_grep 'nohup.*</dev/null.*>/dev/null[[:space:]]+2>&1[[:space:]]+&' "$UAT_DIR/post-receive"
+require_grep 'receive\.denyNonFastForwards[[:space:]]+true' "$UAT_DIR/install-hook.sh"
+reject_grep 'volume[[:space:]]+rm' "$UAT_DIR/deploy.sh"
+reject_grep 'down[[:space:]]+-v' "$UAT_DIR/deploy.sh"
+reject_grep 'docker[[:space:]]+run' "$UAT_DIR/deploy.sh"
 
 require_grep '^name:[[:space:]]+huicui-uat$' "$COMPOSE_FILE"
 require_grep '127\.0\.0\.1:9092:9091' "$COMPOSE_FILE"
@@ -212,5 +238,44 @@ require_grep '^|compose --project-name huicui-uat .* down$' "$spy"
 require_grep '^|volume rm huicui-uat-pgdata$' "$spy"
 require_grep "^$sha|compose --project-name huicui-uat .* up -d$" "$spy"
 [ "$(wc -l <"$spy" | tr -d ' ')" -eq 3 ] || fail 'reset issued unexpected Docker calls'
+
+# 部署脚本必须在任何 Docker 调用前拒绝不完整或非十六进制 SHA。
+: >"$spy"
+set +e
+UAT_DOCKER_SPY="$spy" UAT_DOCKER_BIN="$scratch/bin/docker" \
+  "$UAT_DIR/deploy.sh" invalid-sha >/dev/null 2>&1
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail 'deploy accepted an invalid commit SHA'
+[ ! -s "$spy" ] || fail 'deploy called Docker before rejecting an invalid commit SHA'
+
+# post-receive 必须忽略非 main 和 main 删除，只原子排队合法 main SHA。
+hook_state="$scratch/hook-state"
+mkdir -p "$hook_state"
+rm -f "$hook_state/pending-sha"
+printf '%s %s %s\n' "$sha" "$sha" refs/heads/dev | \
+  UAT_STATE_DIR="$hook_state" UAT_RUNNER=/bin/true "$UAT_DIR/post-receive"
+[ ! -e "$hook_state/pending-sha" ] || fail 'post-receive queued a non-main ref'
+printf '%s %s %s\n' "$sha" 0000000000000000000000000000000000000000 refs/heads/main | \
+  UAT_STATE_DIR="$hook_state" UAT_RUNNER=/bin/true "$UAT_DIR/post-receive"
+[ ! -e "$hook_state/pending-sha" ] || fail 'post-receive queued a deleted main ref'
+printf '%s %s %s\n' 0000000000000000000000000000000000000000 "$sha" refs/heads/main | \
+  UAT_STATE_DIR="$hook_state" UAT_RUNNER=/bin/true "$UAT_DIR/post-receive"
+[ "$(sed -n '1p' "$hook_state/pending-sha")" = "$sha" ] || \
+  fail 'post-receive did not queue the latest main SHA'
+
+# 安装脚本必须把 hook/worker 安装到指定隔离目录并禁止非快进。
+bare_repo="$scratch/repo.git"
+git init --bare -q "$bare_repo"
+UAT_REPO="$bare_repo" \
+  UAT_INSTALL_DIR="$scratch/install" \
+  UAT_STATE_DIR="$scratch/install-state" \
+  UAT_LOG_DIR="$scratch/install-logs" \
+  UAT_SRC="$scratch/source" \
+  "$UAT_DIR/install-hook.sh" >/dev/null
+[ -x "$scratch/install/worker.sh" ] || fail 'worker was not installed executable'
+[ -x "$bare_repo/hooks/post-receive" ] || fail 'post-receive was not installed executable'
+[ "$(git --git-dir="$bare_repo" config --get receive.denyNonFastForwards)" = true ] || \
+  fail 'install-hook did not deny non-fast-forward pushes'
 
 echo 'uat static contract: PASS'
