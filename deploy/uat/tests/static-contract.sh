@@ -117,6 +117,10 @@ assert env["JAVA_OPTS"].startswith("-XX:MaxRAMPercentage=55 ")
 assert smoke["environment"]["UAT_DEV_PASSWORD"] == env["HUICUI_DEV_PASSWORD"]
 assert smoke["environment"]["PLAYWRIGHT_BASE_URL"] == "http://web"
 assert smoke["environment"]["PLAYWRIGHT_ARTIFACT_DIR"] == "/artifacts"
+assert any(
+    volume["type"] == "bind" and volume["target"] == "/artifacts"
+    for volume in smoke.get("volumes", [])
+), smoke.get("volumes")
 
 limits = {
     "db": 256 * 1024 * 1024,
