@@ -140,11 +140,40 @@ do
 done
 require_grep 'openssl rand' "$README"
 require_grep 'test ! -e /root/huicui-uat\.env' "$README"
+for generated_secret in db_secret jwt_secret crypto_secret dev_password
+do
+  require_grep "^${generated_secret}=.*openssl rand" "$README"
+done
+require_grep 'env_tmp=\$\(mktemp /root/huicui-uat\.env\.XXXXXX\)' "$README"
+reject_grep 'printf.*\$\(openssl rand' "$README"
 require_grep '--profile smoke' "$README"
+require_grep 'config --quiet' "$README"
+reject_grep '--profile smoke config$' "$README"
 require_grep 'HUICUI_VERSION=sha-\$sha' "$README"
 require_grep 'up -d --wait' "$README"
 require_grep '^export UAT_DEV_PASSWORD$' "$README"
 reject_grep '^set -a$' "$README"
+require_grep 'exec 8>/var/lib/huicui-uat/queue\.lock' "$README"
+require_grep 'flock 8' "$README"
+require_grep "rev-parse --verify 'refs/heads/main\^\{commit\}'" "$README"
+[ "$(grep -Ec '^[[:space:]]*set -eu$' "$README")" -ge 2 ] || \
+  fail 'runbook secret initialization and Playwright blocks must both fail closed'
+require_grep 'UAT_DEV_PASSWORD is missing or empty' "$README"
+python3 -I - "$README" <<'PY'
+import sys
+
+text = open(sys.argv[1], encoding="utf-8").read()
+checks = (
+    text.index("db_secret=$(openssl rand") < text.index("env_tmp=$(mktemp"),
+    text.index("env_tmp=$(mktemp") < text.index('mv "$env_tmp" /root/huicui-uat.env'),
+    text.index("exec 8>/var/lib/huicui-uat/queue.lock")
+    < text.index("rev-parse --verify 'refs/heads/main^{commit}'"),
+    text.index("rev-parse --verify 'refs/heads/main^{commit}'")
+    < text.index('mv "$pending_tmp" /var/lib/huicui-uat/pending-sha'),
+)
+if not all(checks):
+    raise SystemExit("runbook fail-closed steps are out of order")
+PY
 
 for account in admin plat_se cuihu_pl cuihu_pc jx_vl jx_co1
 do

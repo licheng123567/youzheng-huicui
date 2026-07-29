@@ -15,21 +15,34 @@ ssh -N -L 6090:127.0.0.1:6090 root@47.108.81.205
 服务器只保存一个权限为 0600 的环境文件。下面四个敏感值均现场随机生成并直接写入文件，命令不会把数据库口令、JWT 密钥、加密主密钥或 dev 登录口令显示到终端：
 
 ```sh
+set -eu
 umask 077
 test ! -e /root/huicui-uat.env || { echo 'refusing to replace existing /root/huicui-uat.env' >&2; exit 1; }
-install -m 600 /dev/null /root/huicui-uat.env
+db_secret=$(openssl rand -hex 24)
+jwt_secret=$(openssl rand -hex 48)
+crypto_secret=$(openssl rand -hex 32)
+dev_password=$(openssl rand -base64 24)
+test -n "$db_secret" && test -n "$jwt_secret" && test -n "$crypto_secret" && test -n "$dev_password"
+env_tmp=$(mktemp /root/huicui-uat.env.XXXXXX)
+trap 'test -z "${env_tmp:-}" || rm -f "$env_tmp"' 0 1 2 15
 {
   printf '%s\n' 'UAT_IMAGE_TAG=bootstrap'
   printf '%s\n' 'UAT_POSTGRES_DB=huicui_uat'
   printf '%s\n' 'UAT_POSTGRES_USER=huicui_uat'
-  printf 'UAT_POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 24)"
-  printf 'UAT_JWT_SECRET=%s\n' "$(openssl rand -hex 48)"
-  printf 'UAT_CRYPTO_KEY=%s\n' "$(openssl rand -hex 32)"
-  printf 'UAT_DEV_PASSWORD=%s\n' "$(openssl rand -base64 24)"
+  printf 'UAT_POSTGRES_PASSWORD=%s\n' "$db_secret"
+  printf 'UAT_JWT_SECRET=%s\n' "$jwt_secret"
+  printf 'UAT_CRYPTO_KEY=%s\n' "$crypto_secret"
+  printf 'UAT_DEV_PASSWORD=%s\n' "$dev_password"
   printf '%s\n' 'UAT_WEB_BIND=127.0.0.1'
   printf '%s\n' 'UAT_PUBLIC_BASE=http://127.0.0.1:6090'
   printf '%s\n' 'UAT_ARTIFACT_DIR=/var/log/huicui-uat/playwright'
-} >>/root/huicui-uat.env
+} >"$env_tmp"
+chmod 0600 "$env_tmp"
+test ! -e /root/huicui-uat.env || { echo 'refusing to replace existing /root/huicui-uat.env' >&2; exit 1; }
+mv "$env_tmp" /root/huicui-uat.env
+env_tmp=
+trap - 0 1 2 15
+unset db_secret jwt_secret crypto_secret dev_password
 install -d -m 700 /var/lib/huicui-uat /var/log/huicui-uat /var/log/huicui-uat/playwright
 ```
 
@@ -45,9 +58,9 @@ git push backup main:main
 
 ```sh
 sudo -i
-sha=$(git --git-dir=/root/repos/youzheng-huicui.git rev-parse refs/heads/main)
+checkout_sha=$(git --git-dir=/root/repos/youzheng-huicui.git rev-parse refs/heads/main)
 install -d -m 700 /root/huicui-uat-src
-git --git-dir=/root/repos/youzheng-huicui.git --work-tree=/root/huicui-uat-src checkout -f "$sha"
+git --git-dir=/root/repos/youzheng-huicui.git --work-tree=/root/huicui-uat-src checkout -f "$checkout_sha"
 cd /root/huicui-uat-src
 ./deploy/uat/install-hook.sh
 ```
@@ -55,9 +68,14 @@ cd /root/huicui-uat-src
 安装 hook 不会自动重放已经存在的 main，因此首次安装用 state 目录内的临时文件和原子 `mv` 排队，再以前台方式运行 worker，直接观察首次部署结果：
 
 ```sh
+exec 8>/var/lib/huicui-uat/queue.lock
+flock 8
+sha=$(git --git-dir=/root/repos/youzheng-huicui.git rev-parse --verify 'refs/heads/main^{commit}')
 pending_tmp=$(mktemp /var/lib/huicui-uat/pending-sha.XXXXXX)
 printf '%s\n' "$sha" >"$pending_tmp"
 mv "$pending_tmp" /var/lib/huicui-uat/pending-sha
+flock -u 8
+exec 8>&-
 /opt/huicui-uat/bin/worker.sh
 exit
 ```
@@ -74,7 +92,7 @@ test "${#sha}" -eq 40
 docker build -f deploy/Dockerfile --build-arg "HUICUI_VERSION=sha-$sha" --build-arg HUICUI_REVISION="$sha" -t "huicui-uat-backend:$sha" .
 docker build -f deploy/uat/Dockerfile.web --build-arg HUICUI_REVISION="$sha" -t "huicui-uat-web:$sha" .
 docker build -f deploy/uat/Dockerfile.smoke -t "huicui-uat-smoke:$sha" .
-UAT_IMAGE_TAG="$sha" docker compose --project-name huicui-uat --env-file /root/huicui-uat.env -f deploy/uat/docker-compose.uat.yml --profile smoke config
+UAT_IMAGE_TAG="$sha" docker compose --project-name huicui-uat --env-file /root/huicui-uat.env -f deploy/uat/docker-compose.uat.yml --profile smoke config --quiet
 UAT_IMAGE_TAG="$sha" docker compose --project-name huicui-uat --env-file /root/huicui-uat.env -f deploy/uat/docker-compose.uat.yml up -d --wait --wait-timeout 240
 sudo UAT_ENV_FILE=/root/huicui-uat.env UAT_ARTIFACT_DIR=/var/log/huicui-uat ./deploy/uat/verify.sh
 UAT_IMAGE_TAG="$sha" docker compose --project-name huicui-uat --env-file /root/huicui-uat.env -f deploy/uat/docker-compose.uat.yml --profile smoke run --rm smoke
@@ -90,12 +108,15 @@ npm --prefix frontend run build
 (cd frontend && npm run gen:api)
 git diff --exit-code -- frontend/src/api/schema.d.ts
 deploy/uat/tests/static-contract.sh
-UAT_DEV_PASSWORD=$(awk 'index($0,"UAT_DEV_PASSWORD=")==1 { sub(/^UAT_DEV_PASSWORD=/,""); print; exit }' /root/huicui-uat.env)
-test -n "$UAT_DEV_PASSWORD"
+(
+set -eu
+UAT_DEV_PASSWORD=$(awk 'index($0,"UAT_DEV_PASSWORD=")==1 { sub(/^UAT_DEV_PASSWORD=/,""); print; exit }' /root/huicui-uat.env) || { echo 'UAT_DEV_PASSWORD is missing or empty' >&2; exit 1; }
+test -n "$UAT_DEV_PASSWORD" || { echo 'UAT_DEV_PASSWORD is missing or empty' >&2; exit 1; }
 export UAT_DEV_PASSWORD
-(cd frontend && PLAYWRIGHT_BASE_URL=http://127.0.0.1:6090 npx playwright test e2e/members.spec.ts)
-(cd frontend && PLAYWRIGHT_BASE_URL=http://127.0.0.1:6090 npx playwright test)
-unset UAT_DEV_PASSWORD
+cd frontend
+PLAYWRIGHT_BASE_URL=http://127.0.0.1:6090 npx playwright test e2e/members.spec.ts
+PLAYWRIGHT_BASE_URL=http://127.0.0.1:6090 npx playwright test
+)
 ```
 
 最后一组命令从环境文件导出 `UAT_DEV_PASSWORD`，密码值不会出现在 Playwright 的 argv 中。远程执行全量 Playwright 前先建立前述 SSH 隧道；自动 smoke 则由 Compose 的 `--env-file` 注入口令。
