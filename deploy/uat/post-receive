@@ -2,8 +2,19 @@
 set -eu
 umask 077
 
-STATE_DIR=${UAT_STATE_DIR:-/var/lib/huicui-uat}
-RUNNER=${UAT_RUNNER:-/opt/huicui-uat/bin/worker.sh}
+HOOK_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+HOOK_CONFIG=${UAT_HOOK_CONFIG:-$HOOK_DIR/huicui-uat-hook.conf}
+if [ -f "$HOOK_CONFIG" ]; then
+  # This root-owned file contains paths only; install-hook.sh validates them.
+  . "$HOOK_CONFIG"
+fi
+
+STATE_DIR=${UAT_STATE_DIR:-${HOOK_UAT_STATE_DIR:-/var/lib/huicui-uat}}
+RUNNER=${UAT_RUNNER:-${HOOK_UAT_RUNNER:-/opt/huicui-uat/bin/worker.sh}}
+BARE_REPO=${UAT_REPO:-${HOOK_UAT_REPO:-}}
+if [ -z "$BARE_REPO" ]; then
+  BARE_REPO=$(git rev-parse --absolute-git-dir)
+fi
 NULL_SHA=0000000000000000000000000000000000000000
 queued=
 
@@ -18,12 +29,26 @@ while read -r oldrev newrev refname; do
     *[!0-9a-f]*) continue ;;
   esac
 
-  temporary=$(mktemp "$STATE_DIR/pending-sha.XXXXXX")
-  printf '%s\n' "$newrev" >"$temporary"
-  mv "$temporary" "$STATE_DIR/pending-sha"
   queued=1
 done
 
 if [ -n "$queued" ]; then
+  exec 8>"$STATE_DIR/queue.lock"
+  flock 8
+  current=$(git --git-dir="$BARE_REPO" rev-parse --verify 'refs/heads/main^{commit}')
+  [ "${#current}" -eq 40 ] || exit 1
+  case "$current" in
+    *[!0-9a-f]*) exit 1 ;;
+  esac
+  temporary=$(mktemp "$STATE_DIR/pending-sha.XXXXXX")
+  printf '%s\n' "$current" >"$temporary"
+  mv "$temporary" "$STATE_DIR/pending-sha"
+  flock -u 8
+  exec 8>&-
+
+  export UAT_REPO="$BARE_REPO" UAT_STATE_DIR="$STATE_DIR"
+  if [ -n "${HOOK_UAT_SRC:-}" ]; then export UAT_SRC="$HOOK_UAT_SRC"; fi
+  if [ -n "${HOOK_UAT_LOG_DIR:-}" ]; then export UAT_LOG_DIR="$HOOK_UAT_LOG_DIR"; fi
+  if [ -n "${HOOK_UAT_ENV_FILE:-}" ]; then export UAT_ENV_FILE="$HOOK_UAT_ENV_FILE"; fi
   nohup "$RUNNER" </dev/null >/dev/null 2>&1 &
 fi

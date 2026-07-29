@@ -7,6 +7,7 @@ SOURCE_DIR=${UAT_SRC:-/root/huicui-uat-src}
 STATE_DIR=${UAT_STATE_DIR:-/var/lib/huicui-uat}
 LOG_DIR=${UAT_LOG_DIR:-/var/log/huicui-uat}
 PENDING_SHA="$STATE_DIR/pending-sha"
+PROCESSING_SHA="$STATE_DIR/processing-sha"
 LOCK_FILE="$STATE_DIR/deploy.lock"
 
 process_sha() {
@@ -27,21 +28,32 @@ mkdir -p "$SOURCE_DIR" "$STATE_DIR" "$LOG_DIR"
 exec 9>"$LOCK_FILE"
 flock 9
 
+# A killed worker leaves the claim behind. Requeue it unless a newer pending
+# value already exists; the next loop then drains the latest available SHA.
+if [ -f "$PROCESSING_SHA" ]; then
+  if [ -f "$PENDING_SHA" ]; then
+    rm -f "$PROCESSING_SHA"
+  else
+    mv "$PROCESSING_SHA" "$PENDING_SHA"
+  fi
+fi
+
 while :; do
-  claimed="$STATE_DIR/processing-sha.$$"
+  claimed=$PROCESSING_SHA
   if ! mv "$PENDING_SHA" "$claimed" 2>/dev/null; then
     break
   fi
 
   sha=$(sed -n '1p' "$claimed")
-  rm -f "$claimed"
   if [ "${#sha}" -ne 40 ]; then
     echo "uat worker: rejected invalid pending SHA" >>"$LOG_DIR/worker.log"
+    rm -f "$claimed"
     continue
   fi
   case "$sha" in
     *[!0-9a-f]*)
       echo "uat worker: rejected invalid pending SHA" >>"$LOG_DIR/worker.log"
+      rm -f "$claimed"
       continue
       ;;
   esac
@@ -55,4 +67,5 @@ while :; do
     mv "$temporary" "$STATE_DIR/failed-sha"
     echo "failed $(date -u +%FT%TZ) $sha" >>"$log"
   fi
+  rm -f "$claimed"
 done
