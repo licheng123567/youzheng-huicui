@@ -123,6 +123,14 @@ rollback_to_previous() {
     "$rollback_verify_command" || return
 }
 
+record_rollback_failure() {
+  atomic_sha_write "$SHA" "$ROLLBACK_FAILED_SHA" || true
+  if [ -n "$previous" ]; then
+    atomic_sha_write "$previous" "$LAST_KNOWN_GOOD_SHA" || true
+  fi
+  rm -f "$ACTIVE_SHA" || true
+}
+
 mkdir -p "$STATE_DIR" "$LOG_DIR" "$ARTIFACT_DIR"
 [ -f "$ENV_FILE" ] || fail "environment file not found: $ENV_FILE"
 [ -d "$BARE_REPO/objects" ] || fail "bare repository not found: $BARE_REPO"
@@ -169,14 +177,17 @@ compose "$SHA" logs --tail=300 db backend web >"$ARTIFACT_DIR/containers-failed.
 if [ "$STARTUP_ATTEMPTED" -eq 1 ] && [ -n "$previous" ]; then
   echo "uat deploy: rolling backend and web back to $previous" >&2
   if rollback_to_previous >"$ARTIFACT_DIR/rollback.log" 2>&1; then
-    rm -f "$ROLLBACK_FAILED_SHA" || true
-    compose_file "$previous" "$previous_compose" ps \
-      >"$ARTIFACT_DIR/compose-ps-after-rollback.txt" 2>&1 || true
-    echo "uat deploy: rollback PASS $previous" >&2
+    if atomic_sha_write "$previous" "$ACTIVE_SHA"; then
+      rm -f "$ROLLBACK_FAILED_SHA" "$LAST_KNOWN_GOOD_SHA" || true
+      compose_file "$previous" "$previous_compose" ps \
+        >"$ARTIFACT_DIR/compose-ps-after-rollback.txt" 2>&1 || true
+      echo "uat deploy: rollback PASS $previous" >&2
+    else
+      record_rollback_failure
+      echo "uat deploy: rollback verification passed but active state write failed" >&2
+    fi
   else
-    atomic_sha_write "$SHA" "$ROLLBACK_FAILED_SHA" || true
-    atomic_sha_write "$previous" "$LAST_KNOWN_GOOD_SHA" || true
-    rm -f "$ACTIVE_SHA" || true
+    record_rollback_failure
     echo "uat deploy: rollback FAIL $previous; active SHA cleared" >&2
   fi
 elif [ "$STARTUP_ATTEMPTED" -eq 1 ]; then
@@ -184,7 +195,7 @@ elif [ "$STARTUP_ATTEMPTED" -eq 1 ]; then
   if compose "$SHA" stop web backend >"$ARTIFACT_DIR/first-deploy-stop.log" 2>&1; then
     echo 'uat deploy: unverified first deployment stopped' >&2
   else
-    atomic_sha_write "$SHA" "$ROLLBACK_FAILED_SHA" || true
+    record_rollback_failure
     echo 'uat deploy: failed to stop unverified first deployment' >&2
   fi
 fi

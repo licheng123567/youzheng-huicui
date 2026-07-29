@@ -338,6 +338,29 @@ set -e
 [ "$(sed -n '1p' "$rollback_fail_state/last-known-good-sha")" = "$previous_sha" ] || \
   fail 'failed rollback did not preserve last-known-good-sha'
 
+# 仅剩 last-known-good 的后续回滚成功时，必须恢复真实 active 状态。
+recovery_rollback_state="$scratch/recovery-rollback-state"
+recovery_rollback_logs="$scratch/recovery-rollback-logs"
+mkdir -p "$recovery_rollback_state" "$recovery_rollback_logs"
+printf '%s\n' "$previous_sha" >"$recovery_rollback_state/last-known-good-sha"
+set +e
+UAT_DOCKER_SPY="$spy" \
+  UAT_DOCKER_BIN="$scratch/bin/docker" \
+  UAT_REPO="$deploy_repo" \
+  UAT_ENV_FILE="$ENV_FILE" \
+  UAT_STATE_DIR="$recovery_rollback_state" \
+  UAT_LOG_DIR="$recovery_rollback_logs" \
+  UAT_VERIFY_SCRIPT=/usr/bin/false \
+  UAT_ROLLBACK_VERIFY_SCRIPT=/usr/bin/true \
+  "$UAT_DIR/deploy.sh" "$candidate_sha" >/dev/null 2>&1
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail 'deploy reported candidate success during last-known-good recovery'
+[ "$(sed -n '1p' "$recovery_rollback_state/active-sha")" = "$previous_sha" ] || \
+  fail 'successful last-known-good rollback did not restore active-sha'
+[ ! -e "$recovery_rollback_state/last-known-good-sha" ] || \
+  fail 'successful last-known-good rollback left stale recovery state'
+
 # post-receive 必须忽略非 main 和 main 删除，只原子排队合法 main SHA。
 hook_state="$scratch/hook-state"
 hook_repo=$(git rev-parse --path-format=absolute --git-common-dir)
