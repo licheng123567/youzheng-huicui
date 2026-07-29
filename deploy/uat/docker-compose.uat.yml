@@ -41,7 +41,8 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${UAT_POSTGRES_PASSWORD}
       HUICUI_JWT_SECRET: ${UAT_JWT_SECRET}
       HUICUI_CRYPTO_KEY: ${UAT_CRYPTO_KEY}
-      HUICUI_PUBLIC_BASE: ${UAT_PUBLIC_BASE:-http://47.108.81.205:6090}
+      HUICUI_DEV_PASSWORD: ${UAT_DEV_PASSWORD}
+      HUICUI_PUBLIC_BASE: ${UAT_PUBLIC_BASE:-http://127.0.0.1:6090}
       MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
       JAVA_OPTS: -XX:MaxRAMPercentage=55 -XX:+ExitOnOutOfMemoryError
     ports:
@@ -66,7 +67,7 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "6090:80"
+      - "${UAT_WEB_BIND:-127.0.0.1}:6090:80"
     mem_limit: 128M
     deploy:
       resources:

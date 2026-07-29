@@ -4,6 +4,7 @@ import { execSync } from 'child_process'
 
 // 构建时注入版本信息：git describe（回退依据）+ 构建时间
 const gitVersion = (() => {
+  if (process.env.HUICUI_REVISION?.trim()) return process.env.HUICUI_REVISION.trim()
   try { return execSync('git describe --tags --always --dirty').toString().trim() }
   catch { return 'unknown' }
 })()

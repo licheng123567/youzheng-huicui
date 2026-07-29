@@ -1,6 +1,7 @@
 import { Page, expect } from '@playwright/test'
 
-export const DEV_PW = 'Admin@123'
+// UAT 必须注入独立随机口令；本地/CI 未注入时保持既有 dev 默认值。
+export const DEV_PW = process.env.UAT_DEV_PASSWORD || 'Admin@123'
 
 /** 口令登录（单账号直登）：返回后停在工作台（非 /login）。 */
 export async function loginAs(page: Page, username: string, password = DEV_PW) {
