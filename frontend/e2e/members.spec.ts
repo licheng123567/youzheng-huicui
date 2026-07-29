@@ -91,6 +91,20 @@ test.describe('US-M1-04 成员管理(PL/VL)', () => {
     await expect(page.getByRole('option', { name: /催收员|协调员/ })).toHaveCount(0)
   })
 
+  test('SE 成员管理同样只见平台员工且不显示工作督导', async ({ page }) => {
+    await loginRole(page, 'SE')
+    await page.goto('/members')
+
+    const memberTable = page.locator('table').first()
+    const rows = memberTable.locator('tbody tr')
+    await expect(rows.filter({ hasText: '平台超管' }).first()).toContainText('13800000000')
+    await expect(rows.filter({ hasText: '平台运营' }).first()).toContainText('13800000001')
+    await expect(memberTable).not.toContainText('cuihu_pl')
+    await expect(memberTable).not.toContainText('jx_vl')
+    await expect(memberTable).not.toContainText('jx_co1')
+    await expect(page.getByText('工作督导', { exact: true })).toHaveCount(0)
+  })
+
   test('CO/VL(无 member.manage)无「成员」菜单·直链不渲染管理操作', async ({ page }) => {
     await loginRole(page, 'CO')
     // CO 无 member.manage → 侧栏无成员菜单

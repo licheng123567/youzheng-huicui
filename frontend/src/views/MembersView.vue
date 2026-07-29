@@ -21,7 +21,9 @@ const size = ref(50)
 const total = ref(0)
 function onPage(p: number) { page.value = p; load() }
 const orgs = ref<any[]>([])
-const isPlatform = () => auth.has('org.manage')
+// 平台身份与组织管理权限是两件事：SE 没有 org.manage，但 member.manage 仍只能看平台员工。
+const isPlatform = () => (auth.me as any)?.org?.type === 'PLATFORM'
+const canManageOrgs = () => auth.has('org.manage')
 // 工作督导 tab：仅组织负责人(有 member.manage 且非平台) 可见——VL 督催收员 / PL 督协调员。
 const showSupervise = computed(() => auth.has('member.manage') && !isPlatform())
 const memberTab = ref<'list' | 'supervise'>('list')
@@ -51,7 +53,7 @@ async function load() {
   const m = await api.GET('/members', { params: { query: q } as any })
   members.value = (m.data as any)?.items ?? []
   total.value = (m.data as any)?.meta?.total ?? 0
-  if (isPlatform()) orgs.value = ((await api.GET('/orgs', { params: { query: { page: 1, size: 50 } } as any })).data as any)?.items ?? []
+  if (canManageOrgs()) orgs.value = ((await api.GET('/orgs', { params: { query: { page: 1, size: 50 } } as any })).data as any)?.items ?? []
   if (showSupervise.value) loadSupervise()
 }
 
@@ -325,7 +327,7 @@ onMounted(load)
       </tbody>
     </table>
 
-    <template v-if="isPlatform()">
+    <template v-if="canManageOrgs()">
       <div class="sec-title" style="justify-content:space-between">
         <span style="display:flex;align-items:center;gap:8px">组织管理（GET /orgs · 平台 org.manage）</span>
         <button class="btn txt" @click="oDlg=true">+ 新建组织</button>
