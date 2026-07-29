@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+umask 077
 
 BASE=${UAT_BASE_URL:-http://127.0.0.1:6090}
 UAT_ENV_FILE=${UAT_ENV_FILE:-/root/huicui-uat.env}
@@ -92,8 +93,13 @@ do
 done
 [ -n "$sa_token" ] || fail 'SA token was not captured'
 
+auth_config=$(mktemp "$ARTIFACT_DIR/curl-auth.XXXXXX")
+trap 'rm -f "$auth_config"' EXIT HUP INT TERM
+printf 'header = "Authorization: Bearer %s"\n' "$sa_token" >"$auth_config"
+sa_token=
+
 curl_ok \
-  -H "Authorization: Bearer $sa_token" \
+  --config "$auth_config" \
   -o "$ARTIFACT_DIR/me.json" \
   "$BASE/v1/me"
 
@@ -111,11 +117,11 @@ PY
 ) || fail 'could not read the platform organization id'
 
 curl_ok \
-  -H "Authorization: Bearer $sa_token" \
+  --config "$auth_config" \
   -o "$ARTIFACT_DIR/orgs.json" \
   "$BASE/v1/orgs?page=1&size=50"
 curl_ok \
-  -H "Authorization: Bearer $sa_token" \
+  --config "$auth_config" \
   -o "$ARTIFACT_DIR/members.json" \
   "$BASE/v1/members?orgId=$platform_org_id&page=1&size=50"
 
