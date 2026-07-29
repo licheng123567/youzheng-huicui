@@ -42,6 +42,7 @@ services:
       HUICUI_JWT_SECRET: ${UAT_JWT_SECRET}
       HUICUI_CRYPTO_KEY: ${UAT_CRYPTO_KEY}
       HUICUI_PUBLIC_BASE: ${UAT_PUBLIC_BASE:-http://47.108.81.205:6090}
+      MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
       JAVA_OPTS: -XX:MaxRAMPercentage=55 -XX:+ExitOnOutOfMemoryError
     ports:
       - "127.0.0.1:9092:9091"

@@ -48,6 +48,7 @@ require_grep '127\.0\.0\.1:9092:9091' "$COMPOSE_FILE"
 require_grep '6090:80' "$COMPOSE_FILE"
 require_grep 'huicui-uat-pgdata:' "$COMPOSE_FILE"
 require_grep 'SPRING_PROFILES_ACTIVE:[[:space:]]+dev' "$COMPOSE_FILE"
+require_grep 'MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED:[[:space:]]+"true"' "$COMPOSE_FILE"
 require_grep 'memory:[[:space:]]+256M' "$COMPOSE_FILE"
 require_grep 'memory:[[:space:]]+600M' "$COMPOSE_FILE"
 require_grep 'memory:[[:space:]]+128M' "$COMPOSE_FILE"
@@ -60,10 +61,21 @@ require_grep '^FROM[[:space:]]+mcr\.microsoft\.com/playwright:v1\.61\.1-noble$' 
 require_grep 'PLAYWRIGHT_BASE_URL' "$REPO_ROOT/frontend/playwright.uat.config.ts"
 require_grep 'PLAYWRIGHT_ARTIFACT_DIR' "$REPO_ROOT/frontend/playwright.uat.config.ts"
 
+rendered=$(mktemp)
+trap 'rm -f "$rendered"' EXIT HUP INT TERM
+
 docker compose \
   --project-name huicui-uat \
   --env-file "$ENV_FILE" \
   -f "$COMPOSE_FILE" \
-  config >/dev/null
+  config >"$rendered"
+
+if awk '
+  /^  db:$/ { in_db = 1; next }
+  in_db && /^  [^ ]/ { exit }
+  in_db { print }
+' "$rendered" | grep -Eq '^[[:space:]]+ports:'; then
+  fail 'db service must not publish any host port'
+fi
 
 echo 'uat static contract: PASS'
