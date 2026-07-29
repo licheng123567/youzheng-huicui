@@ -1,6 +1,6 @@
 # 独立 UAT 环境
 
-这套 Compose 只用于合成数据验收。它有独立的项目名、网络、镜像标签和 PostgreSQL 卷；禁止导入生产或其他真实数据，禁止把真实姓名、电话、录音、密钥复制进 UAT。短信、存证、ASR、LLM 等第三方通道保持关闭，不配置真实凭据。
+这套 Compose 只用于合成数据验收。它有独立的项目名、网络、镜像标签和 PostgreSQL 卷；禁止导入生产或其他真实数据，禁止把真实姓名、电话、录音、密钥复制进 UAT。短信、存证、ASR、LLM、支付等第三方通道保持关闭，不配置真实凭据。
 
 当前 Web 端口只绑定服务器 loopback。反馈人员先建立 SSH 隧道：
 
@@ -16,6 +16,7 @@ ssh -N -L 6090:127.0.0.1:6090 root@47.108.81.205
 
 ```sh
 umask 077
+test ! -e /root/huicui-uat.env || { echo 'refusing to replace existing /root/huicui-uat.env' >&2; exit 1; }
 install -m 600 /dev/null /root/huicui-uat.env
 {
   printf '%s\n' 'UAT_IMAGE_TAG=bootstrap'
@@ -34,19 +35,26 @@ install -d -m 700 /var/lib/huicui-uat /var/log/huicui-uat /var/log/huicui-uat/pl
 
 不要在工单、聊天或 shell 参数中粘贴 `UAT_POSTGRES_PASSWORD`、`UAT_JWT_SECRET`、`UAT_CRYPTO_KEY`、`UAT_DEV_PASSWORD` 的值。UAT 的 dev password 也必须保持随机，不能回退为仓库里的本地开发默认口令。
 
-在服务器的受控 checkout 中安装接收 hook。安装器无位置参数，默认把 hook 写到 `/root/repos/youzheng-huicui.git`，把 worker 写到 `/opt/huicui-uat/bin/worker.sh`：
+先在受控工作站把 main 推送到内网备份仓库：
 
 ```sh
-cd /root/huicui-uat-src
-sudo ./deploy/uat/install-hook.sh
+git push backup main:main
 ```
 
-安装 hook 不会自动重放已有的 main。首次部署可推送 main；若 main 已存在，则用 state 目录内的临时文件和原子 `mv` 排队，再以前台方式运行 worker，直接观察首次部署结果：
+然后在服务器准备受控 checkout 并安装接收 hook。安装器无位置参数，默认把 hook 写到 `/root/repos/youzheng-huicui.git`，把 worker 写到 `/opt/huicui-uat/bin/worker.sh`：
 
 ```sh
-git push uat main:main
 sudo -i
 sha=$(git --git-dir=/root/repos/youzheng-huicui.git rev-parse refs/heads/main)
+install -d -m 700 /root/huicui-uat-src
+git --git-dir=/root/repos/youzheng-huicui.git --work-tree=/root/huicui-uat-src checkout -f "$sha"
+cd /root/huicui-uat-src
+./deploy/uat/install-hook.sh
+```
+
+安装 hook 不会自动重放已经存在的 main，因此首次安装用 state 目录内的临时文件和原子 `mv` 排队，再以前台方式运行 worker，直接观察首次部署结果：
+
+```sh
 pending_tmp=$(mktemp /var/lib/huicui-uat/pending-sha.XXXXXX)
 printf '%s\n' "$sha" >"$pending_tmp"
 mv "$pending_tmp" /var/lib/huicui-uat/pending-sha
@@ -97,12 +105,22 @@ unset UAT_DEV_PASSWORD
 部署状态位于 `/var/lib/huicui-uat`：
 
 - `active-sha`：当前通过 verify 与 smoke 的提交。
-- `last-known-good-sha`：最近一次可回滚的已验证提交。
+- `last-known-good-sha`：仅在自动回滚失败时保留此前最后已验证的提交。
 - `failed-sha`：最近一次部署失败的目标提交。
-- `rollback-failed-sha`：自动回滚自身失败，必须立即人工处理。
+- `rollback-failed-sha`：自动回滚自身失败的目标提交；此时 `active-sha` 会被清除，必须立即人工处理。
 - `pending-sha`：等待 worker 部署的最新 main 提交。
 
 日志和 Playwright artifacts 位于 `/var/log/huicui-uat`。每次失败应先保留 `docker compose ps`、backend/web 日志和测试产物，再检查状态文件。失败部署只回滚 backend/web 镜像；数据库容器和 `huicui-uat-pgdata` 卷必须原地保留，不能 down、删除或用生产数据重建。
+
+```sh
+for state in active-sha failed-sha rollback-failed-sha last-known-good-sha pending-sha processing-sha; do
+  test ! -f "/var/lib/huicui-uat/$state" || { printf '%s: ' "$state"; cat "/var/lib/huicui-uat/$state"; }
+done
+docker compose --project-name huicui-uat --env-file /root/huicui-uat.env -f /root/huicui-uat-src/deploy/uat/docker-compose.uat.yml ps
+tail -n 200 /var/log/huicui-uat/*.log
+df -h /
+docker system df
+```
 
 手工健康与种子数据门禁：
 

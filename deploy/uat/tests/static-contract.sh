@@ -139,6 +139,7 @@ do
   require_grep "$secret" "$README"
 done
 require_grep 'openssl rand' "$README"
+require_grep 'test ! -e /root/huicui-uat\.env' "$README"
 require_grep '--profile smoke' "$README"
 require_grep 'HUICUI_VERSION=sha-\$sha' "$README"
 require_grep 'up -d --wait' "$README"
