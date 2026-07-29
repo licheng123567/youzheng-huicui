@@ -72,6 +72,7 @@ docker compose \
   --project-name huicui-uat \
   --env-file "$ENV_FILE" \
   -f "$COMPOSE_FILE" \
+  --profile smoke \
   config --format json >"$rendered"
 
 python3 -I - "$rendered" <<'PY'
@@ -84,7 +85,7 @@ assert config["networks"]["uat"]["name"] == "huicui-uat-network"
 assert config["volumes"]["huicui-uat-pgdata"]["name"] == "huicui-uat-pgdata"
 
 services = config["services"]
-db, backend, web = services["db"], services["backend"], services["web"]
+db, backend, web, smoke = (services[name] for name in ("db", "backend", "web", "smoke"))
 assert not db.get("ports"), "db service must not publish any host port"
 assert db["volumes"] == [{
     "type": "volume",
@@ -106,14 +107,23 @@ only_port(web, "127.0.0.1", 6090, 80)
 
 assert backend["depends_on"]["db"]["condition"] == "service_healthy"
 assert web["depends_on"]["backend"]["condition"] == "service_healthy"
+assert smoke["depends_on"]["web"]["condition"] == "service_healthy"
 env = backend["environment"]
 assert env["SPRING_PROFILES_ACTIVE"] == "dev"
 assert env["SPRING_DATASOURCE_URL"].startswith("jdbc:postgresql://db:5432/")
 assert env["MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED"] == "true"
 assert env["HUICUI_DEV_PASSWORD"] != "Admin@123"
 assert env["JAVA_OPTS"].startswith("-XX:MaxRAMPercentage=55 ")
+assert smoke["environment"]["UAT_DEV_PASSWORD"] == env["HUICUI_DEV_PASSWORD"]
+assert smoke["environment"]["PLAYWRIGHT_BASE_URL"] == "http://web"
+assert smoke["environment"]["PLAYWRIGHT_ARTIFACT_DIR"] == "/artifacts"
 
-limits = {"db": 256 * 1024 * 1024, "backend": 600 * 1024 * 1024, "web": 128 * 1024 * 1024}
+limits = {
+    "db": 256 * 1024 * 1024,
+    "backend": 600 * 1024 * 1024,
+    "web": 128 * 1024 * 1024,
+    "smoke": 512 * 1024 * 1024,
+}
 for name, expected in limits.items():
     service = services[name]
     assert int(service["mem_limit"]) == expected, (name, service["mem_limit"])

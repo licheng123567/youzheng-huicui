@@ -81,6 +81,29 @@ services:
     networks:
       - uat
 
+  smoke:
+    image: huicui-uat-smoke:${UAT_IMAGE_TAG:?UAT_IMAGE_TAG is required}
+    profiles: [smoke]
+    depends_on:
+      web:
+        condition: service_healthy
+    environment:
+      UAT_DEV_PASSWORD: ${UAT_DEV_PASSWORD:?UAT_DEV_PASSWORD is required}
+      PLAYWRIGHT_BASE_URL: http://web
+      PLAYWRIGHT_ARTIFACT_DIR: /artifacts
+    mem_limit: 512M
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks:
+      - uat
+
 networks:
   uat:
     name: huicui-uat-network
