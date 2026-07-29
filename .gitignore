@@ -20,6 +20,7 @@ _verify.sh
 /tmp/
 .hypothesis/
 .superpowers/
+.worktrees/
 
 # Playwright 产物
 frontend/test-results/
