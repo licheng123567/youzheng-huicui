@@ -12,7 +12,8 @@ fail() {
 }
 
 curl_ok() {
-  curl --fail-with-body --silent --show-error --max-time 20 "$@"
+  # curl 7.61 (当前 UAT 主机) 只支持传统的失败状态参数。
+  curl --fail --silent --show-error --max-time 20 "$@"
 }
 
 curl_status() {
