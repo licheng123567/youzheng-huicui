@@ -5,7 +5,7 @@ package com.youzheng.huicui.web.dto;
  * AuditLog / PermissionMatrixItem）。带 OrgSystem 前缀避免与 M1-M10 既有 DTO 冲突。
  *
  * 真值源：docs/api/openapi-core.yaml
- *   Org{id,type,name,ownerAccountId,status}
+ *   Org{id,type,name,ownerAccountId,ownerUsername,ownerPhone,status,ownerSetupToken}
  *   OrgInput{type,name,ownerAccount,ownerPhone}（均 required）
  *   OwnerRebindInput{newPhone(required),resetPassword?}
  *   AuditLog{id,actor,action,target,targetType,targetId,scope,proxyFor,before,after,reason,ip,traceId,tm}
@@ -25,6 +25,8 @@ public final class OrgSystemDtos {
             String type,
             String name,
             String ownerAccountId,
+            String ownerUsername,
+            String ownerPhone,
             String status,
             String ownerSetupToken) {}
 

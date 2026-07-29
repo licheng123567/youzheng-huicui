@@ -103,7 +103,7 @@ public class OrgSystemM1Controller {
             if (!"PLATFORM".equals(t) && !"PROPERTY".equals(t) && !"PROVIDER".equals(t)) {
                 throw new ApiException(BizError.VALIDATION_422, "type 非法（仅 PLATFORM/PROPERTY/PROVIDER）");
             }
-            where.append(" AND type = ?");
+            where.append(" AND o.type = ?");
             args.add(t);
         }
         if (status != null && !status.isBlank()) {
@@ -111,23 +111,25 @@ public class OrgSystemM1Controller {
             if (!"ACTIVE".equals(st) && !"DISABLED".equals(st)) {
                 throw new ApiException(BizError.VALIDATION_422, "status 非法（仅 ACTIVE/DISABLED）");
             }
-            where.append(" AND status = ?");
+            where.append(" AND o.status = ?");
             args.add(st);
         }
         // range（org 维退化为 own-org-on-self）：平台全量；物业/服务商仅本组织。
         if (!s.isPlatform()) {
-            where.append(" AND id = ?");
+            where.append(" AND o.id = ?");
             args.add(Long.valueOf(s.orgId()));
         }
 
-        Long total = jdbc.queryForObject("SELECT count(*) FROM org" + where, Long.class, args.toArray());
+        Long total = jdbc.queryForObject("SELECT count(*) FROM org o" + where, Long.class, args.toArray());
 
         List<Object> pageArgs = new ArrayList<>(args);
         pageArgs.add(pg.size);
         pageArgs.add(pg.offset);
         List<OrgDto> items = jdbc.query(
-                "SELECT id, type, name, owner_account_id, status FROM org" + where
-                        + " ORDER BY id LIMIT ? OFFSET ?",
+                "SELECT o.id, o.type, o.name, o.owner_account_id,"
+                        + " owner.username AS owner_username, owner.phone AS owner_phone, o.status"
+                        + " FROM org o LEFT JOIN account owner ON owner.id = o.owner_account_id" + where
+                        + " ORDER BY o.id LIMIT ? OFFSET ?",
                 ORG_MAPPER, pageArgs.toArray());
 
         return Page.of(items, pg, total == null ? 0 : total);
@@ -205,7 +207,8 @@ public class OrgSystemM1Controller {
         audit.write(s, "org.create", "org", String.valueOf(orgId), "PLATFORM", null, null, null, after);
 
         return new OrgDto(String.valueOf(orgId), type, body.name(),
-                String.valueOf(ownerAccountId), "ACTIVE", setupToken);
+                String.valueOf(ownerAccountId), body.ownerAccount(), body.ownerPhone(),
+                "ACTIVE", setupToken);
     }
 
     // ── [3] PATCH /orgs/{id}/owner ────────────────────────────────────────────
@@ -440,6 +443,8 @@ public class OrgSystemM1Controller {
             rs.getString("type"),
             rs.getString("name"),
             idOrNull(rs, "owner_account_id"),
+            rs.getString("owner_username"),
+            rs.getString("owner_phone"),
             rs.getString("status"),
             null);
 

@@ -3737,7 +3737,9 @@ components:
         id: { type: string }
         type: { $ref: '#/components/schemas/OrgTypeEnum' }
         name: { type: string }
-        ownerAccountId: { type: string }
+        ownerAccountId: { type: string, description: '负责人 account.id；兼容字段，不得作为账号名展示' }
+        ownerUsername: { type: [string, 'null'], description: '负责人登录账号名 account.username' }
+        ownerPhone: { type: [string, 'null'], description: '负责人完整手机号 account.phone，当前需求明确不脱敏' }
         status: { type: string }
         ownerSetupToken: { type: [string, 'null'], description: '一次性凭据交付 token 明文（仅 POST /orgs 201 及 PATCH owner?resetPassword=true 响应出现一次，带外转交 owner；审计不记明文）' }
     OrgPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Org' } }, meta: { $ref: '#/components/schemas/PageMeta' } } }
