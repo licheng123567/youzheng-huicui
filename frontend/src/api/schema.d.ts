@@ -1212,6 +1212,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/cases/{id}/legal-hold": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 置法律保留(投诉/诉讼/监管检查期间暂停该案件的留存清理)
+         * @description 置上后，留存清理（业主 PII 去标识化 60 天、通话录音与转写删除 180 天）一律跳过该案件。 **由物业发起**（PL/PC）——他们是纠纷第一线，也是个人信息的责任主体。 reason 必填：这是个能让数据「不被删」的开关，不写理由就没法审计，会变成绕过留存策略的后门。 置/撤均写 audit_log。
+         */
+        post: operations["setLegalHold"];
+        /** 撤销法律保留(该案件重新进入正常留存清理队列) */
+        delete: operations["releaseLegalHold"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/cases/{id}/reductions": {
         parameters: {
             query?: never;
@@ -5027,12 +5050,17 @@ export interface components {
             ownerAccount: string;
             ownerPhone: string;
         };
-        /** @description 组织（B-04方案A：POST /orgs 201 响应及 PATCH /orgs/{id}/owner?resetPassword=true 响应含 ownerSetupToken 一次性明文；列表/GET 始终 null） */
+        /** @description 组织（负责人账号名与完整手机号由 ownerAccountId 左连接 account 返回；B-04方案A：POST /orgs 201 响应及 PATCH /orgs/{id}/owner?resetPassword=true 响应含 ownerSetupToken 一次性明文；列表/GET 始终 null） */
         Org: {
             id?: string;
             type?: components["schemas"]["OrgTypeEnum"];
             name?: string;
+            /** @description 负责人 account.id；兼容字段，不得作为账号名展示 */
             ownerAccountId?: string;
+            /** @description 负责人登录账号名 account.username */
+            ownerUsername?: string | null;
+            /** @description 负责人完整手机号 account.phone，当前需求明确不脱敏 */
+            ownerPhone?: string | null;
             status?: string;
             /** @description 一次性凭据交付 token 明文（仅 POST /orgs 201 及 PATCH owner?resetPassword=true 响应出现一次，带外转交 owner；审计不记明文） */
             ownerSetupToken?: string | null;
@@ -7360,6 +7388,58 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["Forbidden"];
+        };
+    };
+    setLegalHold: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description 保留理由（如：业主已投诉至住建局 / 诉讼中，案号…） */
+                    reason: string;
+                };
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    releaseLegalHold: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     createReduction: {

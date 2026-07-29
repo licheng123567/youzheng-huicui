@@ -107,6 +107,7 @@ onMounted(load)
           <th style="width:110px">类型</th>
           <th>名称</th>
           <th>负责人账号</th>
+          <th style="width:140px">负责人手机</th>
           <th style="width:110px">状态</th>
           <th style="width:130px">操作</th>
         </tr>
@@ -115,12 +116,13 @@ onMounted(load)
         <tr v-for="row in orgs" :key="row.id">
           <td><span class="tag" :class="typeTag(row.type)">{{ typeLabel(row.type) }}</span></td>
           <td>{{ row.name || '—' }}</td>
-          <td>{{ row.ownerAccountId || '—' }}</td>
+          <td data-field="owner-username">{{ row.ownerUsername || '—' }}</td>
+          <td data-field="owner-phone">{{ row.ownerPhone || '—' }}</td>
           <td><span class="tag" :class="row.status==='ACTIVE' ? 'suc' : 'inf'">{{ statusLabel(row.status) }}</span></td>
           <td><button class="btn txt" @click="rebindOwner(row)">改绑负责人</button></td>
         </tr>
         <tr v-if="!orgs.length">
-          <td colspan="5" style="text-align:center;color:var(--sec);padding:32px 0">暂无组织</td>
+          <td colspan="6" style="text-align:center;color:var(--sec);padding:32px 0">暂无组织</td>
         </tr>
       </tbody>
     </table>

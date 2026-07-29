@@ -3,6 +3,17 @@ import { loginRole } from './helpers'
 
 // US-M1-04 成员管理 / BR-M1-04a 本组织建员 / BR-M1-03 权限子集 / 矩阵§8 门控。
 test.describe('US-M1-04 成员管理(PL/VL)', () => {
+  test('SA 组织管理显示负责人账号与完整手机', async ({ page }) => {
+    await loginRole(page, 'SA')
+    await page.goto('/org-mgmt')
+
+    const row = page.locator('table').first().locator('tbody tr').filter({ hasText: '翠湖物业' })
+    await expect(row).toContainText('cuihu_pl')
+    await expect(row).toContainText('13900000001')
+    await expect(row.locator('[data-field="owner-username"]')).toHaveText('cuihu_pl')
+    await expect(row.locator('[data-field="owner-phone"]')).toHaveText('13900000001')
+  })
+
   test('PL 新增成员角色下拉显示「PC 物业协调员」(不含「催收员」误文案)', async ({ page }) => {
     await loginRole(page, 'PL')
     await page.getByRole('menuitem', { name: '成员管理' }).click()
@@ -57,11 +68,20 @@ test.describe('US-M1-04 成员管理(PL/VL)', () => {
     await page.getByRole('menuitem', { name: '成员管理' }).click()
     await expect(page).toHaveURL(/\/members/)
 
-    // 列表只剩平台员工：不出现催收员/协调员/负责人
-    const rows = page.locator('table').first().locator('tbody tr')
+    // 成员主表只剩平台员工，且展示真实账号与完整手机。
+    const memberTable = page.locator('table').first()
+    const rows = memberTable.locator('tbody tr')
     await expect(rows.filter({ hasText: '催收员' })).toHaveCount(0)
     await expect(rows.filter({ hasText: '协调员' })).toHaveCount(0)
-    await expect(rows.filter({ hasText: '平台超管' }).first()).toBeVisible()
+    const adminRow = rows.filter({ hasText: '平台超管' }).first()
+    const operatorRow = rows.filter({ hasText: '平台运营' }).first()
+    await expect(adminRow).toContainText('admin')
+    await expect(adminRow).toContainText('13800000000')
+    await expect(operatorRow).toContainText('plat_se')
+    await expect(operatorRow).toContainText('13800000001')
+    await expect(memberTable).not.toContainText('cuihu_pl')
+    await expect(memberTable).not.toContainText('jx_vl')
+    await expect(memberTable).not.toContainText('jx_co1')
 
     // 新增成员的角色下拉同口径：只能建平台员工（后端 BR-M1-04a 也会 403 拦跨组织角色）
     await page.getByRole('button', { name: '新增成员' }).click()
