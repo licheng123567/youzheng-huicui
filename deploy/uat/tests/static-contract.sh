@@ -16,6 +16,10 @@ require_file() {
   [ -f "$1" ] || fail "missing file: ${1#$REPO_ROOT/}"
 }
 
+require_executable() {
+  [ -x "$1" ] || fail "file is not executable: ${1#$REPO_ROOT/}"
+}
+
 require_grep() {
   pattern=$1
   file=$2
@@ -37,11 +41,16 @@ for required in \
   "$UAT_DIR/Dockerfile.smoke" \
   "$UAT_DIR/nginx.conf" \
   "$ENV_FILE" \
+  "$UAT_DIR/verify.sh" \
+  "$UAT_DIR/reset.sh" \
   "$REPO_ROOT/frontend/e2e/uat-smoke.spec.ts" \
   "$REPO_ROOT/frontend/playwright.uat.config.ts"
 do
   require_file "$required"
 done
+
+require_executable "$UAT_DIR/verify.sh"
+require_executable "$UAT_DIR/reset.sh"
 
 require_grep '^name:[[:space:]]+huicui-uat$' "$COMPOSE_FILE"
 require_grep '127\.0\.0\.1:9092:9091' "$COMPOSE_FILE"
@@ -64,6 +73,16 @@ require_grep '^ENV[[:space:]]+HUICUI_REVISION=' "$UAT_DIR/Dockerfile.web"
 require_grep 'process\.env\.HUICUI_REVISION' "$REPO_ROOT/frontend/vite.config.ts"
 require_grep 'PLAYWRIGHT_BASE_URL' "$REPO_ROOT/frontend/playwright.uat.config.ts"
 require_grep 'PLAYWRIGHT_ARTIFACT_DIR' "$REPO_ROOT/frontend/playwright.uat.config.ts"
+
+for account in admin plat_se cuihu_pl cuihu_pc jx_vl jx_co1
+do
+  require_grep "$account" "$UAT_DIR/verify.sh"
+done
+require_grep '13900000001' "$UAT_DIR/verify.sh"
+require_grep '13800000000' "$UAT_DIR/verify.sh"
+require_grep '--confirm' "$UAT_DIR/reset.sh"
+require_grep 'huicui-uat-pgdata' "$UAT_DIR/reset.sh"
+reject_grep 'huicui-pgdata' "$UAT_DIR/reset.sh"
 
 rendered=$(mktemp)
 trap 'rm -f "$rendered"' EXIT HUP INT TERM
