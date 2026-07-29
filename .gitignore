@@ -19,6 +19,7 @@ dist/
 _verify.sh
 /tmp/
 .hypothesis/
+.superpowers/
 
 # Playwright 产物
 frontend/test-results/
