@@ -39,6 +39,13 @@ export async function loginRole(page: Page, role: RoleKey, password = DEV_PW) {
   await loginAs(page, ACCOUNTS[role], password)
 }
 
+/** 清理上一角色令牌后，以指定角色重新登录。 */
+export async function switchRole(page: Page, role: RoleKey, password = DEV_PW) {
+  await page.goto('/login')
+  await page.evaluate(() => localStorage.clear())
+  await loginRole(page, role, password)
+}
+
 /** 断言侧栏某菜单项可见 / 不可见（UX 门控验证）。 */
 export async function expectMenu(page: Page, label: string, visible: boolean) {
   const item = page.getByRole('menuitem', { name: label })
