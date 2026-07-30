@@ -63,8 +63,11 @@ const capHoldCap = ref(0)
 const supervisions = ref<any[]>([])    // /members/supervision（督导记录）
 async function loadSupervise() {
   const orgId = (auth.me as any)?.org?.id
+  const isProvider = (auth.me as any)?.org?.type === 'PROVIDER'
   const [cap, sup] = await Promise.all([
-    orgId ? api.GET('/providers/{id}/collector-capacity', { params: { path: { id: String(orgId) } } } as any) : Promise.resolve({ data: null }),
+    orgId && isProvider
+      ? api.GET('/providers/{id}/collector-capacity', { params: { path: { id: String(orgId) } } } as any)
+      : Promise.resolve({ data: null }),
     api.GET('/members/supervision', { params: { query: { page: 1, size: 50 } } as any }),
   ])
   caps.value = (cap.data as any)?.items ?? []

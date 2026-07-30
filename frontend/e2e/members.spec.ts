@@ -28,6 +28,27 @@ test.describe('US-M1-04 成员管理(PL/VL)', () => {
     await expect(page.getByRole('option', { name: /催收员/ })).toHaveCount(0)
   })
 
+  test('PL 成员管理显示本组织账号和完整手机且不调用服务商容量接口', async ({ page }) => {
+    const providerCapacityRequests: string[] = []
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname.includes('/v1/providers/')) {
+        providerCapacityRequests.push(request.url())
+      }
+    })
+
+    await loginRole(page, 'PL')
+    await page.goto('/members')
+
+    const memberRows = page.locator('table').first().locator('tbody tr')
+    const owner = memberRows.filter({ hasText: '翠湖负责人' }).first()
+    const coordinator = memberRows.filter({ hasText: '翠湖协调员' }).first()
+    await expect(owner).toContainText('cuihu_pl')
+    await expect(owner).toContainText('13900000001')
+    await expect(coordinator).toContainText('cuihu_pc')
+    await expect(coordinator).toContainText('13900000006')
+    expect(providerCapacityRequests).toEqual([])
+  })
+
   test('VL 新增成员角色下拉显示「CO 催收员」(无「服务商催收员」误文案)', async ({ page }) => {
     await loginRole(page, 'VL')
     await page.getByRole('menuitem', { name: '成员管理' }).click()
