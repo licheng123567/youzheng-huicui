@@ -1,4 +1,5 @@
 import { Page, expect } from '@playwright/test'
+import { randomUUID } from 'node:crypto'
 
 // UAT 必须注入独立随机口令；本地/CI 未注入时保持既有 dev 默认值。
 export const DEV_PW = process.env.UAT_DEV_PASSWORD || 'Admin@123'
@@ -44,6 +45,32 @@ export async function switchRole(page: Page, role: RoleKey, password = DEV_PW) {
   await page.goto('/login')
   await page.evaluate(() => localStorage.clear())
   await loginRole(page, role, password)
+}
+
+/** 使用当前登录令牌调用同源 API；失败断言不输出响应体，避免把敏感字段带入日志。 */
+export async function authJson(
+  page: Page,
+  method: string,
+  path: string,
+  body?: unknown,
+  expected = [200],
+) {
+  const token = await page.evaluate(() => localStorage.getItem('token'))
+  expect(token, 'authenticated token').toBeTruthy()
+  const response = await page.request.fetch(path, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      ...(['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())
+        ? { 'Idempotency-Key': randomUUID() }
+        : {}),
+    },
+    data: body,
+  })
+  const responseText = await response.text()
+  expect(expected, `${method} ${path} returned ${response.status()}`).toContain(response.status())
+  return responseText ? JSON.parse(responseText) : null
 }
 
 /** 断言侧栏某菜单项可见 / 不可见（UX 门控验证）。 */
