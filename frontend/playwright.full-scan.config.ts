@@ -17,7 +17,7 @@ export default defineConfig({
   outputDir: `${artifacts}/artifacts`,
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'http://web',
-    trace: 'retain-on-failure',
+    trace: 'off',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
   },

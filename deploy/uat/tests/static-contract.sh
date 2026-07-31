@@ -49,7 +49,16 @@ for required in \
   "$UAT_DIR/post-receive" \
   "$UAT_DIR/install-hook.sh" \
   "$REPO_ROOT/frontend/e2e/uat-smoke.spec.ts" \
-  "$REPO_ROOT/frontend/playwright.uat.config.ts"
+  "$REPO_ROOT/frontend/playwright.uat.config.ts" \
+  "$REPO_ROOT/.dockerignore" \
+  "$UAT_DIR/Dockerfile.full-scan-gate" \
+  "$UAT_DIR/full-scan.sh" \
+  "$UAT_DIR/tests/full-scan-contract.sh" \
+  "$REPO_ROOT/frontend/playwright.full-scan.config.ts" \
+  "$REPO_ROOT/frontend/e2e/diagnostics.spec.ts" \
+  "$REPO_ROOT/frontend/e2e/role-page-scan.spec.ts" \
+  "$REPO_ROOT/frontend/e2e/mobile-role-scan.spec.ts" \
+  "$REPO_ROOT/frontend/e2e/business-lifecycle.spec.ts"
 do
   require_file "$required"
 done
@@ -60,6 +69,10 @@ require_executable "$UAT_DIR/deploy.sh"
 require_executable "$UAT_DIR/worker.sh"
 require_executable "$UAT_DIR/post-receive"
 require_executable "$UAT_DIR/install-hook.sh"
+require_executable "$UAT_DIR/full-scan.sh"
+require_executable "$UAT_DIR/tests/full-scan-contract.sh"
+
+"$UAT_DIR/tests/full-scan-contract.sh"
 
 require_grep 'refs/heads/main' "$UAT_DIR/post-receive"
 require_grep 'flock' "$UAT_DIR/worker.sh"
@@ -349,7 +362,7 @@ set -e
 [ "$rc" -ne 0 ] || fail 'reset unexpectedly skipped the final live verification'
 require_grep '^|compose --project-name huicui-uat .* down$' "$spy"
 require_grep '^|volume rm huicui-uat-pgdata$' "$spy"
-require_grep "^$sha|compose --project-name huicui-uat .* up -d$" "$spy"
+require_grep "^$sha|compose --project-name huicui-uat .* up -d --wait --wait-timeout 240$" "$spy"
 [ "$(wc -l <"$spy" | tr -d ' ')" -eq 3 ] || fail 'reset issued unexpected Docker calls'
 
 # 部署脚本必须在任何 Docker 调用前拒绝不完整或非十六进制 SHA。

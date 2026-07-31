@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1.7
+FROM maven:3.9-eclipse-temurin-21 AS backend
+WORKDIR /src
+COPY backend/app/pom.xml backend/app/pom.xml
+COPY backend/app/src backend/app/src
+RUN --mount=type=cache,target=/root/.m2/repository mvn -f backend/app/pom.xml -B test
+RUN mkdir -p /proof && printf 'backend-tests-pass\n' >/proof/backend
+
+FROM node:22-bookworm AS frontend
+WORKDIR /src/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
+COPY frontend/index.html frontend/tsconfig.json frontend/vite.config.ts ./
+COPY frontend/src ./src
+COPY frontend/e2e ./e2e
+COPY frontend/scripts ./scripts
+COPY docs/api/openapi-core.yaml /src/docs/api/openapi-core.yaml
+RUN cp src/api/schema.d.ts /tmp/schema.d.ts && npm run gen:api && cmp /tmp/schema.d.ts src/api/schema.d.ts
+RUN npm run e2e:navlint && npm run build
+RUN mkdir -p /proof && printf 'frontend-gates-pass\n' >/proof/frontend
+
+FROM python:3.13-slim AS routes
+WORKDIR /src
+RUN pip install --no-cache-dir PyYAML==6.0.2
+COPY backend/scripts/route_coverage.py backend/scripts/route_coverage.py
+COPY backend/app/src backend/app/src
+COPY docs/api/openapi-core.yaml docs/api/openapi-core.yaml
+RUN python3 backend/scripts/route_coverage.py
+RUN mkdir -p /proof && printf 'route-coverage-pass\n' >/proof/routes
+
+FROM alpine:3.22
+COPY --from=backend /proof/backend /proof/backend
+COPY --from=frontend /proof/frontend /proof/frontend
+COPY --from=routes /proof/routes /proof/routes
+CMD ["sh", "-c", "cat /proof/backend /proof/frontend /proof/routes"]

@@ -121,6 +121,27 @@ PLAYWRIGHT_BASE_URL=http://127.0.0.1:6090 npx playwright test
 
 最后一组命令从环境文件导出 `UAT_DEV_PASSWORD`，密码值不会出现在 Playwright 的 argv 中。远程执行全量 Playwright 前先建立前述 SSH 隧道；自动 smoke 则由 Compose 的 `--env-file` 注入口令。
 
+## 全角色完整扫描
+
+完整扫描会重建 `huicui-uat-pgdata`，仅在无需保留人工验收数据时运行：
+
+```sh
+cd /root/huicui-uat-src
+UAT_ENV_FILE=/root/huicui-uat.env UAT_STATE_DIR=/var/lib/huicui-uat \
+  ./deploy/uat/full-scan.sh --confirm huicui-uat
+```
+
+扫描依次执行源码门、隔离业务生命周期和全量回归；生命周期及回归结束后都会再次重建 UAT 合成数据。产物位于 `/var/log/huicui-uat/full-scan/YYYYMMDDTHHMMSSZ-40位提交SHA/`。
+
+macOS 可把随机 UAT 口令直接复制到剪贴板而不显示明文：
+
+```sh
+ssh -o BatchMode=yes root@47.108.81.205 \
+  "awk 'index(\$0,\"UAT_DEV_PASSWORD=\")==1 { sub(/^UAT_DEV_PASSWORD=/,\"\"); print; exit }' /root/huicui-uat.env" | pbcopy
+```
+
+登录账号为 `admin`。不要修改共享合成账号密码；若已修改且忘记，仅在允许清空人工验收数据时运行受保护的 `reset.sh --confirm huicui-uat`，重建后恢复环境文件中的随机口令。
+
 ## 状态、日志与恢复
 
 部署状态位于 `/var/lib/huicui-uat`：

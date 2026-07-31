@@ -1,0 +1,9 @@
+.git
+.worktrees
+**/node_modules
+frontend/dist
+frontend/test-results
+frontend/playwright-report
+frontend/uat-test-results
+frontend/full-scan-results
+backend/app/target

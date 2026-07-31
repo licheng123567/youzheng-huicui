@@ -50,6 +50,6 @@ UAT_IMAGE_TAG=$tag docker compose \
   --project-name huicui-uat \
   --env-file "$ENV_FILE" \
   -f "$COMPOSE_FILE" \
-  up -d
+  up -d --wait --wait-timeout 240
 
 UAT_ENV_FILE=$ENV_FILE UAT_BASE_URL=$BASE "$SCRIPT_DIR/verify.sh"
