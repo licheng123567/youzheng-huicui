@@ -108,6 +108,34 @@ services:
     networks:
       - uat
 
+  full-scan:
+    image: huicui-uat-smoke:${UAT_IMAGE_TAG:?UAT_IMAGE_TAG is required}
+    profiles: [full-scan]
+    depends_on:
+      web:
+        condition: service_healthy
+    entrypoint: ["npx", "playwright", "test", "--config=playwright.full-scan.config.ts"]
+    environment:
+      UAT_DEV_PASSWORD: ${UAT_DEV_PASSWORD:?UAT_DEV_PASSWORD is required}
+      PLAYWRIGHT_BASE_URL: http://web
+      PLAYWRIGHT_ARTIFACT_DIR: /artifacts
+    volumes:
+      - type: bind
+        source: ${UAT_ARTIFACT_DIR:?UAT_ARTIFACT_DIR is required}
+        target: /artifacts
+    mem_limit: 768M
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks:
+      - uat
+
 networks:
   uat:
     name: huicui-uat-network

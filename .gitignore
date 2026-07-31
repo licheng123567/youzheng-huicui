@@ -25,6 +25,8 @@ _verify.sh
 # Playwright 产物
 frontend/test-results/
 frontend/playwright-report/
+frontend/uat-test-results/
+frontend/full-scan-results/
 
 test-results/
 
