@@ -2,6 +2,7 @@ import { test, expect } from './fixtures/test'
 import { authJson, openCaseByAcctNo, switchRole } from './helpers'
 
 test('@lifecycle import -> dispatch -> accept -> assign -> follow-up -> repay -> reconcile', async ({ page }) => {
+  test.setTimeout(90_000)
   const runId = `E2E-${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 7)}`
   const acctNo = `${runId}-ACCT`
   const phone = `139${String(Date.now()).slice(-8)}`

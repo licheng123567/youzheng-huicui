@@ -152,6 +152,7 @@ LOGIN_HELPERS="$REPO_ROOT/frontend/e2e/helpers.ts"
 require_grep 'monitorApiQuiescence' "$LOGIN_HELPERS"
 require_grep "pathname\.startsWith\('/v1/'\)" "$LOGIN_HELPERS"
 require_grep 'sawApiRequest.*pendingApiRequests\.size === 0.*quietMs' "$LOGIN_HELPERS"
+require_grep 'test\.setTimeout\(90_000\)' "$REPO_ROOT/frontend/e2e/business-lifecycle.spec.ts"
 
 REPORTS_DRILL="$REPO_ROOT/frontend/e2e/reports-drill.spec.ts"
 require_grep "import[[:space:]]+\{[[:space:]]*authJson,[[:space:]]*loginRole[[:space:]]*\}[[:space:]]+from './helpers'" "$REPORTS_DRILL"
