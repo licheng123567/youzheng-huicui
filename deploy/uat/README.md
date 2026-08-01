@@ -87,7 +87,8 @@ hook 只处理 main 的非删除更新，其他 ref 和删除更新直接忽略�
 自动部署会用同一个 40 位提交 SHA 构建三张镜像。排障时可在该提交的仓库根目录复现完整命令：
 
 ```sh
-sha=$(git rev-parse HEAD)
+repo=/root/repos/youzheng-huicui.git
+sha=$(git --git-dir="$repo" rev-parse --verify 'refs/heads/main^{commit}')
 test "${#sha}" -eq 40
 docker build -f deploy/Dockerfile --build-arg "HUICUI_VERSION=sha-$sha" --build-arg HUICUI_REVISION="$sha" -t "huicui-uat-backend:$sha" .
 docker build -f deploy/uat/Dockerfile.web --build-arg HUICUI_REVISION="$sha" -t "huicui-uat-web:$sha" .

@@ -15,6 +15,7 @@ ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 ENV_FILE=${UAT_ENV_FILE:-/root/huicui-uat.env}
 STATE_DIR=${UAT_STATE_DIR:-/var/lib/huicui-uat}
 ARTIFACT_ROOT=${UAT_ARTIFACT_ROOT:-/var/log/huicui-uat/full-scan}
+BARE_REPO=${UAT_REPO:-/root/repos/youzheng-huicui.git}
 COMPOSE="$SCRIPT_DIR/docker-compose.uat.yml"
 DOCKER=${UAT_DOCKER_BIN:-docker}
 GIT=${UAT_GIT_BIN:-git}
@@ -24,16 +25,17 @@ STATIC_GATE=${UAT_STATIC_GATE_BIN:-$SCRIPT_DIR/tests/static-contract.sh}
 PASS_FILE="$STATE_DIR/full-scan-pass-sha"
 
 [ -f "$ENV_FILE" ] || fail "environment file missing: $ENV_FILE"
+[ -d "$BARE_REPO/objects" ] || fail "bare repository missing: $BARE_REPO"
 [ -f "$STATE_DIR/active-sha" ] || fail 'active SHA missing'
 sha=$(sed -n '1p' "$STATE_DIR/active-sha")
 [ "${#sha}" -eq 40 ] || fail 'active SHA must be 40 characters'
 case "$sha" in
   *[!0-9a-f]*) fail 'active SHA must be lowercase hex' ;;
 esac
-source_sha=$("$GIT" -C "$ROOT" rev-parse HEAD)
+source_sha=$("$GIT" --git-dir="$BARE_REPO" rev-parse --verify 'refs/heads/main^{commit}')
 [ "$source_sha" = "$sha" ] ||
   fail "source SHA $source_sha does not match active SHA $sha"
-dirty=$("$GIT" -C "$ROOT" status --porcelain --untracked-files=all)
+dirty=$("$GIT" --git-dir="$BARE_REPO" --work-tree="$ROOT" status --porcelain --untracked-files=all)
 [ -z "$dirty" ] || fail 'source tree must be clean before attestation'
 
 rm -f "$PASS_FILE"

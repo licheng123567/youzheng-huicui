@@ -42,6 +42,12 @@ grep -Eq "trace:[[:space:]]*'off'" "$PLAYWRIGHT_CONFIG" ||
   fail 'full-scan trace must stay off because raw traces can contain credentials'
 grep -Eq 'status[[:space:]]+--porcelain' "$RUNNER" ||
   fail 'runner must reject a dirty source tree'
+grep -Eq 'UAT_REPO.*youzheng-huicui\.git' "$RUNNER" ||
+  fail 'runner must use the deployment bare repository'
+grep -Eq -- '--git-dir=.*BARE_REPO' "$RUNNER" ||
+  fail 'runner Git reads must name the bare repository'
+grep -Eq -- '--work-tree=.*ROOT' "$RUNNER" ||
+  fail 'runner dirty check must name the checked-out source tree'
 grep -Eq 'rm[[:space:]]+-f.*PASS_FILE' "$RUNNER" ||
   fail 'runner must invalidate a stale pass marker before gates'
 grep -Eq 'mv.*PASS_FILE' "$RUNNER" ||
@@ -61,15 +67,21 @@ fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 sha=0123456789abcdef0123456789abcdef01234567
-mkdir -p "$tmp/state" "$tmp/artifacts"
+fixture_root="$tmp/source"
+fixture_runner="$fixture_root/deploy/uat/full-scan.sh"
+mkdir -p "$tmp/state" "$tmp/artifacts" "$tmp/bare/objects" "$(dirname "$fixture_runner")"
+cp "$RUNNER" "$fixture_runner"
+[ ! -e "$fixture_root/.git" ] || fail 'fixture source must model a checkout without .git'
 printf '%s\n' "$sha" >"$tmp/state/active-sha"
 printf 'UAT_DEV_PASSWORD=test-only\n' >"$tmp/uat.env"
 
 cat >"$tmp/git" <<'EOF'
 #!/bin/sh
+[ "$1" = "--git-dir=$FAKE_REPO" ] || exit 3
+shift
 case "$*" in
-  *'rev-parse HEAD'*) printf '%s\n' "$FAKE_SHA" ;;
-  *'status --porcelain --untracked-files=all'*)
+  'rev-parse --verify refs/heads/main^{commit}') printf '%s\n' "$FAKE_SHA" ;;
+  "--work-tree=$FAKE_ROOT status --porcelain --untracked-files=all")
     [ "${FAKE_GIT_DIRTY:-0}" -eq 0 ] || printf ' M dirty-source\n'
     ;;
   *) exit 2 ;;
@@ -94,12 +106,12 @@ EOF
 chmod +x "$tmp/git" "$tmp/docker" "$tmp/reset" "$tmp/pass"
 
 run_fixture() {
-  FAKE_SHA=$sha FAKE_LOG="$tmp/actions.log" \
+  FAKE_SHA=$sha FAKE_LOG="$tmp/actions.log" FAKE_REPO="$tmp/bare" FAKE_ROOT="$fixture_root" \
   UAT_ENV_FILE="$tmp/uat.env" UAT_STATE_DIR="$tmp/state" \
-  UAT_ARTIFACT_ROOT="$tmp/artifacts" UAT_GIT_BIN="$tmp/git" \
+  UAT_ARTIFACT_ROOT="$tmp/artifacts" UAT_REPO="$tmp/bare" UAT_GIT_BIN="$tmp/git" \
   UAT_DOCKER_BIN="$tmp/docker" UAT_RESET_BIN="$tmp/reset" \
   UAT_VERIFY_BIN="$tmp/pass" UAT_STATIC_GATE_BIN="$tmp/pass" \
-    "$RUNNER" --confirm huicui-uat >/dev/null 2>&1
+    "$fixture_runner" --confirm huicui-uat >/dev/null 2>&1
 }
 
 printf 'old-pass\n' >"$tmp/state/full-scan-pass-sha"
