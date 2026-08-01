@@ -24,9 +24,16 @@ test.describe('v1.17.0 批次结项(SA·案件运营)', () => {
 
   test('结项确认框：收回统计+原因下拉+备注必填', async ({ page }) => {
     const row = page.locator('tbody tr', { hasText: 'B-CH-2026-01' })
+    const previewResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url())
+      return response.request().method() === 'GET'
+        && /\/v1\/batches\/\d+\/close-preview$/.test(url.pathname)
+    }, { timeout: 10_000 })
     await row.getByText('结项', { exact: true }).click()
-    const drawer = page.getByRole('dialog')
-    await expect(drawer.getByText('终止服务商承接')).toBeVisible()
+    const preview = await previewResponse
+    expect(preview.status()).toBe(200)
+    const drawer = page.getByRole('dialog', { name: /终止服务商承接/ })
+    await expect(drawer).toBeVisible()
     await expect(drawer.getByText('合计收回')).toBeVisible()
     await expect(drawer.getByText('结项原因')).toBeVisible()
     // 备注为空点确认 → 前端拦截（备注必填），批次不受影响

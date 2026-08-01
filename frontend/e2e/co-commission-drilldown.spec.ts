@@ -101,12 +101,22 @@ test.describe('US-M9-10 内催佣金穿透(VL)', () => {
     // 行级「确认支付」：仅当有 PENDING_PAY 行时穿透验证(种子现实可能空)
     const payBtn = page.getByRole('button', { name: /确认支付/ })
     if (await payBtn.count()) {
-      await payBtn.first().click()
-      // 二次确认（el-message-box 或对话框）
-      const confirm = page.getByRole('button', { name: /确定|确认/ })
-      if (await confirm.count()) await confirm.first().click().catch(() => {})
-      // 确认后该行状态标签变「已结算」(SETTLED 中文显示)
-      await expect(page.getByText('已结算').first()).toBeVisible()
+      const pendingRow = page.locator('tbody tr', { has: payBtn.first() })
+      const docLabel = (await pendingRow.locator('td').first().innerText()).trim()
+      const paymentResponse = page.waitForResponse((response) => {
+        const url = new URL(response.url())
+        return response.request().method() === 'POST'
+          && /\/v1\/co-pay-docs\/\d+\/confirm-pay$/.test(url.pathname)
+      }, { timeout: 10_000 })
+
+      await pendingRow.getByRole('button', { name: /确认支付/ }).click()
+      const payment = await paymentResponse
+      expect(payment.status()).toBe(200)
+
+      // 只提交一次，并核对原单据行已由 PENDING_PAY 变为 SETTLED。
+      const settledRow = page.locator('tbody tr', { hasText: docLabel })
+      await expect(settledRow.locator('.tag')).toHaveText('已结算')
+      await expect(settledRow.getByRole('button', { name: /确认支付/ })).toHaveCount(0)
     }
   })
 })
