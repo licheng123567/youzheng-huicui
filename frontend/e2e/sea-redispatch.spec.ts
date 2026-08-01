@@ -1,9 +1,27 @@
-import { test, expect } from './fixtures/test'
+import { test, expect, type Page } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // US-M3-02 平台公海二选一处置(再派分支) + BR-M3-16：
-// SA 对被服务商X退回的案件「再派」选服务商Y成功；对同案再选X被护栏①拒绝并提示原因；
-// T1超时入平台公海(无原服务商)案件，再派任意有效服务商成功(护栏①不适用)。
+// 无原退回方的 S0 案件可再派有效服务商；被服务商 X 退回的案件再选 X 时，
+// 服务端护栏①必须拒绝并提示原因。每个成功再派都会占用目标服务商容量，故同一基线只做一次成功写入。
+async function redispatchRoom(page: Page, room: string) {
+  const roomCell = page.getByRole('cell', { name: room, exact: true })
+  await expect(roomCell).toBeVisible()
+  await roomCell.locator('..').getByRole('button', { name: '再派', exact: true }).click()
+
+  const dlg = page.getByRole('dialog').filter({ hasText: '单案再派' })
+  await expect(dlg).toBeVisible()
+  await dlg.locator('.el-select').first().click()
+  await page.locator('.el-select-dropdown__item:visible').filter({ hasText: '捷信催收' }).click()
+
+  const responsePromise = page.waitForResponse((response) =>
+    response.request().method() === 'POST'
+      && /\/v1\/cases\/[^/]+\/redispatch$/.test(new URL(response.url()).pathname),
+  )
+  await dlg.getByRole('button', { name: '再派', exact: true }).click()
+  return { dlg, response: await responsePromise }
+}
+
 test.describe('US-M3-02 平台公海再派(SA)', () => {
   test.beforeEach(async ({ page, allowHttpFailure }) => {
     allowHttpFailure({
@@ -23,61 +41,18 @@ test.describe('US-M3-02 平台公海再派(SA)', () => {
     await expect(page.locator('tbody tr .tag', { hasText: '平台公海' }).first()).toBeVisible()
   })
 
-  test('退回案件再派服务商Y成功', async ({ page }) => {
-    const redispatchBtn = page.getByRole('button', { name: /再派/ }).first()
-    if (!(await redispatchBtn.count())) {
-      test.skip(true, '无可再派(退回)案件')
-    }
-    await redispatchBtn.click()
-    const dlg = page.getByRole('dialog').filter({ hasText: '单案再派' })
-    await expect(dlg).toBeVisible()
-    // 选服务商Y（非原退回方）
-    const sel = dlg.locator('.el-select').first()
-    await sel.click()
-    await page.locator('.el-select-dropdown__item').first().click()
-    await dlg.getByRole('button', { name: /确定|再派/ }).click()
-    // 前端不禁选原退回方(靠后端护栏①)，故首选项可能命中原服务商被 409 拒——两者均为合法终态：
-    // 验证再派 UI→后端 round-trip 完成且响应合法(成功 或 护栏拒绝)。
-    await expect(page.getByText(/已再派|再派成功|不可再派|原退回服务商|护栏|已停用/).first()).toBeVisible()
+  test('无原退回方的待派案件→再派有效服务商成功', async ({ page }) => {
+    const { dlg, response } = await redispatchRoom(page, 'S0-101')
+    expect(response.status()).toBe(200)
+    await expect(dlg).toBeHidden()
   })
 
   test('对同案再选原退回方X→护栏①拒绝并提示原因', async ({ page }) => {
-    const redispatchBtn = page.getByRole('button', { name: /再派/ }).first()
-    if (!(await redispatchBtn.count())) {
-      test.skip(true, '无可再派(退回)案件')
-    }
-    await redispatchBtn.click()
-    const dlg = page.getByRole('dialog').filter({ hasText: '单案再派' })
+    const { dlg, response } = await redispatchRoom(page, 'RET-101')
+    expect(response.status()).toBe(409)
     await expect(dlg).toBeVisible()
-    // 下拉中原退回方应被禁用或提交后被拒
-    const sel = dlg.locator('.el-select').first()
-    await sel.click()
-    const disabledOpt = page.locator('.el-select-dropdown__item.is-disabled').first()
-    if (await disabledOpt.count()) {
-      // UX 门控：原退回方禁选
-      await expect(disabledOpt).toBeVisible()
-    } else {
-      // 否则提交后服务端护栏拒绝
-      await page.locator('.el-select-dropdown__item').first().click()
-      await dlg.getByRole('button', { name: /确定|再派/ }).click()
-      await expect(page.getByText(/退回|不可再派给原|护栏/).first()).toBeVisible()
-    }
-  })
-
-  test('T1超时入平台公海(无原服务商)→再派任意服务商成功(护栏①不适用)', async ({ page }) => {
-    const redispatchBtn = page.getByRole('button', { name: /再派/ })
-    if (!(await redispatchBtn.count())) {
-      test.skip(true, '无 T1 超时入池案件')
-    }
-    await redispatchBtn.first().click()
-    const dlg = page.getByRole('dialog').filter({ hasText: '单案再派' })
-    await expect(dlg).toBeVisible()
-    const sel = dlg.locator('.el-select').first()
-    await sel.click()
-    await page.locator('.el-select-dropdown__item').first().click()
-    await dlg.getByRole('button', { name: /确定|再派/ }).click()
-    // 平台公海案件来源不一(T1超时无原服务商 / 退回有原服务商)，首选项可能命中原服务商被护栏拒——
-    // 两者均为合法终态；本用例验证再派 round-trip 完成且后端响应合法。
-    await expect(page.getByText(/已再派|再派成功|不可再派|原退回服务商|护栏|已停用/).first()).toBeVisible()
+    await expect(
+      page.locator('.el-message').filter({ hasText: /不可再派回原退回服务商|已停用/ }).last(),
+    ).toBeVisible()
   })
 })
