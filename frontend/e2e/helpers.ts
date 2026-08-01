@@ -9,8 +9,13 @@ export async function loginAs(page: Page, username: string, password = DEV_PW) {
   await page.goto('/login')
   await page.getByPlaceholder(/账号名|用户名/).fill(username)
   await page.getByPlaceholder(/密码|口令/).fill(password)
+  const workbenchResponse = page.waitForResponse((response) => {
+    const path = new URL(response.url()).pathname
+    return response.request().method() === 'GET' && path === '/v1/workbench'
+  }, { timeout: 15_000 })
   await page.getByRole('button', { name: /登\s*录/ }).click()
   await expect(page).not.toHaveURL(/\/login/, { timeout: 10_000 })
+  await (await workbenchResponse).finished()
   await page.waitForLoadState('networkidle')
 }
 
