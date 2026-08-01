@@ -2,7 +2,6 @@ import { test, expect } from './fixtures/test'
 import { authJson, openCaseByAcctNo, switchRole } from './helpers'
 
 test('@lifecycle import -> dispatch -> accept -> assign -> follow-up -> repay -> reconcile', async ({ page }) => {
-  test.setTimeout(90_000)
   const runId = `E2E-${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 7)}`
   const acctNo = `${runId}-ACCT`
   const phone = `139${String(Date.now()).slice(-8)}`
@@ -74,6 +73,7 @@ test('@lifecycle import -> dispatch -> accept -> assign -> follow-up -> repay ->
   await expect(page.getByText(runId).first()).toBeVisible()
   await page.getByRole('button', { name: '标线下回款' }).click()
   const repay = page.getByRole('dialog').filter({ hasText: '标线下回款' })
+  await expect(repay).toBeVisible({ timeout: 5_000 })
   await repay.locator('input[type="number"]').fill('12.34')
   await repay.locator('input[type="date"]').fill(new Date().toISOString().slice(0, 10))
   await repay.locator('select').selectOption('BANK_TRANSFER')

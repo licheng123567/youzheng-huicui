@@ -12,6 +12,7 @@ import AiReviewPanel from './AiReviewPanel.vue'
 import RecordingAudioPlayer from './RecordingAudioPlayer.vue'
 import AttachmentUpload from './AttachmentUpload.vue'
 import { downloadDoc } from '../utils/wordExport'
+import { newIdempotencyKey } from '../utils/idempotency'
 
 // M4 催收三栏接打台：左画像 / 中三Tab(沟通记录·项目资料·作战手册) / 右操作区。动作按 /me 权限门控。
 // 可复用组件：既承载 /cases/:id 整页路由（见 CaseDetailView.vue 薄壳），也内嵌进催收员工作台
@@ -361,9 +362,8 @@ function openAct(kind: string, title: string, sourceSuggestionId?: string) {
     // 关键在「一次」：双击提交、或提交超时后重试，用的都是同一个键 →
     // 后端按 repay_line.idem_key 的唯一索引把第二次挡下来，并把**第一次那笔**原样返回，
     // 而不是再造出一笔 5000 元（案件会被误判结清、物业多收一笔佣金、服务商多付一笔、催收员多拿一笔提成）。
-    // 反例：在提交函数里现调 crypto.randomUUID() —— 每次点击都是新键，等于没有幂等。
-    // （本仓 SmsOrgDetail / QuotaOrgDetail 目前正是这么写的，见 PR 说明。）
-    : kind === 'repay' ? { amountYuan: 0, channel: 'WECHAT_QR', paidAt: '', note: '', idemKey: crypto.randomUUID() }
+    // 反例：在提交函数里现生成新键 —— 每次点击都是新键，等于没有幂等。
+    : kind === 'repay' ? { amountYuan: 0, channel: 'WECHAT_QR', paidAt: '', note: '', idemKey: newIdempotencyKey() }
     : kind === 'legal' ? { type: 'COLLECTION_LETTER' }
     : kind === 'reduce' ? { type: '减免滞纳金', amountYuan: 0, reason: '' }
     : {}

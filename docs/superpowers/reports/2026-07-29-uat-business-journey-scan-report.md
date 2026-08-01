@@ -3,7 +3,7 @@
 - 执行日期：2026-07-30 至 2026-07-31（US/Pacific）
 - 隔离环境：`huicui-uat`，仅使用可重建的合成数据
 - 扫描时线上活跃 SHA：`289c1e7aecf4c5bc2d342b846929c19c62e8ec12`
-- 候选修复提交：`a105d54`（成员）、`b11ade0`（批次减免权限）、`5229d0f`（扫描与验收加固）、`6f3a7f1`/`0a015a6`（bare checkout 验收兼容）、`18106cf`（GNU/POSIX chmod 兼容）、`ed96a3f`/`a4aca60`（契约环境与仓库隔离）、`2a9c988`/`b72f355`（登录 API 静默与 trace 关闭）、`72ccc23`（生命周期隔离预算）
+- 候选修复提交：`a105d54`（成员）、`b11ade0`（批次减免权限）、`5229d0f`（扫描与验收加固）、`6f3a7f1`/`0a015a6`（bare checkout 验收兼容）、`18106cf`（GNU/POSIX chmod 兼容）、`ed96a3f`/`a4aca60`（契约环境与仓库隔离）、`2a9c988`/`b72f355`（登录 API 静默与 trace 关闭），以及普通 HTTP 内网来源的幂等键兼容修复
 - 口令处理：只从服务器环境文件注入进程环境；报告、命令输出和 Playwright trace 均不保存口令或令牌
 
 ## 结论
@@ -23,12 +23,12 @@
 | F-01 | PL `/members` | `members.spec.ts` 捕获到 `GET /v1/providers/2/collector-capacity`；完整账号和手机号断言已通过，但“不调用服务商接口”断言失败 | `PRODUCT_BUG` | `MembersView.loadSupervise()` 对 PROPERTY 和 PROVIDER 无条件调用服务商容量接口 | 仅当 `org.type === 'PROVIDER'` 时请求；聚焦回归通过 |
 | F-02 | PL `/members` 全页面诊断 | 诊断器记录同一请求 403 和浏览器资源加载错误 | `PRODUCT_BUG`（F-01 的重复检测） | 同 F-01 | 候选前端的全页面诊断回归通过 |
 | F-03 | SA/VL/PC 批次详情 | `GET /v1/batches/{id}/reduce-tiers` 返回 403 | `PRODUCT_BUG` | 读取端点也要求 `reduce.policy.edit`，前端却对所有可看批次的角色请求 | 请求前按权限门控；PC 直接断言没有发出该请求 |
+| F-04 | PC 案件详情“标线下回款” | 容器通过 `http://web` 扫描时按钮获得焦点但抽屉 80 秒未打开；同代码从 `http://127.0.0.1` 人工操作正常 | `PRODUCT_BUG` | `crypto.randomUUID()` 仅在 HTTPS/localhost 安全上下文存在，普通 HTTP 内网主机点击时同步抛错 | 统一使用 `getRandomValues()` 的 RFC 4122 v4 回退生成器；回款、短信、配额和内催佣金共用；补 2 项单测和 5 秒抽屉显式断言 |
 | T-01 | 多角色禁止菜单断言 | “结算对账”等文字同时可能是当前角色允许菜单名 | `TEST_BUG` | 仅按文字查找会把允许项误判成禁止项 | 禁止项集合排除当前角色允许的同名菜单 |
 | T-02 | 快速跨页扫描 | 连续 `goto` 时浏览器会中止上一页尚未完成的请求 | `TEST_BUG` | 页面稳定条件不足 | 每页等待 `networkidle` 后再检查脱敏诊断 |
 | T-03 | 成功空响应写请求 | 已收到 `200 + Content-Length: 0` 后 Chromium 报 `ERR_ABORTED` | `TEST_BUG` | 开发代理下空响应不产生 `requestfinished` | 仅对已收到 2xx 且长度为 0 的精确形态忽略；其他中断仍失败 |
 | T-04 | 生命周期角色切换 | 主动导航取消旧身份 `/me`；Vite 源模块影响静默判断 | `TEST_BUG` | token 清理顺序和等待范围不正确 | 同源页先清 token；静默等待只跟踪 `/v1` 业务 API |
 | T-05 | 部署冒烟登录后跳转 | 组织页冒烟先后捕获仍在飞行的 `GET /v1/workbench` 与 `GET /v1/notifications/unread-count` 被导航取消 | `TEST_BUG` | SPA 的 `networkidle` 可能在 Dashboard/AppLayout 的 `onMounted` 请求登记前返回 | 点击登录前跟踪全部 `/v1/` 请求，要求无在途请求并保持静默窗口后才返回；最终重复 10 轮、20/20 通过 |
-| T-06 | 服务器隔离生命周期 | 首次服务器运行在最终回款步骤触发 45 秒用例总超时，清理重置正常完成 | `TEST_BUG` | 登录 API 静默等待与服务器瞬时性能抖动共同消耗固定总预算 | 仅将 `@lifecycle` 总预算提高到 90 秒，不放宽任何断言；同环境完整链路 1/1 通过 |
 | E-01 | 移动端项目 | iPhone 13 设备描述符默认选择 WebKit，但 UAT 镜像只安装 Chromium | `ENVIRONMENT` | 浏览器类型被设备默认值覆盖 | 移除 `defaultBrowserType`，保留移动视口并统一 Chromium |
 | E-02 | UAT 重置 | 旧版 `reset.sh` 在 Web 容器刚启动时立即验证，偶发 `curl: (56) Recv failure`；随后独立验证通过 | `ENVIRONMENT` | Compose 启动与 HTTP 可用之间存在竞态 | `docker compose up -d --wait --wait-timeout 240`，契约测试覆盖 |
 | R-01 | PL 成员工作督导指标 | 产品期望物业协调员的月度/今日产能，但当前契约只有服务商催收员容量接口 | `REQUIREMENT_REVIEW` | 后端没有物业协调员对应的聚合 API，服务商接口又明确禁止 PL | 不伪造数据、不放宽权限；待产品确认统计口径并新增契约 |

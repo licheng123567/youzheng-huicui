@@ -38,6 +38,7 @@ grep -Eq 'profiles:[[:space:]]*\[full-scan\]' "$COMPOSE" || fail 'profile missin
 grep -Eq '^FROM[[:space:]]+maven:3\.9-eclipse-temurin-21' "$GATE" || fail 'Java 21 gate missing'
 grep -Eq '^FROM[[:space:]]+node:22' "$GATE" || fail 'Node 22 gate missing'
 grep -Eq 'route_coverage\.py' "$GATE" || fail 'route gate missing'
+grep -Eq 'npm run test:unit' "$GATE" || fail 'frontend unit gate missing'
 grep -Eq "trace:[[:space:]]*'off'" "$PLAYWRIGHT_CONFIG" ||
   fail 'full-scan trace must stay off because raw traces can contain credentials'
 grep -Eq 'status[[:space:]]+--porcelain' "$RUNNER" ||

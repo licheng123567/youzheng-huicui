@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
+    "test:unit": "node --import tsx --test scripts/idempotency-key.test.ts",
     "preview": "vite preview",
     "gen:api": "openapi-typescript ../docs/api/openapi-core.yaml -o src/api/schema.d.ts",
     "smoke": "tsx scripts/smoke.ts",

@@ -5,13 +5,12 @@ import { api } from '../api/client'
 import Pager from '../components/Pager.vue'
 import { channelLabel } from '../constants/enums'
 import DsDrawer from '../components/DsDrawer.vue'
+import { newIdempotencyKey } from '../utils/idempotency'
 
 // 内催佣金（服务商内部）独立子页：催收员佣金名册 → 某人批次穿透 → 勾选未结明细生成佣金单 → 确认支付。
 // 资金双线硬隔离：平台/物业不可见（后端裁剪，前端仅按返回展示，跨线/越权 → 403 仅提示）。
 const yuan = (c?: number) => (c == null ? '—' : '¥' + (c / 100).toLocaleString('zh-CN'))
 const pct = (r?: number) => (r == null ? '—' : (r * 100).toFixed(2) + '%')
-const newKey = () => (crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`)
-
 const coco = ref<any[]>([])   // 佣金名册（按人聚合）
 const coDocs = ref<any[]>([]) // 佣金单
 const loading = ref(false)
@@ -99,7 +98,7 @@ async function pickBatch(b: any) {
 async function submitGenerate() {
   if (!gSel.value.length) { ElMessage.warning('请勾选明细'); return }
   const { error } = await api.POST('/co-pay-docs', {
-    params: { header: { 'Idempotency-Key': newKey() } },
+    params: { header: { 'Idempotency-Key': newIdempotencyKey() } },
     body: { collectorId: String(gCollector.value.collectorId), lineIds: gSel.value.map((l) => String(l.id)) },
   })
   if (error) { ElMessage.error('生成失败：' + ((error as any)?.message ?? '')); return }
@@ -118,7 +117,7 @@ async function openDetail2Refresh(c: any) {
 // 确认支付（无 body·带幂等键）
 async function confirmPay(doc: any) {
   const { error } = await api.POST('/co-pay-docs/{id}/confirm-pay', {
-    params: { path: { id: doc.id }, header: { 'Idempotency-Key': newKey() } },
+    params: { path: { id: doc.id }, header: { 'Idempotency-Key': newIdempotencyKey() } },
   })
   if (error) { ElMessage.error('确认支付失败：' + ((error as any)?.message ?? '')); return }
   ElMessage.success('已确认支付'); load()

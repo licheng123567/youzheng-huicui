@@ -6,6 +6,7 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import DsDrawer from '../components/DsDrawer.vue'
+import { newIdempotencyKey } from '../utils/idempotency'
 
 const props = defineProps<{ orgId?: string | null }>()
 const emit = defineEmits<{ (e: 'recharged'): void }>()
@@ -93,7 +94,7 @@ async function submitRecharge() {
   if (!rForm.value.qty || rForm.value.qty <= 0) { ElMessage.warning('充值数量须大于 0'); return }
   rSaving.value = true
   const { error } = await api.POST('/billing/recharge', {
-    params: { header: { 'Idempotency-Key': crypto.randomUUID() } } as any,
+    params: { header: { 'Idempotency-Key': newIdempotencyKey() } } as any,
     body: { orgId: String(props.orgId), type: rForm.value.type, qty: Number(rForm.value.qty), note: rForm.value.note || undefined } as any,
   })
   rSaving.value = false

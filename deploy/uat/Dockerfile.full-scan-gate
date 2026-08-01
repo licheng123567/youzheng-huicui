@@ -16,7 +16,7 @@ COPY frontend/e2e ./e2e
 COPY frontend/scripts ./scripts
 COPY docs/api/openapi-core.yaml /src/docs/api/openapi-core.yaml
 RUN cp src/api/schema.d.ts /tmp/schema.d.ts && npm run gen:api && cmp /tmp/schema.d.ts src/api/schema.d.ts
-RUN npm run e2e:navlint && npm run build
+RUN npm run test:unit && npm run e2e:navlint && npm run build
 RUN mkdir -p /proof && printf 'frontend-gates-pass\n' >/proof/frontend
 
 FROM python:3.13-slim AS routes

@@ -7,6 +7,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/client'
 import { useAuth } from '../stores/auth'
 import DsDrawer from './DsDrawer.vue'
+import { newIdempotencyKey } from '../utils/idempotency'
 
 const props = defineProps<{ orgId?: string | null }>()
 
@@ -51,7 +52,7 @@ async function submitConfig() {
   if (!cForm.value.signName?.trim()) { ElMessage.warning('短信签名必填'); return }
   cSaving.value = true
   const { error } = await api.PUT('/orgs/{id}/sms-config', {
-    params: { path: { id: String(myOrgId.value) }, header: { 'Idempotency-Key': crypto.randomUUID() } } as any,
+    params: { path: { id: String(myOrgId.value) }, header: { 'Idempotency-Key': newIdempotencyKey() } } as any,
     body: { ...cForm.value, signName: cForm.value.signName.trim() } as any,
   })
   cSaving.value = false
@@ -77,7 +78,7 @@ async function submitTemplate() {
   const r = tEditId.value
     ? await api.PUT('/sms-templates/{tplId}', { params: { path: { tplId: tEditId.value } }, body: body as any })
     : await api.POST('/orgs/{id}/sms-templates', {
-        params: { path: { id: String(myOrgId.value) }, header: { 'Idempotency-Key': crypto.randomUUID() } } as any,
+        params: { path: { id: String(myOrgId.value) }, header: { 'Idempotency-Key': newIdempotencyKey() } } as any,
         body: body as any,
       })
   tSaving.value = false
@@ -108,7 +109,7 @@ async function submitRegister() {
   }
   rSaving.value = true
   const { error } = await api.POST('/sms-templates/{tplId}/register', {
-    params: { path: { tplId: rRow.value.id }, header: { 'Idempotency-Key': crypto.randomUUID() } } as any,
+    params: { path: { tplId: rRow.value.id }, header: { 'Idempotency-Key': newIdempotencyKey() } } as any,
     body: {
       result: rForm.value.result,
       gatewayTemplateId: rForm.value.gatewayTemplateId?.trim() || undefined,
