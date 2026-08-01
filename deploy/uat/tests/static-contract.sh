@@ -13,6 +13,21 @@ else
   CONTRACT_REPO=$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir)
 fi
 
+# Contract fixtures must be deterministic and must never inherit live UAT
+# paths, credentials, or command overrides from the caller. CONTRACT_REPO is
+# the only ambient value intentionally retained above.
+for ambient_name in \
+  UAT_ARTIFACT_DIR UAT_ARTIFACT_ROOT UAT_BASE_URL UAT_CRYPTO_KEY \
+  UAT_DEV_PASSWORD UAT_DOCKER_BIN UAT_DOCKER_SPY UAT_ENV_FILE UAT_GIT_BIN \
+  UAT_HOOK_CONFIG UAT_IMAGE_TAG UAT_INSTALL_DIR UAT_JWT_SECRET \
+  UAT_LOGIN_PASSWORD UAT_LOGIN_USERNAME UAT_LOG_DIR UAT_POSTGRES_DB \
+  UAT_POSTGRES_PASSWORD UAT_POSTGRES_USER UAT_PUBLIC_BASE UAT_REPO \
+  UAT_RESET_BIN UAT_ROLLBACK_VERIFY_SCRIPT UAT_RUNNER UAT_SRC UAT_STATE_DIR \
+  UAT_STATIC_GATE_BIN UAT_VERIFY_BIN UAT_VERIFY_SCRIPT UAT_WEB_BIND
+do
+  unset "$ambient_name"
+done
+
 fail() {
   echo "uat static contract: FAIL: $*" >&2
   exit 1
