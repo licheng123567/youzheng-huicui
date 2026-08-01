@@ -3,7 +3,7 @@
 - 执行日期：2026-07-30 至 2026-07-31（US/Pacific）
 - 隔离环境：`huicui-uat`，仅使用可重建的合成数据
 - 扫描时线上活跃 SHA：`289c1e7aecf4c5bc2d342b846929c19c62e8ec12`
-- 候选修复提交：`a105d54`（成员）、`b11ade0`（批次减免权限）、`5229d0f`（扫描与验收加固）、`6f3a7f1`/`0a015a6`（bare checkout 验收兼容）、`18106cf`（GNU/POSIX chmod 兼容）、`ed96a3f`/`a4aca60`（契约环境与仓库隔离）、`2a9c988`/`b72f355`（登录 API 静默与 trace 关闭）
+- 候选修复提交：`a105d54`（成员）、`b11ade0`（批次减免权限）、`5229d0f`（扫描与验收加固）、`6f3a7f1`/`0a015a6`（bare checkout 验收兼容）、`18106cf`（GNU/POSIX chmod 兼容）、`ed96a3f`/`a4aca60`（契约环境与仓库隔离）、`2a9c988`/`b72f355`（登录 API 静默与 trace 关闭）、`72ccc23`（生命周期隔离预算）
 - 口令处理：只从服务器环境文件注入进程环境；报告、命令输出和 Playwright trace 均不保存口令或令牌
 
 ## 结论
@@ -28,6 +28,7 @@
 | T-03 | 成功空响应写请求 | 已收到 `200 + Content-Length: 0` 后 Chromium 报 `ERR_ABORTED` | `TEST_BUG` | 开发代理下空响应不产生 `requestfinished` | 仅对已收到 2xx 且长度为 0 的精确形态忽略；其他中断仍失败 |
 | T-04 | 生命周期角色切换 | 主动导航取消旧身份 `/me`；Vite 源模块影响静默判断 | `TEST_BUG` | token 清理顺序和等待范围不正确 | 同源页先清 token；静默等待只跟踪 `/v1` 业务 API |
 | T-05 | 部署冒烟登录后跳转 | 组织页冒烟先后捕获仍在飞行的 `GET /v1/workbench` 与 `GET /v1/notifications/unread-count` 被导航取消 | `TEST_BUG` | SPA 的 `networkidle` 可能在 Dashboard/AppLayout 的 `onMounted` 请求登记前返回 | 点击登录前跟踪全部 `/v1/` 请求，要求无在途请求并保持静默窗口后才返回；最终重复 10 轮、20/20 通过 |
+| T-06 | 服务器隔离生命周期 | 首次服务器运行在最终回款步骤触发 45 秒用例总超时，清理重置正常完成 | `TEST_BUG` | 登录 API 静默等待与服务器瞬时性能抖动共同消耗固定总预算 | 仅将 `@lifecycle` 总预算提高到 90 秒，不放宽任何断言；同环境完整链路 1/1 通过 |
 | E-01 | 移动端项目 | iPhone 13 设备描述符默认选择 WebKit，但 UAT 镜像只安装 Chromium | `ENVIRONMENT` | 浏览器类型被设备默认值覆盖 | 移除 `defaultBrowserType`，保留移动视口并统一 Chromium |
 | E-02 | UAT 重置 | 旧版 `reset.sh` 在 Web 容器刚启动时立即验证，偶发 `curl: (56) Recv failure`；随后独立验证通过 | `ENVIRONMENT` | Compose 启动与 HTTP 可用之间存在竞态 | `docker compose up -d --wait --wait-timeout 240`，契约测试覆盖 |
 | R-01 | PL 成员工作督导指标 | 产品期望物业协调员的月度/今日产能，但当前契约只有服务商催收员容量接口 | `REQUIREMENT_REVIEW` | 后端没有物业协调员对应的聚合 API，服务商接口又明确禁止 PL | 不伪造数据、不放宽权限；待产品确认统计口径并新增契约 |
