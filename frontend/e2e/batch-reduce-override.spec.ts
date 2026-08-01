@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole, openBatchDetail } from './helpers'
 
 // BR-M2-18a/18b 批次级减免覆盖与恢复继承：
@@ -19,11 +19,17 @@ const customRadio = (page: any) => reduceCard(page).getByText('自定义覆盖',
 
 // 详情页减免档位异步加载(loadReduceTiers)；等其响应回来后 radio/表格才渲染，
 // 否则随后立刻 count() 会因竞态读到 0 而误跳过。
-async function openFirstBatch(page: any, role: 'PL' | 'PC' = 'PL') {
-  const rt = page.waitForResponse((r: any) => /\/batches\/\d+\/reduce-tiers/.test(r.url())).catch(() => {})
-  await openBatchDetail(page, role, undefined, 'props')
-  await rt
+async function openFirstBatch(page: any) {
+  const rt = page.waitForResponse((r: any) => /\/batches\/\d+\/reduce-tiers/.test(r.url()))
+  await openBatchDetail(page, 'PL', undefined, 'props')
+  const response = await rt
+  const source = (await response.json()).source
   await expect(reduceCard(page)).toBeVisible()
+  if (source === 'CUSTOM') {
+    await expect(reduceCard(page).getByRole('button', { name: '恢复继承' })).toBeVisible()
+  } else {
+    await expect(reduceCard(page).getByText(INHERIT_NOTE)).toBeVisible()
+  }
 }
 
 /** 保证从 INHERITED 起步（用例可重复跑）。 */
@@ -80,15 +86,17 @@ test.describe('BR-M2-18a 批次减免覆盖(PL)', () => {
   // CO 根本进不了批次详情(案件入口为私海/公海扁平清单)，无法在该页验证权限门控。
   test('无 reduce.policy.edit(PC)→只读，无「自定义覆盖」入口', async ({ page }) => {
     await loginRole(page, 'PC')
-    await openFirstBatch(page, 'PC')
+    const reduceRequests: string[] = []
+    page.on('request', (request) => {
+      if (/\/batches\/\d+\/reduce-tiers(?:\?|$)/.test(request.url())) reduceRequests.push(request.url())
+    })
+    await openBatchDetail(page, 'PC', undefined, 'props')
+    await expect(reduceCard(page)).toBeVisible()
+    expect(reduceRequests).toEqual([])
     const denied = reduceCard(page).getByText('无减免策略查看权限')
-    if (await denied.count()) {
-      await expect(denied).toBeVisible()
-    } else {
-      // 只读分支：无来源切换 radio，也无编辑/恢复按钮
-      await expect(customRadio(page)).toHaveCount(0)
-      await expect(reduceCard(page).getByRole('button', { name: '编辑阶梯' })).toHaveCount(0)
-      await expect(reduceCard(page).getByRole('button', { name: '恢复继承' })).toHaveCount(0)
-    }
+    await expect(denied).toBeVisible()
+    await expect(customRadio(page)).toHaveCount(0)
+    await expect(reduceCard(page).getByRole('button', { name: '编辑阶梯' })).toHaveCount(0)
+    await expect(reduceCard(page).getByRole('button', { name: '恢复继承' })).toHaveCount(0)
   })
 })

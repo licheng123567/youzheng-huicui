@@ -48,6 +48,12 @@ async function loadBatch() {
   b.value = data
 }
 async function loadReduceTiers() {
+  if (!auth.has('reduce.policy.edit')) {
+    tiersPermDenied.value = true
+    tiers.value = []
+    tiersSource.value = null
+    return
+  }
   const rt = await api.GET('/batches/{id}/reduce-tiers', { params: { path: { id: bid } } })
   if ((rt.response?.status === 403) || (rt.error && (rt.error as any)?.status === 403)) {
     tiersPermDenied.value = true
