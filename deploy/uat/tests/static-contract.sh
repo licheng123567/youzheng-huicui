@@ -7,6 +7,12 @@ UAT_DIR="$REPO_ROOT/deploy/uat"
 COMPOSE_FILE="$UAT_DIR/docker-compose.uat.yml"
 ENV_FILE="$UAT_DIR/.env.example"
 
+if [ -n "${UAT_REPO:-}" ]; then
+  CONTRACT_REPO=$UAT_REPO
+else
+  CONTRACT_REPO=$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir)
+fi
+
 fail() {
   echo "uat static contract: FAIL: $*" >&2
   exit 1
@@ -377,8 +383,9 @@ set -e
 [ ! -s "$spy" ] || fail 'deploy called Docker before rejecting an invalid commit SHA'
 
 # 首次部署验收失败时必须停止未验证的 web/backend，且不得写 active-sha。
-deploy_repo=$(git rev-parse --path-format=absolute --git-common-dir)
-candidate_sha=$(git rev-parse HEAD)
+deploy_repo=$CONTRACT_REPO
+[ -d "$deploy_repo/objects" ] || fail "contract repository missing: $deploy_repo"
+candidate_sha=$(git --git-dir="$deploy_repo" rev-parse --verify 'refs/heads/main^{commit}')
 first_state="$scratch/first-state"
 first_logs="$scratch/first-logs"
 mkdir -p "$first_state" "$first_logs"
@@ -403,7 +410,7 @@ require_grep "^$candidate_sha|compose .* stop web backend$" "$spy"
 # 有 previous 时必须使用 previous 提交中的配置，等待并验收回滚。
 rollback_state="$scratch/rollback-state"
 rollback_logs="$scratch/rollback-logs"
-previous_sha=$(git rev-parse HEAD^)
+previous_sha=$(git --git-dir="$deploy_repo" rev-parse --verify "$candidate_sha^")
 mkdir -p "$rollback_state" "$rollback_logs"
 printf '%s\n' "$previous_sha" >"$rollback_state/active-sha"
 : >"$spy"
@@ -476,7 +483,7 @@ set -e
 
 # post-receive 必须忽略非 main 和 main 删除，只原子排队合法 main SHA。
 hook_state="$scratch/hook-state"
-hook_repo=$(git rev-parse --path-format=absolute --git-common-dir)
+hook_repo=$CONTRACT_REPO
 hook_tip=$(git --git-dir="$hook_repo" rev-parse refs/heads/main)
 mkdir -p "$hook_state"
 rm -f "$hook_state/pending-sha"
@@ -494,7 +501,7 @@ printf '%s %s %s\n' 0000000000000000000000000000000000000000 "$hook_tip" refs/he
 # 安装脚本必须把 hook/worker 安装到指定隔离目录并禁止非快进。
 bare_repo="$scratch/repo.git"
 git init --bare -q "$bare_repo"
-git push -q "$bare_repo" HEAD:refs/heads/main
+git --git-dir="$bare_repo" fetch -q "$deploy_repo" "$candidate_sha:refs/heads/main"
 installed_tip=$(git --git-dir="$bare_repo" rev-parse refs/heads/main)
 UAT_REPO="$bare_repo" \
   UAT_INSTALL_DIR="$scratch/install" \

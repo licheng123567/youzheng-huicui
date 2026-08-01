@@ -71,7 +71,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
-"$STATIC_GATE"
+UAT_REPO=$BARE_REPO "$STATIC_GATE"
 "$DOCKER" build -f "$SCRIPT_DIR/Dockerfile.full-scan-gate" -t "huicui-uat-gate:$sha" "$ROOT"
 "$DOCKER" run --rm "huicui-uat-gate:$sha" >"$run_dir/gate/result.txt"
 
