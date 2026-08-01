@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // v1.17.0 批次结项+承接历史（用户拍板：结项=全部收回+承诺保留）。

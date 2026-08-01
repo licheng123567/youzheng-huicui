@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // US-M9-04 短信明细（BR-M9-08 失败不退条数）。

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // 存证管理(矩阵§7 line128) PL=○只读/PC=●/VL·CO=— ；H-02 修复验收。

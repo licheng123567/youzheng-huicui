@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // US-M9-10 服务商设佣金并按明细支付 + M-05：

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 
 // BR-M6 二维码公开核验：无登录态访问 /evidence/{id}/verify(扫码核验)：
 // 有效存证返回 valid+hash+certNo，篡改/不存在返回 valid=false 或 404，且不泄露 org/owner 明细。

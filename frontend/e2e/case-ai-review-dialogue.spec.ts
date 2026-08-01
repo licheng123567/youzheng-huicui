@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole, openCaseByAcctNo } from './helpers'
 
 // US-M5 AI复盘对话+质检(BR-M5-04a)：

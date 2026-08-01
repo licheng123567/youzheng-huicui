@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // US-M9-09 催收员提成自查(只读 BR-M9-19a)。

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // 服务商负责人(VL)三处 UI 还原（2026-07-10 用户验收回报的缺口）：

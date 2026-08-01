@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginAs } from './helpers'
 
 // 侧栏「工具 › 外勤作业 App」对所有角色开放，但**页面文案按角色分**：

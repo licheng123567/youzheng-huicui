@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginAs } from './helpers'
 
 // v1.3.0 P2：个人中心(自助改密) + 案件搜索 真屏。

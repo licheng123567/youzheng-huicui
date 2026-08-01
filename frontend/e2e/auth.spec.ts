@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginAs, DEV_PW } from './helpers'
 
 // US-M1 登录/多账号：真屏验证登录三态（口令单账号、一号多账号选择、短信）。

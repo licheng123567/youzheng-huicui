@@ -17,6 +17,11 @@ STATE_DIR=${UAT_STATE_DIR:-/var/lib/huicui-uat}
 ARTIFACT_ROOT=${UAT_ARTIFACT_ROOT:-/var/log/huicui-uat/full-scan}
 COMPOSE="$SCRIPT_DIR/docker-compose.uat.yml"
 DOCKER=${UAT_DOCKER_BIN:-docker}
+GIT=${UAT_GIT_BIN:-git}
+RESET=${UAT_RESET_BIN:-$SCRIPT_DIR/reset.sh}
+VERIFY=${UAT_VERIFY_BIN:-$SCRIPT_DIR/verify.sh}
+STATIC_GATE=${UAT_STATIC_GATE_BIN:-$SCRIPT_DIR/tests/static-contract.sh}
+PASS_FILE="$STATE_DIR/full-scan-pass-sha"
 
 [ -f "$ENV_FILE" ] || fail "environment file missing: $ENV_FILE"
 [ -f "$STATE_DIR/active-sha" ] || fail 'active SHA missing'
@@ -25,9 +30,13 @@ sha=$(sed -n '1p' "$STATE_DIR/active-sha")
 case "$sha" in
   *[!0-9a-f]*) fail 'active SHA must be lowercase hex' ;;
 esac
-source_sha=$(git -C "$ROOT" rev-parse HEAD)
+source_sha=$("$GIT" -C "$ROOT" rev-parse HEAD)
 [ "$source_sha" = "$sha" ] ||
   fail "source SHA $source_sha does not match active SHA $sha"
+dirty=$("$GIT" -C "$ROOT" status --porcelain --untracked-files=all)
+[ -z "$dirty" ] || fail 'source tree must be clean before attestation'
+
+rm -f "$PASS_FILE"
 
 run_dir="$ARTIFACT_ROOT/$(date -u +%Y%m%dT%H%M%SZ)-$sha"
 mkdir -p "$run_dir/gate" "$run_dir/lifecycle" "$run_dir/regression"
@@ -40,13 +49,17 @@ compose_run() {
 
 reset_uat() {
   UAT_ENV_FILE=$ENV_FILE UAT_STATE_DIR=$STATE_DIR \
-    "$SCRIPT_DIR/reset.sh" --confirm huicui-uat
+    "$RESET" --confirm huicui-uat
 }
 
 cleanup_needed=0
+pass_tmp=''
 cleanup() {
   cleanup_status=$?
   trap - EXIT HUP INT TERM
+  if [ -n "$pass_tmp" ]; then
+    rm -f "$pass_tmp"
+  fi
   if [ "$cleanup_needed" -eq 1 ] && ! reset_uat; then
     echo "uat full-scan: FAIL: cleanup reset failed; artifacts: $run_dir" >&2
     cleanup_status=1
@@ -56,7 +69,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
-"$SCRIPT_DIR/tests/static-contract.sh"
+"$STATIC_GATE"
 "$DOCKER" build -f "$SCRIPT_DIR/Dockerfile.full-scan-gate" -t "huicui-uat-gate:$sha" "$ROOT"
 "$DOCKER" run --rm "huicui-uat-gate:$sha" >"$run_dir/gate/result.txt"
 
@@ -82,6 +95,9 @@ cleanup_needed=0
   fail "regression failed; artifacts: $run_dir/regression"
 
 UAT_ENV_FILE=$ENV_FILE UAT_ARTIFACT_DIR="$run_dir/final-verify" \
-  "$SCRIPT_DIR/verify.sh"
-printf '%s\n' "$sha" >"$STATE_DIR/full-scan-pass-sha"
+  "$VERIFY"
+pass_tmp="$STATE_DIR/.full-scan-pass-sha.$$"
+printf '%s\n' "$sha" >"$pass_tmp"
+mv "$pass_tmp" "$PASS_FILE"
+pass_tmp=''
 printf 'uat full-scan: PASS %s artifacts=%s\n' "$sha" "$run_dir"

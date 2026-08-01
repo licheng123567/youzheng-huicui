@@ -1,15 +1,13 @@
-import { test, expect, devices } from '@playwright/test'
+import { test, expect, devices } from './fixtures/test'
 import { switchRole } from './helpers'
-import { installDiagnostics } from './fixtures/diagnostics'
 
 const { defaultBrowserType: _defaultBrowserType, ...iphone } = devices['iPhone 13']
 test.use({ ...iphone })
 
 for (const role of ['PC', 'CO'] as const) {
-  test(`${role} mobile shell and case detail stay usable`, async ({ page }, testInfo) => {
+  test(`${role} mobile shell and case detail stay usable`, async ({ page }) => {
     await switchRole(page, role)
     await page.waitForLoadState('networkidle')
-    const diagnostic = installDiagnostics(page, testInfo)
 
     for (const path of ['/m', '/m/cases', '/m/calls', '/m/me']) {
       await page.goto(path)
@@ -27,7 +25,6 @@ for (const role of ['PC', 'CO'] as const) {
     await expect(card).toBeVisible()
     await card.click()
     await expect(page).toHaveURL(/\/m\/cases\/\d+/)
-    await diagnostic.assertClean()
   })
 }
 

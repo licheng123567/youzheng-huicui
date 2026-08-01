@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // US-M4-12 / BR-M4-22 通话记录查询：菜单「通话记录」→ /call-records 列表(GET /recordings)；
@@ -22,7 +22,9 @@ test.describe('US-M4-12 通话记录查询(PC)', () => {
   })
 
   // BR-M5-04a：AI 复盘统一走右侧复盘面板(AiReviewPanel role=dialog)，不再整页跳 /cases/:id/call/:callId。
-  test('列表点行「AI 复盘」→右侧复盘面板打开', async ({ page }) => {
+  test('列表点行「AI 复盘」→右侧复盘面板打开', async ({ page, allowHttpFailure }) => {
+    // 种子录音尚未解析时，后端按契约返回 404，页面转成“尚未解析完成”提示。
+    allowHttpFailure({ method: 'GET', path: /^\/v1\/recordings\/[^/]+\/ai-review$/, statuses: [404] })
     await loginRole(page, 'PC')
     await page.goto('/call-records')
     await expect(page.locator('table').first()).toBeVisible()

@@ -126,7 +126,8 @@ require_grep 'process\.env\.PLAYWRIGHT_BASE_URL' "$REPO_ROOT/frontend/playwright
 require_grep 'webServer:[[:space:]]*externalBaseURL[[:space:]]*\?[[:space:]]*undefined' "$REPO_ROOT/frontend/playwright.config.ts"
 
 REPORTS_DRILL="$REPO_ROOT/frontend/e2e/reports-drill.spec.ts"
-require_grep "import[[:space:]]+\{[[:space:]]*loginRole,[[:space:]]*DEV_PW[[:space:]]*\}[[:space:]]+from './helpers'" "$REPORTS_DRILL"
+require_grep "import[[:space:]]+\{[[:space:]]*authJson,[[:space:]]*loginRole[[:space:]]*\}[[:space:]]+from './helpers'" "$REPORTS_DRILL"
+reject_grep 'page\.request|Authorization[[:space:]]*:' "$REPORTS_DRILL"
 reject_grep 'http://localhost:9091' "$REPORTS_DRILL"
 reject_grep 'Admin@123' "$REPORTS_DRILL"
 

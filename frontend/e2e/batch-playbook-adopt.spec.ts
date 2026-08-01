@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole, openBatchDetail } from './helpers'
 
 // BR-M2-18b / BR-M5-05a/b 批次级作战手册覆盖同步（issue #2 批次独立覆盖手册）：

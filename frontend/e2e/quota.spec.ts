@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // v1.19.0「额度管理」（计费明细 + 充值中心合并·以组织为聚合）。
@@ -83,6 +83,7 @@ test.describe('v1.19.0 额度管理', () => {
     await expect(page.getByRole('menuitem', { name: '额度管理' })).toHaveCount(0)
     await page.goto('/quota')
     await expect(page).not.toHaveURL(/\/quota/)
+    await page.waitForLoadState('networkidle')
     await page.goto('/billing')
     await expect(page).not.toHaveURL(/\/billing/)
   })

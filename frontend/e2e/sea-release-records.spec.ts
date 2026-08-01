@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // BR-M3-27 释放记录可见(US-M3-06 衍生管理视图)：

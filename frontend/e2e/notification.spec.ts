@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginAs } from './helpers'
 
 // v1.2.0 P1：消息中心(BR-M4-23) + 公海事件日志(BR-M3-22) 真屏。

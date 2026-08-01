@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // M6-FAILED-RETRY 失败态处理：状态列用 el-tag 呈现存证状态，FAILED→danger；

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole, openCaseByAcctNo } from './helpers'
 
 // US-M5 余额不足暂停→充值补解析(BR-M5-02)：
@@ -28,7 +28,12 @@ test.describe('US-M5 余额不足补解析(CO)', () => {
     await expect(page.getByRole('button', { name: '补解析', exact: true })).toBeVisible()
   })
 
-  test('点补解析→PARSING 或余额不足提示', async ({ page }) => {
+  test('点补解析→PARSING 或余额不足提示', async ({ page, allowHttpFailure }) => {
+    allowHttpFailure({
+      method: 'POST',
+      path: /^\/v1\/recordings\/[^/]+\/parse$/,
+      statuses: [409],
+    })
     await openCallTab(page, 'M5-QB-02')
     const btn = page.getByRole('button', { name: '补解析', exact: true })
     if (!(await btn.count())) {
@@ -41,7 +46,12 @@ test.describe('US-M5 余额不足补解析(CO)', () => {
     ).toBeVisible()
   })
 
-  test('批量补解析→入队/跳过反馈', async ({ page }) => {
+  test('批量补解析→入队/跳过反馈', async ({ page, allowHttpFailure }) => {
+    allowHttpFailure({
+      method: 'POST',
+      path: /^\/v1\/recordings\/batch-parse$/,
+      statuses: [409],
+    })
     await openCallTab(page, 'M5-QB-03')
     const btn = page.getByRole('button', { name: '批量补解析' })
     if (!(await btn.count())) {

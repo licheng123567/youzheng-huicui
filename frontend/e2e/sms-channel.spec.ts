@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole, expectMenu } from './helpers'
 
 // v1.21.0「短信通道 · 按组织管理」。

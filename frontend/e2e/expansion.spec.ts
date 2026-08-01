@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginAs } from './helpers'
 
 // v1.1.0 契约扩展 P0：角色工作台(BR-M4-20) + 派单决策辅助(BR-M3-24) 真屏。

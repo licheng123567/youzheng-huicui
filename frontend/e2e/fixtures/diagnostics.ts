@@ -1,4 +1,4 @@
-import { expect, type Page, type TestInfo } from '@playwright/test'
+import { expect, type Page, type Request, type TestInfo } from '@playwright/test'
 
 export type AllowedHttpFailure = {
   method: string
@@ -24,10 +24,11 @@ export function safePath(value: string): string {
 
 export function redactDiagnosticText(value: string): string {
   return value
+    .replace(/([?&][^=\s&#]+)=([^&#\s]+)/g, '$1=[REDACTED]')
     .replace(/(authorization\s*:\s*bearer\s+)[^\s,;]+/gi, '$1[REDACTED]')
     .replace(/(cookie\s*:\s*)[^\n]+/gi, '$1[REDACTED]')
-    .replace(/("(?:password|token|secret|code)"\s*:\s*")[^"]*"/gi, '$1[REDACTED]"')
-    .replace(/((?:password|token|secret|code)=)[^\s&#]+/gi, '$1[REDACTED]')
+    .replace(/("(?:password|pass|pwd|token|secret|code|session[_-]?id|api[_-]?key|authorization)"\s*:\s*")[^"]*"/gi, '$1[REDACTED]"')
+    .replace(/((?:password|pass|pwd|token|secret|code|session[_-]?id|api[_-]?key)=)[^\s&#]+/gi, '$1[REDACTED]')
     .slice(0, 2_000)
 }
 
@@ -57,29 +58,69 @@ export function classifyHttpFailure(
       }
 }
 
+export function isBenignEmptyResponseAbort(
+  errorText: string | undefined,
+  status: number | undefined,
+  contentLength: string | undefined,
+): boolean {
+  return errorText === 'net::ERR_ABORTED' && status != null && status >= 200 && status < 300 && contentLength === '0'
+}
+
+export function tracksForQuiescence(url: string): boolean {
+  return safePath(url).startsWith('/v1/')
+}
+
 export function installDiagnostics(
   page: Page,
   testInfo: TestInfo,
   allow: AllowedHttpFailure[] = [],
 ) {
   const found: Diagnostic[] = []
+  const pendingRequests = new Set<Request>()
+  const successfulEmptyResponses = new WeakMap<Request, { status: number; contentLength: string }>()
+  let lastNetworkActivity = Date.now()
+
+  page.on('request', (request) => {
+    if (tracksForQuiescence(request.url())) {
+      pendingRequests.add(request)
+      lastNetworkActivity = Date.now()
+    }
+  })
+  page.on('requestfinished', (request) => {
+    if (pendingRequests.delete(request)) lastNetworkActivity = Date.now()
+  })
   page.on('pageerror', (error) => {
     found.push({ kind: 'PAGE', message: redactDiagnosticText(error.message) })
   })
   page.on('console', (message) => {
-    if (message.type() === 'error') {
+    if (
+      message.type() === 'error' &&
+      !/^Failed to load resource: the server responded with a status of \d+/i.test(message.text())
+    ) {
       found.push({ kind: 'CONSOLE', message: redactDiagnosticText(message.text()) })
     }
   })
   page.on('requestfailed', (request) => {
+    if (pendingRequests.delete(request)) lastNetworkActivity = Date.now()
+    const errorText = request.failure()?.errorText
+    const successfulEmptyResponse = successfulEmptyResponses.get(request)
+    if (isBenignEmptyResponseAbort(
+      errorText,
+      successfulEmptyResponse?.status,
+      successfulEmptyResponse?.contentLength,
+    )) return
     found.push({
       kind: 'REQUEST',
       method: request.method(),
       path: safePath(request.url()),
-      message: redactDiagnosticText(request.failure()?.errorText ?? 'request failed'),
+      message: redactDiagnosticText(errorText ?? 'request failed'),
     })
   })
   page.on('response', (response) => {
+    const contentLength = response.headers()['content-length']
+    if (response.status() >= 200 && response.status() < 300 && contentLength === '0') {
+      successfulEmptyResponses.set(response.request(), { status: response.status(), contentLength })
+    }
     const diagnostic = classifyHttpFailure(
       response.request().method(),
       response.url(),
@@ -90,14 +131,31 @@ export function installDiagnostics(
   })
 
   return {
-    async assertClean() {
+    async waitForQuiescence(timeoutMs = 5_000, quietMs = 250) {
+      const deadline = Date.now() + timeoutMs
+      while (Date.now() < deadline) {
+        if (pendingRequests.size === 0 && Date.now() - lastNetworkActivity >= quietMs) return
+        await page.waitForTimeout(50).catch(() => undefined)
+      }
+      const pending = [...pendingRequests]
+      found.push({
+        kind: 'REQUEST',
+        path: pending[0] ? safePath(pending[0].url()) : undefined,
+        message: pending.length
+          ? `${pending.length} request(s) still in flight after ${timeoutMs}ms`
+          : `network did not remain quiet for ${quietMs}ms within ${timeoutMs}ms`,
+      })
+    },
+    async assertClean(shouldAssert = true) {
       if (found.length) {
         await testInfo.attach('browser-diagnostics.json', {
           body: Buffer.from(JSON.stringify(found, null, 2)),
           contentType: 'application/json',
         })
       }
-      expect(found, 'unexpected browser/network diagnostics').toEqual([])
+      if (shouldAssert) {
+        expect(found, 'unexpected browser/network diagnostics').toEqual([])
+      }
     },
   }
 }

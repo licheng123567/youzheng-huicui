@@ -1,16 +1,14 @@
-import { test, expect } from '@playwright/test'
-import { allowedPaths, navLabel } from '../src/constants/nav'
+import { test, expect } from './fixtures/test'
+import { allowedPaths, isAllowedPath, navLabel } from '../src/constants/nav'
 import { switchRole, type RoleKey } from './helpers'
-import { installDiagnostics } from './fixtures/diagnostics'
 
 const ROLES = ['SA', 'SE', 'PL', 'PC', 'VL', 'CO'] as const satisfies readonly RoleKey[]
 const ALL_PATHS = [...new Set(ROLES.flatMap((role) => allowedPaths(role)))]
 
 for (const role of ROLES) {
   for (const path of allowedPaths(role)) {
-    test(`${role} opens ${path} from its visible menu`, async ({ page }, testInfo) => {
+    test(`${role} opens ${path} from its visible menu`, async ({ page }) => {
       await switchRole(page, role)
-      const diagnostic = installDiagnostics(page, testInfo)
       const item = page.getByRole('menuitem', {
         name: navLabel(path, role),
         exact: true,
@@ -20,8 +18,7 @@ for (const role of ROLES) {
       const escapedPath = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       await expect(page).toHaveURL(new RegExp(`${escapedPath}(?:$|[/?#])`))
       await expect(page.locator('main.body > *').first()).toBeVisible()
-      await page.waitForTimeout(750)
-      await diagnostic.assertClean()
+      await page.waitForLoadState('networkidle')
     })
   }
 
@@ -37,6 +34,21 @@ for (const role of ROLES) {
     ]
     for (const label of forbiddenLabels) {
       await expect(page.getByRole('menuitem', { name: label, exact: true })).toHaveCount(0)
+    }
+  })
+
+  test(`${role} rejects every forbidden direct menu route`, async ({ page }) => {
+    await switchRole(page, role)
+    const universalPaths = ['/dashboard', '/profile', '/search', '/notifications']
+    const forbiddenPaths = ALL_PATHS.filter(
+      (path) => !isAllowedPath(role, path, universalPaths),
+    )
+    for (const path of forbiddenPaths) {
+      await test.step(path, async () => {
+        await page.goto(path)
+        await expect(page).toHaveURL(/\/dashboard$/)
+        await page.waitForLoadState('networkidle')
+      })
     }
   })
 }

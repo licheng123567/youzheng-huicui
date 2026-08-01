@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // v1.25.0：编辑入口从「页面顶部一排代码名按钮」移到**每张域卡片的卡头**——

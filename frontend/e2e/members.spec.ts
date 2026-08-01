@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // US-M1-04 成员管理 / BR-M1-04a 本组织建员 / BR-M1-03 权限子集 / 矩阵§8 门控。
@@ -61,7 +61,8 @@ test.describe('US-M1-04 成员管理(PL/VL)', () => {
     await expect(page.getByRole('option', { name: /服务商催收员/ })).toHaveCount(0)
   })
 
-  test('权限子集越权→后端 403→ElMessage 越子集提示', async ({ page }) => {
+  test('权限子集越权→后端 403→ElMessage 越子集提示', async ({ page, allowHttpFailure }) => {
+    allowHttpFailure({ method: 'POST', path: /^\/v1\/members$/, statuses: [403] })
     await loginRole(page, 'VL')
     await page.goto('/members')
     await page.getByRole('button', { name: '新增成员' }).click()

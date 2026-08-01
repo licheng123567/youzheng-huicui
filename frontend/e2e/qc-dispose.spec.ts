@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole, loginAs } from './helpers'
 
 // 质检/风控处置逻辑修正(BR-M5-07a/b/c):平台去上报只复核处置、反馈组织负责人;物业侧"谁的员工谁处置"。

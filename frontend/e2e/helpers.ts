@@ -11,6 +11,7 @@ export async function loginAs(page: Page, username: string, password = DEV_PW) {
   await page.getByPlaceholder(/密码|口令/).fill(password)
   await page.getByRole('button', { name: /登\s*录/ }).click()
   await expect(page).not.toHaveURL(/\/login/, { timeout: 10_000 })
+  await page.waitForLoadState('networkidle')
 }
 
 /** 退出（清 token 回登录）。 */
@@ -42,8 +43,8 @@ export async function loginRole(page: Page, role: RoleKey, password = DEV_PW) {
 
 /** 清理上一角色令牌后，以指定角色重新登录。 */
 export async function switchRole(page: Page, role: RoleKey, password = DEV_PW) {
-  await page.goto('/login')
-  await page.evaluate(() => localStorage.clear())
+  await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined)
+  if (/^https?:/.test(page.url())) await page.evaluate(() => localStorage.clear())
   await loginRole(page, role, password)
 }
 
@@ -55,21 +56,33 @@ export async function authJson(
   body?: unknown,
   expected = [200],
 ) {
-  const token = await page.evaluate(() => localStorage.getItem('token'))
-  expect(token, 'authenticated token').toBeTruthy()
-  const response = await page.request.fetch(path, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      ...(['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())
-        ? { 'Idempotency-Key': randomUUID() }
-        : {}),
+  const idempotencyKey = ['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())
+    ? randomUUID()
+    : undefined
+  const result = await page.evaluate(
+    async ({ method, path, body, idempotencyKey }) => {
+      const token = localStorage.getItem('token')
+      if (!token) return { authenticated: false, status: 0, responseText: '' }
+      const response = await fetch(path, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      })
+      return {
+        authenticated: true,
+        status: response.status,
+        responseText: await response.text(),
+      }
     },
-    data: body,
-  })
-  const responseText = await response.text()
-  expect(expected, `${method} ${path} returned ${response.status()}`).toContain(response.status())
+    { method, path, body, idempotencyKey },
+  )
+  expect(result.authenticated, 'authenticated token').toBe(true)
+  expect(expected, `${method} ${path} returned ${result.status}`).toContain(result.status)
+  const responseText = result.responseText
   return responseText ? JSON.parse(responseText) : null
 }
 

@@ -1,11 +1,16 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // US-M3-02 平台公海二选一处置(再派分支) + BR-M3-16：
 // SA 对被服务商X退回的案件「再派」选服务商Y成功；对同案再选X被护栏①拒绝并提示原因；
 // T1超时入平台公海(无原服务商)案件，再派任意有效服务商成功(护栏①不适用)。
 test.describe('US-M3-02 平台公海再派(SA)', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, allowHttpFailure }) => {
+    allowHttpFailure({
+      method: 'POST',
+      path: /^\/v1\/cases\/[^/]+\/redispatch$/,
+      statuses: [409],
+    })
     await loginRole(page, 'SA')
     // 平台公海已并入「撮合派单」页的 Tab（保留一个菜单入口）。
     await page.getByRole('menuitem', { name: '案件运营' }).click()

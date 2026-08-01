@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole, openBatchDetail } from './helpers'
 
 // US-M2-02 / BR-M2-13 批次级协调员多对多挂载。
@@ -52,6 +52,7 @@ test.describe('BR-M2-13 批次协调员', () => {
     await expect(page.getByRole('menuitem', { name: '撮合派单' })).toHaveCount(0)
     await page.goto('/batches')
     await expect(page).not.toHaveURL(/\/batches/)
+    await page.waitForLoadState('networkidle')
     await page.goto('/batches/1')
     await expect(page).not.toHaveURL(/\/batches/)
   })

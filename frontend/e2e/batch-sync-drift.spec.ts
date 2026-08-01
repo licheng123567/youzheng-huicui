@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole, openBatchDetail } from './helpers'
 
 // BR-M2-18b 项目级更新·有差异标记+一键同步（BC-04 落地）：

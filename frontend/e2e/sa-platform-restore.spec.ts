@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // 平台超管(SA)页面还原(2026-07)：话术库 / 项目管理 / 案件管理。

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // P-ORG-08 / US-M1 操作日志可见 + BR-M1-15 代操作留痕 + BR-M1-08 审计可见范围门控。

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // US-M2-01/02 物业负责人创建/编辑项目、维护减免/协调员；BR-M2-11 非负责人无维护入口。

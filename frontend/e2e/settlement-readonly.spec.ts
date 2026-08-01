@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // US-M9-06 物业只查看不确认/不驳回（矩阵§6 line111 PL/PC=◐只读）。

@@ -1,5 +1,5 @@
-import { test, expect } from '@playwright/test'
-import { loginRole, DEV_PW } from './helpers'
+import { test, expect } from './fixtures/test'
+import { authJson, loginRole } from './helpers'
 
 // v1.25.0 平台经营报表穿透（用户诉求：「可以根据物业公司的聚合向下穿透统计，也可以根据服务商穿透统计」）。
 // 此前平台视角是两张写死「暂无数据」的空表（区域损益/佣金毛利）+ 一张批次平表——看不出哪家贡献多少，也钻不下去。
@@ -75,23 +75,17 @@ test.describe('v1.25.0 平台经营报表穿透', () => {
 
   // v1.25.1 佣金双线：用户诉求「按物业公司列表要有 应收/已收/待收佣金、应付/已付/待付佣金」。
   // 最要紧的不是列出来，而是**和【结算对账】页对得上**——同一笔钱在两个页面给两个数是最伤信任的 bug。
-  test('SA：物业列表的佣金六列，与结算对账页逐批对得上', async ({ page, request }) => {
-    // 权威口径直接问后端要（/recon/rollup-dual 是结算对账页的数据源）——别去猜前端把 token 存哪儿。
-    const login = await request.post('/v1/auth/login', {
-      data: { loginType: 'password', username: 'admin', password: DEV_PW },
-    })
-    const token = (await login.json()).token
-    const res = await request.get('/v1/recon/rollup-dual?page=1&size=50', {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    const items = (await res.json()).items ?? []
+  test('SA：物业列表的佣金六列，与结算对账页逐批对得上', async ({ page }) => {
+    // 在浏览器上下文读取 token 并发请求，避免 Playwright request 错误把 Authorization 写入报告。
+    await loginRole(page, 'SA')
+    const rollup = (await authJson(page, 'GET', '/v1/recon/rollup-dual?page=1&size=50')) as any
+    const items = rollup.items ?? []
     const ledger = items.reduce((a: any, x: any) => ({
       inDue: a.inDue + (x.dueInCents ?? 0), inSettled: a.inSettled + (x.settledInCents ?? 0),
       outDue: a.outDue + (x.dueOutCents ?? 0), outSettled: a.outSettled + (x.settledOutCents ?? 0),
     }), { inDue: 0, inSettled: 0, outDue: 0, outSettled: 0 })
     expect(ledger.inDue).toBeGreaterThan(0)   // 种子里必须有佣金，否则这条断言等于没测
 
-    await loginRole(page, 'SA')
     await page.getByRole('menuitem', { name: '经营报表' }).click()
     await page.getByText('佣金双线', { exact: true }).click()
     await expect(page.locator('thead').getByText('应收佣金', { exact: true })).toBeVisible()

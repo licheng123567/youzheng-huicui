@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginAs } from './helpers'
 
 // 各后台屏真屏可达性：SA 登录后逐屏导航，断言路由切换且无崩溃（页面有内容卡片）。

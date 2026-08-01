@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // P-DATA-08 案件跨层级筛选 + 批次下钻 + 关键字 + BR-M8-09 脱敏隔离。

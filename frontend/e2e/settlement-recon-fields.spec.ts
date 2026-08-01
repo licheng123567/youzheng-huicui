@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // v1.16.0 平台双线总账（GET /recon/rollup-dual）：
@@ -9,6 +9,7 @@ test.describe('v1.16.0 平台批次双线总账(SA)', () => {
     await loginRole(page, 'SA')
     await page.goto('/settlement')
     await expect(page.getByText('平台双线总账')).toBeVisible()
+    await page.waitForLoadState('networkidle')
   })
 
   test('菜单只有一条「结算对账」，无收佣/付佣独立入口', async ({ page }) => {

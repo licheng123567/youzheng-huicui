@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginAs, loginRole } from './helpers'
 
 // BR-M3-29 公海可见性收敛（v1.18.0 开放抢单停用后两侧均无开放池分段）。三条产品规则,三组断言:

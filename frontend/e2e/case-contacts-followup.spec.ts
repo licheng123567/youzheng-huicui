@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole, openCaseByAcctNo } from './helpers'
 
 // US-M4 联系人管理与跟进留痕：

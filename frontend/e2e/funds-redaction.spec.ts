@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // BR-M1-06/BR-M9-11 资金双线·整列脱敏（裁列而非占位）。

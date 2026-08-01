@@ -7,3 +7,14 @@ frontend/playwright-report
 frontend/uat-test-results
 frontend/full-scan-results
 backend/app/target
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.keystore
+**/*.jks
+**/id_rsa*
+**/id_ed25519*
+deploy/backup

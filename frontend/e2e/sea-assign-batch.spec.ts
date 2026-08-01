@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // US-M3-05 服务商负责人分配案件(批量, BR-M3-25/06)：

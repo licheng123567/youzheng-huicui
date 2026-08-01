@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginRole } from './helpers'
 
 // 服务商负责人(VL) 经营报表 + 成员管理·工作督导 还原(2026-07)。

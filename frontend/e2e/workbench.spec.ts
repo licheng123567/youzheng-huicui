@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/test'
 import { loginAs } from './helpers'
 
 // US-M4 催收作业台 + US-M9 结算：故事级真屏（进案件作业台见动作 tab；结算见对账/支付申请单）。
