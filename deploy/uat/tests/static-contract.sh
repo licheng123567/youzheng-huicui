@@ -503,10 +503,12 @@ hook_tip=$(git --git-dir="$hook_repo" rev-parse refs/heads/main)
 mkdir -p "$hook_state"
 rm -f "$hook_state/pending-sha"
 printf '%s %s %s\n' "$sha" "$sha" refs/heads/dev | \
-  PATH="$scratch/bin:$PATH" UAT_STATE_DIR="$hook_state" UAT_RUNNER=/bin/true "$UAT_DIR/post-receive"
+  PATH="$scratch/bin:$PATH" UAT_REPO="$hook_repo" UAT_STATE_DIR="$hook_state" \
+    UAT_RUNNER=/bin/true "$UAT_DIR/post-receive"
 [ ! -e "$hook_state/pending-sha" ] || fail 'post-receive queued a non-main ref'
 printf '%s %s %s\n' "$sha" 0000000000000000000000000000000000000000 refs/heads/main | \
-  PATH="$scratch/bin:$PATH" UAT_STATE_DIR="$hook_state" UAT_RUNNER=/bin/true "$UAT_DIR/post-receive"
+  PATH="$scratch/bin:$PATH" UAT_REPO="$hook_repo" UAT_STATE_DIR="$hook_state" \
+    UAT_RUNNER=/bin/true "$UAT_DIR/post-receive"
 [ ! -e "$hook_state/pending-sha" ] || fail 'post-receive queued a deleted main ref'
 printf '%s %s %s\n' 0000000000000000000000000000000000000000 "$hook_tip" refs/heads/main | \
   PATH="$scratch/bin:$PATH" UAT_REPO="$hook_repo" UAT_STATE_DIR="$hook_state" UAT_RUNNER=/bin/true "$UAT_DIR/post-receive"
