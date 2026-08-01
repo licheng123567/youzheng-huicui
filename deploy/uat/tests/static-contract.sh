@@ -516,7 +516,7 @@ UAT_REPO="$bare_repo" \
   fail 'install-hook did not deny non-fast-forward pushes'
 
 # 已安装 hook 必须在没有安装期环境变量时仍使用自定义 state/repo/runner 路径。
-chmod -x "$scratch/install/worker.sh"
+chmod a-x "$scratch/install/worker.sh"
 rm -f "$scratch/install-state/pending-sha"
 printf '%s %s %s\n' "$installed_tip" "$sha" refs/heads/main | \
   PATH="$scratch/bin:$PATH" "$bare_repo/hooks/post-receive"
