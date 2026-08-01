@@ -149,9 +149,9 @@ require_grep 'process\.env\.PLAYWRIGHT_BASE_URL' "$REPO_ROOT/frontend/playwright
 require_grep 'webServer:[[:space:]]*externalBaseURL[[:space:]]*\?[[:space:]]*undefined' "$REPO_ROOT/frontend/playwright.config.ts"
 
 LOGIN_HELPERS="$REPO_ROOT/frontend/e2e/helpers.ts"
-require_grep 'waitForResponse' "$LOGIN_HELPERS"
-require_grep "path === '/v1/workbench'" "$LOGIN_HELPERS"
-require_grep 'workbenchResponse.*finished' "$LOGIN_HELPERS"
+require_grep 'monitorApiQuiescence' "$LOGIN_HELPERS"
+require_grep "pathname\.startsWith\('/v1/'\)" "$LOGIN_HELPERS"
+require_grep 'sawApiRequest.*pendingApiRequests\.size === 0.*quietMs' "$LOGIN_HELPERS"
 
 REPORTS_DRILL="$REPO_ROOT/frontend/e2e/reports-drill.spec.ts"
 require_grep "import[[:space:]]+\{[[:space:]]*authJson,[[:space:]]*loginRole[[:space:]]*\}[[:space:]]+from './helpers'" "$REPORTS_DRILL"

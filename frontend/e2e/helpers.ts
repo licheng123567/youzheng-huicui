@@ -1,22 +1,66 @@
-import { Page, expect } from '@playwright/test'
+import { Page, expect, type Request } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 
 // UAT 必须注入独立随机口令；本地/CI 未注入时保持既有 dev 默认值。
 export const DEV_PW = process.env.UAT_DEV_PASSWORD || 'Admin@123'
+
+function monitorApiQuiescence(page: Page) {
+  const pendingApiRequests = new Set<Request>()
+  let sawApiRequest = false
+  let lastApiActivity = Date.now()
+  const isApiRequest = (request: Request) => {
+    try {
+      return new URL(request.url()).pathname.startsWith('/v1/')
+    } catch {
+      return false
+    }
+  }
+  const onRequest = (request: Request) => {
+    if (!isApiRequest(request)) return
+    sawApiRequest = true
+    pendingApiRequests.add(request)
+    lastApiActivity = Date.now()
+  }
+  const onRequestDone = (request: Request) => {
+    if (pendingApiRequests.delete(request)) lastApiActivity = Date.now()
+  }
+
+  page.on('request', onRequest)
+  page.on('requestfinished', onRequestDone)
+  page.on('requestfailed', onRequestDone)
+
+  return {
+    async wait(timeoutMs = 15_000, quietMs = 500) {
+      const deadline = Date.now() + timeoutMs
+      while (Date.now() < deadline) {
+        if (sawApiRequest && pendingApiRequests.size === 0 && Date.now() - lastApiActivity >= quietMs) return
+        await page.waitForTimeout(50)
+      }
+      const pendingPaths = [...pendingApiRequests].map((request) => new URL(request.url()).pathname)
+      throw new Error(`login API did not become quiet within ${timeoutMs}ms; pending: ${pendingPaths.join(', ') || 'none'}`)
+    },
+    dispose() {
+      page.off('request', onRequest)
+      page.off('requestfinished', onRequestDone)
+      page.off('requestfailed', onRequestDone)
+    },
+  }
+}
 
 /** 口令登录（单账号直登）：返回后停在工作台（非 /login）。 */
 export async function loginAs(page: Page, username: string, password = DEV_PW) {
   await page.goto('/login')
   await page.getByPlaceholder(/账号名|用户名/).fill(username)
   await page.getByPlaceholder(/密码|口令/).fill(password)
-  const workbenchResponse = page.waitForResponse((response) => {
-    const path = new URL(response.url()).pathname
-    return response.request().method() === 'GET' && path === '/v1/workbench'
-  }, { timeout: 15_000 })
-  await page.getByRole('button', { name: /登\s*录/ }).click()
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 10_000 })
-  await (await workbenchResponse).finished()
-  await page.waitForLoadState('networkidle')
+  const apiQuiescence = monitorApiQuiescence(page)
+  try {
+    await page.getByRole('button', { name: /登\s*录/ }).click()
+    await expect(page).not.toHaveURL(/\/login/, { timeout: 10_000 })
+    await page.waitForLoadState('networkidle')
+    await apiQuiescence.wait()
+  } finally {
+    apiQuiescence.dispose()
+  }
 }
 
 /** 退出（清 token 回登录）。 */
